@@ -65,7 +65,7 @@ cd web && npm run lint && npm test && npm run build
 - 규칙을 바꾸면 이유와 시점을 "규칙 변경" 절에 남긴다(1단계에서 4번: 선수 조건 완화, TSS 비교 기준을 GC가 실제로 쓴 임계값으로, 수동 입력 TSS 제외, GC에 없는 TSS 제외)
 
 ## AI 도구와 검증
-Claude Code가 설계·구현·측정을, Codex가 독립 검토(읽기 전용 정적 검토)를 맡았다. 두 도구가 만든 것과 잡힌 실수는 [docs/ai-verification.md](docs/ai-verification.md)에 기능마다 적었다. 예: fitparse 대조가 잡은 FIT 디코더 버그 2개(필드 번호, 개발자 필드 정의 크기), 통합 테스트가 잡은 PgJDBC `float4` 읽기 오류, Codex 검토 26건(봉인 규칙의 누수 허용, NaN 전파, 체인 블록별 메시지 상한 등).
+Claude Code가 설계·구현·측정을, Codex가 독립 검토(읽기 전용 정적 검토)를 맡았다. 두 도구가 만든 것과 잡힌 실수는 [docs/ai-verification.md](docs/ai-verification.md)에 기능마다 적었다. 예: fitparse 대조가 잡은 FIT 디코더 버그 2개(필드 번호, 개발자 필드 정의 크기), 통합 테스트가 잡은 PgJDBC `float4` 읽기 오류, Codex 검토 세 번 35건(봉인 규칙의 누수 허용, NaN 전파, 체인 블록별 메시지 상한, 신선 라벨 정의 불일치, 측정 조건 위반 등).
 
 ## 한계
 - 인증이 없다(로컬 데모). 선수 id를 아는 사람은 누구나 읽고 쓸 수 있다
