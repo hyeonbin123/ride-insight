@@ -9,13 +9,14 @@ MMP_KEYS = ["1s_critical_power", "20m_critical_power"]
 
 
 def _line(
-    athlete, i, rec_int, np_ours, np_gc, tss_ours=50.0, tss_gc=50.0, mmp_gc_20m=250.0, mmp_ours_20m=250.0
+    athlete, i, rec_int, np_ours, np_gc, tss_ours=64.0, tss_gc=64.0, mmp_gc_20m=250.0, mmp_ours_20m=250.0
 ):
     return {
         "athlete": athlete,
         "date": f"2020/01/{i + 1:02d} 10:00:00 UTC",
         "csv": f"2020_01_{i + 1:02d}_10_00_00.csv",
         "rec_int": rec_int,
+        "rec_int_share": 1.0,
         "samples": 3600,
         "last_secs": 3599.0,
         "power_missing": 0,
@@ -38,6 +39,20 @@ def _line(
             "mmp": {"1s_critical_power": 500.0, "20m_critical_power": mmp_gc_20m},
         },
     }
+
+
+def test_tss_uses_gc_threshold_not_cp_setting(tmp_path: Path):
+    # GC used FTP 235 (if = np / 235) while cp_setting is 250: TSS must still agree.
+    line = _line("a", 0, 1.0, 200.0, 200.0, tss_ours=64.0, tss_gc=100.0 * (200.0 / 235.0) ** 2)
+    line["gc"]["if"] = 200.0 / 235.0
+    jsonl = tmp_path / "t.jsonl"
+    jsonl.write_text(json.dumps(line), encoding="utf-8")
+    df = parity.load(jsonl)
+    assert abs(df["thr_gc"].iloc[0] - 235.0) < 1e-9
+    assert bool(df["cp_differs"].iloc[0])
+    r = parity.analyse(df)
+    assert r["H3_tss_1s"]["rate"] == 1.0
+    assert r["cp_differs_from_gc_threshold"] == {"n": 1, "differs": 1}
 
 
 def test_agree_treats_absent_and_gc_zero_as_absent():

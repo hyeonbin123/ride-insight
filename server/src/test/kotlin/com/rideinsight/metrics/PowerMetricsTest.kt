@@ -82,4 +82,14 @@ class PowerMetricsTest {
         assertNull(RecordingInterval.estimate(doubleArrayOf(7.0)))
         assertNull(RecordingInterval.estimate(doubleArrayOf(1.0, 1.0, 1.0)))
     }
+
+    @Test
+    fun `mode share reports how regular the timestamps are`() {
+        val regular = RecordingInterval.analyse(doubleArrayOf(0.0, 1.0, 2.0, 3.0, 4.0))!!
+        assertEquals(1.0, regular.modeShare)
+        // Jittered file like 2007_11_19 in OpenData: deltas 1.00, 1.03, 1.00, 1.02 -> mode 1.00 with share 0.5.
+        val jitter = RecordingInterval.analyse(doubleArrayOf(0.0, 1.0, 2.03, 3.03, 4.05))!!
+        assertEquals(1.0, jitter.intervalSecs)
+        assertEquals(0.5, jitter.modeShare)
+    }
 }

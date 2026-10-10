@@ -31,6 +31,7 @@ def load(jsonl: Path) -> pd.DataFrame:
             "date": d["date"],
             "csv": d["csv"],
             "rec_int": d["rec_int"],
+            "rec_int_share": d.get("rec_int_share"),
             "samples": d["samples"],
             "power_missing": d["power_missing"],
             "bad_rows": d["bad_rows"],
@@ -41,6 +42,7 @@ def load(jsonl: Path) -> pd.DataFrame:
             "np_gc": d["gc"]["np"],
             "tss_ours": d["ours"]["tss"],
             "tss_gc": d["gc"]["tss"],
+            "if_gc": d["gc"]["if"],
             "workout_time_gc": d["gc"]["workout_time"],
         }
         for k, v in d["ours"]["mmp"].items():
@@ -52,6 +54,16 @@ def load(jsonl: Path) -> pd.DataFrame:
         raise SystemExit(f"no rides in {jsonl}: did the parity tool find the athletes' zips and index files?")
     df = pd.DataFrame(rows)
     df["missing_ratio"] = df["power_missing"] / df["samples"].clip(lower=1)
+    # Threshold GoldenCheetah actually used for IF/TSS (rule change 2): NP / IF. It is the zone FTP,
+    # which can differ from cp_setting (the zone CP).
+    np_gc = pd.to_numeric(df["np_gc"], errors="coerce")
+    if_gc = pd.to_numeric(df["if_gc"], errors="coerce")
+    df["thr_gc"] = np.where(if_gc > 0, np_gc / if_gc, np.nan)
+    np_ours = pd.to_numeric(df["np_ours"], errors="coerce")
+    hours = df["samples"] * df["rec_int"] / 3600.0
+    df["tss_ours_thr"] = np.where(df["thr_gc"] > 0, 100.0 * hours * (np_ours / df["thr_gc"]) ** 2, np.nan)
+    df["cp_differs"] = (df["cp"] - df["thr_gc"]).abs() > 1.0
+    df["jitter"] = pd.to_numeric(df["rec_int_share"], errors="coerce") < 0.9
     df["interval_group"] = np.where(df["rec_int"] == 1.0, "1s", np.where(df["rec_int"] == 5.0, "5s", "other"))
     return df
 
@@ -109,11 +121,11 @@ def analyse(df: pd.DataFrame) -> dict:
     mmp_keys = [c[len("mmp_gc_") :] for c in df.columns if c.startswith("mmp_gc_")]
     one_s = df[df["interval_group"] == "1s"]
     other = df[df["interval_group"] != "1s"]
-    with_cp = one_s[one_s["cp"].notna()]
+    with_cp = one_s[one_s["thr_gc"].notna()]
 
     np_agree_1s = agree(one_s["np_ours"], one_s["np_gc"], TOL_WATTS)
     np_agree_other = agree(other["np_ours"], other["np_gc"], TOL_WATTS)
-    tss_agree = agree(with_cp["tss_ours"], with_cp["tss_gc"], TOL_TSS)
+    tss_agree = agree(with_cp["tss_ours_thr"], with_cp["tss_gc"], TOL_TSS)
 
     mmp_pairs = pd.concat(
         [agree(one_s[f"mmp_ours_{k}"], one_s[f"mmp_gc_{k}"], TOL_WATTS) for k in mmp_keys], ignore_index=True
@@ -167,6 +179,11 @@ def analyse(df: pd.DataFrame) -> dict:
         "rides_with_over_3000": int((df["over_3000"] > 0).sum()),
         "rides_with_negative": int((df["negative"] > 0).sum()),
         "rides_with_bad_rows": int((df["bad_rows"] > 0).sum()),
+        "rides_with_jitter": int(df["jitter"].sum()),
+        "cp_differs_from_gc_threshold": {
+            "n": int(df["thr_gc"].notna().sum()),
+            "differs": int((df["cp_differs"] & df["thr_gc"].notna()).sum()),
+        },
         "H1_np_1s": {**h1, "verdict": verdict_at_least(h1["ci"], TARGET_RATE)},
         "H2_mmp_1s": {
             **h2,
@@ -179,7 +196,8 @@ def analyse(df: pd.DataFrame) -> dict:
         "diffs": {
             "np_1s": diff_stats(one_s["np_ours"], one_s["np_gc"]),
             "np_other": diff_stats(other["np_ours"], other["np_gc"]),
-            "tss_1s": diff_stats(with_cp["tss_ours"], with_cp["tss_gc"]),
+            "tss_1s_gc_threshold": diff_stats(with_cp["tss_ours_thr"], with_cp["tss_gc"]),
+            "tss_1s_cp_setting": diff_stats(one_s["tss_ours"], one_s["tss_gc"]),
             **{f"mmp_{k}": diff_stats(one_s[f"mmp_ours_{k}"], one_s[f"mmp_gc_{k}"]) for k in mmp_keys},
         },
         "mmp_rate_by_window": {
@@ -207,13 +225,16 @@ def to_markdown(r: dict, title: str) -> str:
         f"- 라이딩 {r['rides']}개, 선수 {r['athletes']}명, 기록 간격 그룹 {r['interval_groups']}",
         f"- 파워 결측 없는 라이딩 {miss['zero']}, 1% 미만 {miss['under_1pct']}, 1% 이상 {miss['over_1pct']}",
         f"- 3000 W 이상 샘플이 있는 라이딩 {r['rides_with_over_3000']}, "
-        f"음수 파워 {r['rides_with_negative']}, 깨진 행 {r['rides_with_bad_rows']}",
+        f"음수 파워 {r['rides_with_negative']}, 깨진 행 {r['rides_with_bad_rows']}, "
+        f"타임스탬프 흔들림 {r['rides_with_jitter']}",
+        f"- GC가 IF에 쓴 임계값이 cp_setting과 1 W 넘게 다른 라이딩: "
+        f"{r['cp_differs_from_gc_threshold']['differs']} / {r['cp_differs_from_gc_threshold']['n']}",
         "",
         "| 가설 | 일치율 [95% 구간] | 판정 |",
         "|---|---|---|",
         f"| H1 NP (1초, ≤1 W) | {rate(r['H1_np_1s'])} | {r['H1_np_1s']['verdict']} |",
         f"| H2 MMP (1초, 16구간, ≤1 W) | {rate(r['H2_mmp_1s'])} | {r['H2_mmp_1s']['verdict']} |",
-        f"| H3 TSS (1초, ≤0.5) | {rate(r['H3_tss_1s'])} | {r['H3_tss_1s']['verdict']} |",
+        f"| H3 TSS (1초, GC 임계값, ≤0.5) | {rate(r['H3_tss_1s'])} | {r['H3_tss_1s']['verdict']} |",
         f"| H4 NP (1초 아님) | {rate(h4)}; 차이(1초 - 그 외) {h4['diff_1s_minus_other']} | {h4['verdict']} |",
         "",
         "## 차이 분포 (|ours - GC|)",

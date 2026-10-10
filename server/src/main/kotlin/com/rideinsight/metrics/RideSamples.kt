@@ -29,15 +29,24 @@ object RecordingInterval {
      * samples or when every delta is zero. GoldenCheetah stores one interval per file; the
      * OpenData CSV does not carry it, so this estimate stands in for it.
      */
-    fun estimate(secs: DoubleArray): Double? {
+    fun estimate(secs: DoubleArray): Double? = analyse(secs)?.intervalSecs
+
+    /** The estimated interval and the share of positive deltas equal to it (1.0 = perfectly regular). */
+    class Estimate(val intervalSecs: Double, val modeShare: Double)
+
+    fun analyse(secs: DoubleArray): Estimate? {
         if (secs.size < 2) return null
         val counts = HashMap<Long, Int>()
+        var positive = 0
         for (i in 1 until secs.size) {
             val delta = Math.round((secs[i] - secs[i - 1]) * 100.0)
-            if (delta > 0) counts.merge(delta, 1, Int::plus)
+            if (delta > 0) {
+                counts.merge(delta, 1, Int::plus)
+                positive++
+            }
         }
         val best = counts.entries.maxWithOrNull(compareBy<Map.Entry<Long, Int>> { it.value }.thenBy { -it.key })
             ?: return null
-        return best.key / 100.0
+        return Estimate(best.key / 100.0, best.value.toDouble() / positive)
     }
 }

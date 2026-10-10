@@ -56,7 +56,8 @@ fun main(args: Array<String>) {
 
 internal fun compare(athlete: String, ride: JsonNode, csv: String, parsed: OpenDataCsv.Result): Map<String, Any?> {
     val samples = parsed.samples
-    val recInt = RecordingInterval.estimate(samples.secs)
+    val interval = RecordingInterval.analyse(samples.secs)
+    val recInt = interval?.intervalSecs
     val gc = ride.path("gc")
     val cp = gc.path("cp_setting").asDouble(0.0).takeIf { it > 0.0 }
 
@@ -76,6 +77,7 @@ internal fun compare(athlete: String, ride: JsonNode, csv: String, parsed: OpenD
         "date" to ride.path("date").asString(null),
         "csv" to csv,
         "rec_int" to recInt,
+        "rec_int_share" to interval?.modeShare,
         "samples" to samples.size,
         "last_secs" to (samples.secs.lastOrNull()),
         "power_missing" to samples.powerMissing,
