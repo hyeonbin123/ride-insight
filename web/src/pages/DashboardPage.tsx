@@ -111,7 +111,7 @@ export function DashboardPage() {
                 방법 {estimate.data.method} · 20분 최대 {formatWatts(estimate.data.best20m)} · 60분 최대 {formatWatts(estimate.data.best60m)}
                 {estimate.data.rules["R3_critical_power"] != null ? ` · CP 모델 ${formatWatts(estimate.data.rules["R3_critical_power"])}` : ""}
               </Typography>
-              <Typography variant="caption" color="text.secondary">
+              <Typography variant="caption" color="text.secondary" sx={{ flexBasis: "100%" }}>
                 {estimate.data.note}
               </Typography>
             </Stack>

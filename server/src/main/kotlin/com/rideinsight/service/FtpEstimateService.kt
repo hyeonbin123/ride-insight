@@ -12,6 +12,12 @@ import org.springframework.stereotype.Service
  */
 @Service
 class FtpEstimateService(private val athletes: AthleteService) {
+    companion object {
+        /** Stage-3 sealed test numbers for rule R1 (reports/ftp/test.md, 2026-10-10). */
+        const val SEALED_TEST_MAE_WATTS = 29
+        const val SEALED_TEST_BIAS_WATTS = 17
+    }
+
     class Estimate(
         val method: String,
         val ftpWatts: Double?,
@@ -40,7 +46,9 @@ class FtpEstimateService(private val athletes: AthleteService) {
             note = if (r1 == null) {
                 "no ride of 20 minutes or more with power in the last $weeks weeks"
             } else {
-                "rule R1 = 0.95 × best 20-minute power over the last $weeks weeks; see docs/experiments.md stage 3"
+                "rule R1 = 0.95 × best 20-minute power over the last $weeks weeks. On the sealed test set " +
+                    "(123 athletes) R1 missed the athletes' own FTP setting by $SEALED_TEST_MAE_WATTS W on average and " +
+                    "ran $SEALED_TEST_BIAS_WATTS W low; a learned model was not adopted (docs/experiments.md stage 3)"
             },
         )
     }

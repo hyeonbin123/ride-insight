@@ -32,3 +32,6 @@ CLAUDE.md
 HANDOFF.md
 ROLES.md
 TASKS.md
+
+# large per-ride dumps (regenerate with the parity task)
+reports/**/*.jsonl

@@ -41,6 +41,11 @@ dependencies {
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
+springBoot {
+	// The tools package has its own main functions; bootRun must start the server.
+	mainClass.set("com.rideinsight.ServerApplicationKt")
+}
+
 kotlin {
 	compilerOptions {
 		freeCompilerArgs.addAll("-Xjsr305=strict", "-Xannotation-default-target=param-property")
