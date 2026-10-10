@@ -21,7 +21,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-from ride_insight_ml.opendata import _metric, athlete_id_from_name
+from ride_insight_ml.opendata import _metric, athlete_id_from_name, load_meta
 
 MMP_KEYS = [
     "1s_critical_power",
@@ -143,7 +143,7 @@ def index_zip(path: Path) -> dict:
     with zipfile.ZipFile(path) as z:
         names = z.namelist()
         js = [n for n in names if n.endswith(".json")]
-        meta = json.loads(z.read(js[0]).decode("utf-8", "replace")) if js else {}
+        meta = load_meta(z.read(js[0])) if js else {}
         csv_last: dict[str, float | None] = {}
         for n in names:
             if n.endswith(".csv"):

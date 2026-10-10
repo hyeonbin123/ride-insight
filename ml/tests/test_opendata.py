@@ -74,3 +74,13 @@ def test_inventory_counts_power_rides_and_cp_changes(tmp_path: Path):
     assert inv["cp_changes"] == 1
     assert inv["intervals_probe"] == {"1.0": 1, "5.0": 1}
     assert inv["gender"] == "F"
+
+
+def test_load_meta_repairs_unescaped_sport_quotes():
+    raw = (
+        b'{\n\t"VERSION":"1.8",\n\t"RIDES":[\n\t{\n\t\t"date":"2018/01/21 13:42:55 UTC",\n'
+        b'\t\t"data":"TDSP-C-AGL-EV--",\n\t\t"sport":""3.5-4.5 hours"",\n\n\t\t"METRICS":{}\n\t}\n]}\n'
+    )
+    meta = opendata.load_meta(raw)
+    assert meta["RIDES"][0]["sport"] == "'3.5-4.5 hours'"
+    assert opendata.load_meta(b'{"a": 1}') == {"a": 1}

@@ -17,6 +17,7 @@ import argparse
 import collections
 import hashlib
 import json
+import re
 import sys
 import time
 import urllib.request
@@ -171,6 +172,24 @@ def cmd_download(sample: Path, dest: Path, limit: int | None) -> None:
 # ----------------------------------------------------------------------------- inventory
 
 
+_SPORT_LINE = re.compile(r'("sport":")(.*?)(",?\s*\n)')
+
+
+def load_meta(raw: bytes) -> dict:
+    """Parse an athlete's metadata JSON, repairing GoldenCheetah's unescaped quotes.
+
+    One export (athlete 8fc5800d, 2026-10-10) contains ``"sport":""3.5-4.5 hours""``: the user-typed
+    sport string was written without escaping. If strict parsing fails, inner double quotes on
+    ``sport`` lines are replaced by single quotes and parsing is retried once.
+    """
+    text = raw.decode("utf-8", "replace")
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        repaired = _SPORT_LINE.sub(lambda m: m.group(1) + m.group(2).replace('"', "'") + m.group(3), text)
+        return json.loads(repaired)
+
+
 def _metric(metrics: dict, key: str) -> float | None:
     v = metrics.get(key)
     if isinstance(v, list):
@@ -200,7 +219,7 @@ def inventory_of_zip(path: Path, csv_probe: int = 50) -> dict:
     with zipfile.ZipFile(path) as z:
         names = z.namelist()
         js = [n for n in names if n.endswith(".json")]
-        meta = json.loads(z.read(js[0]).decode("utf-8", "replace")) if js else {}
+        meta = load_meta(z.read(js[0])) if js else {}
         rides = meta.get("RIDES", [])
         bike = [r for r in rides if (r.get("sport") or "") in ("Bike", "Turbo", "")]
         power = [r for r in bike if (_metric(r.get("METRICS", {}), "average_power") or 0) > 0]

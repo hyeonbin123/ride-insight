@@ -48,6 +48,8 @@ def load(jsonl: Path) -> pd.DataFrame:
         for k, v in d["gc"]["mmp"].items():
             row[f"mmp_gc_{k}"] = v
         rows.append(row)
+    if not rows:
+        raise SystemExit(f"no rides in {jsonl}: did the parity tool find the athletes' zips and index files?")
     df = pd.DataFrame(rows)
     df["missing_ratio"] = df["power_missing"] / df["samples"].clip(lower=1)
     df["interval_group"] = np.where(df["rec_int"] == 1.0, "1s", np.where(df["rec_int"] == 5.0, "5s", "other"))
@@ -212,9 +214,9 @@ def to_markdown(r: dict, title: str) -> str:
         f"| H1 NP (1초, ≤1 W) | {rate(r['H1_np_1s'])} | {r['H1_np_1s']['verdict']} |",
         f"| H2 MMP (1초, 16구간, ≤1 W) | {rate(r['H2_mmp_1s'])} | {r['H2_mmp_1s']['verdict']} |",
         f"| H3 TSS (1초, ≤0.5) | {rate(r['H3_tss_1s'])} | {r['H3_tss_1s']['verdict']} |",
-        f"| H4 NP (1초 아님) | {rate(h4)}; 차이(1초 − 그 외) {h4['diff_1s_minus_other']} | {h4['verdict']} |",
+        f"| H4 NP (1초 아님) | {rate(h4)}; 차이(1초 - 그 외) {h4['diff_1s_minus_other']} | {h4['verdict']} |",
         "",
-        "## 차이 분포 (|ours − GC|)",
+        "## 차이 분포 (|ours - GC|)",
         "",
         "| 지표 | n | 중앙값 | p95 | 최대 |",
         "|---|---|---|---|---|",
@@ -246,7 +248,7 @@ def main(argv: list[str] | None = None) -> None:
         json.dumps(result, indent=1, ensure_ascii=False, default=str), encoding="utf-8"
     )
     Path(f"{a.out}.md").write_text(to_markdown(result, a.jsonl.stem), encoding="utf-8")
-    print(Path(f"{a.out}.md").read_text(encoding="utf-8"))
+    print(f"wrote {a.out}.json and {a.out}.md")
 
 
 if __name__ == "__main__":
