@@ -30,6 +30,14 @@ class AthleteRepository(private val jdbc: JdbcClient) {
     fun find(id: UUID): Athlete? =
         jdbc.sql("select * from athlete where id = ?").param(id).query(::mapAthlete).optional().orElse(null)
 
+    /**
+     * Locks the athlete row for the current transaction so uploads and FTP changes of one athlete
+     * run one at a time (Codex review 2026-10-10: an upload overlapping a threshold change could keep
+     * metrics computed with the old FTP). Returns false when the athlete does not exist.
+     */
+    fun lock(id: UUID): Boolean =
+        jdbc.sql("select id from athlete where id = ? for update").param(id).query(UUID::class.java).optional().isPresent
+
     fun exists(id: UUID): Boolean =
         jdbc.sql("select count(*) from athlete where id = ?").param(id).query(Long::class.java).single() > 0
 

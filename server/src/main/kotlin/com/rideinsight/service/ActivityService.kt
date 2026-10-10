@@ -33,11 +33,12 @@ class ActivityService(
             17L to "hiking",
         )
         const val MAX_POWER_STORED = 32_000 // smallint column; anything above is treated as missing
+        const val MAX_CURVE_POINTS = 300
     }
 
     @Transactional
     fun ingestFit(athleteId: UUID, bytes: ByteArray, fileName: String?): StoredActivity {
-        if (!athletes.exists(athleteId)) throw NotFoundException("athlete $athleteId not found")
+        if (!athletes.lock(athleteId)) throw NotFoundException("athlete $athleteId not found")
         val fit = FitActivity.decode(bytes) // FitDecodeException -> 400
         val sport = fit.sport
         REJECTED_SPORTS[sport]?.let { throw UnsupportedSportException("sport '$it' is not supported; upload a cycling activity") }
@@ -128,15 +129,20 @@ class ActivityService(
         metrics.parseMmp(json),
     )
 
+    /** Log-spaced durations up to [maxSecs], never more than [MAX_CURVE_POINTS] of them. */
     internal fun curveDurations(maxSecs: Int): List<Int> {
-        val out = sortedSetOf<Int>()
-        var d = 1.0
-        while (d <= maxSecs) {
-            out.add(d.toInt())
-            d = maxOf(d + 1, d * 1.04)
+        var growth = 1.04
+        while (true) {
+            val out = sortedSetOf<Int>()
+            var d = 1.0
+            while (d <= maxSecs) {
+                out.add(d.toInt())
+                d = maxOf(d + 1, d * growth)
+            }
+            for (w in MeanMaximalPower.STANDARD_WINDOWS_SECS) if (w <= maxSecs) out.add(w)
+            if (maxSecs >= 1) out.add(maxSecs)
+            if (out.size <= MAX_CURVE_POINTS) return out.toList()
+            growth *= 1.5 // degenerate rides (e.g. two samples a week apart) need a coarser grid
         }
-        for (w in MeanMaximalPower.STANDARD_WINDOWS_SECS) if (w <= maxSecs) out.add(w)
-        if (maxSecs >= 1) out.add(maxSecs)
-        return out.toList()
     }
 }

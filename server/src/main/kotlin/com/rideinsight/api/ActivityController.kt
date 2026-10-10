@@ -24,9 +24,10 @@ class ActivityController(private val activities: ActivityService) {
     fun samples(@PathVariable id: UUID, @RequestParam(defaultValue = "1") every: Int): SamplesResponse {
         require(every >= 1) { "'every' must be at least 1" }
         val series = activities.samples(id)
-        // Never return more than MAX_POINTS: widen the stride if the caller asked for too much.
-        val stride = maxOf(every, (series.secs.size + MAX_POINTS - 1) / MAX_POINTS)
-        return SamplesResponse.from(series, stride)
+        // Never return more than MAX_POINTS: widen the bucket (seconds) if the caller asked for too much.
+        val spanSecs = (series.secs.lastOrNull() ?: 0.0) - (series.secs.firstOrNull() ?: 0.0)
+        val minEvery = Math.ceil(spanSecs / MAX_POINTS).toInt()
+        return SamplesResponse.from(series, maxOf(every, minEvery, 1))
     }
 
     @GetMapping("/{id}/power-curve")

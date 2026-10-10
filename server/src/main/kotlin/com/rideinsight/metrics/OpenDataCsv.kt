@@ -17,7 +17,12 @@ import java.io.BufferedReader
 object OpenDataCsv {
     const val DEFAULT_MAX_ROWS = 1_000_000
 
+    /** Values stored in smallint columns; larger readings are sensor garbage and become null. */
+    const val SMALLINT_MAX = 32_000
+
     class Extras(
+        /** Power with missing cells as null (the metric input in [RideSamples] uses 0 instead). */
+        val powerNullable: List<Int?>,
         val heartRate: List<Int?>?,
         val cadence: List<Int?>?,
         val distanceM: List<Double?>?,
@@ -34,7 +39,7 @@ object OpenDataCsv {
 
     fun read(reader: BufferedReader, maxRows: Int = DEFAULT_MAX_ROWS): Result {
         val header = reader.readLine()
-            ?: return Result(RideSamples(DoubleArray(0), DoubleArray(0)), 0, 0, false, Extras(null, null, null, null))
+            ?: return Result(RideSamples(DoubleArray(0), DoubleArray(0)), 0, 0, false, Extras(emptyList(), null, null, null, null))
         val columns = header.split(',').map { it.trim() }
         val secsIndex = columns.indexOf("secs")
         val powerIndex = columns.indexOf("power")
@@ -46,6 +51,7 @@ object OpenDataCsv {
 
         val secs = ArrayList<Double>()
         val power = ArrayList<Double>()
+        val powerNullable = ArrayList<Int?>()
         val hr = ArrayList<Int?>()
         val cad = ArrayList<Int?>()
         val dist = ArrayList<Double?>()
@@ -71,8 +77,9 @@ object OpenDataCsv {
             if (p == null) missing++
             secs.add(s)
             power.add(p ?: 0.0)
-            hr.add(num(hrIndex)?.let { Math.round(it).toInt() })
-            cad.add(num(cadIndex)?.let { Math.round(it).toInt() })
+            powerNullable.add(p?.let { Math.round(it).toInt() }?.takeIf { it in 0..SMALLINT_MAX })
+            hr.add(num(hrIndex)?.let { Math.round(it).toInt() }?.takeIf { it in 0..SMALLINT_MAX })
+            cad.add(num(cadIndex)?.let { Math.round(it).toInt() }?.takeIf { it in 0..SMALLINT_MAX })
             dist.add(num(kmIndex)?.let { it * 1000.0 })
             alt.add(num(altIndex))
             require(secs.size <= maxRows) { "CSV has more than $maxRows rows" }
@@ -83,7 +90,7 @@ object OpenDataCsv {
             bad,
             duplicates,
             powerIndex >= 0,
-            Extras(some(hr), some(cad), some(dist), some(alt)),
+            Extras(powerNullable, some(hr), some(cad), some(dist), some(alt)),
         )
     }
 }

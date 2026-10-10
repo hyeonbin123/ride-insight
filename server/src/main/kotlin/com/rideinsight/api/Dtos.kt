@@ -107,8 +107,18 @@ data class SamplesResponse(
     val altitudeM: List<Double?>?,
 ) {
     companion object {
+        /** One point per [every] seconds of elapsed time: the first sample of each bucket. */
         fun from(s: SampleSeries, every: Int): SamplesResponse {
-            fun <T> pick(list: List<T>?): List<T>? = list?.filterIndexed { i, _ -> i % every == 0 }
+            val keep = ArrayList<Int>()
+            var lastBucket = Long.MIN_VALUE
+            for ((i, t) in s.secs.withIndex()) {
+                val bucket = Math.floor(t / every).toLong()
+                if (bucket != lastBucket) {
+                    keep.add(i)
+                    lastBucket = bucket
+                }
+            }
+            fun <T> pick(list: List<T>?): List<T>? = list?.let { l -> keep.map { l[it] } }
             return SamplesResponse(
                 every, pick(s.secs)!!, pick(s.power), pick(s.heartRate), pick(s.cadence), pick(s.distanceM), pick(s.altitudeM),
             )

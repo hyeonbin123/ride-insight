@@ -14,6 +14,8 @@ import java.time.format.DateTimeFormatter
 import java.util.UUID
 import java.util.zip.ZipFile
 import org.springframework.boot.runApplication
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
 import tools.jackson.databind.JsonNode
 import tools.jackson.databind.json.JsonMapper
 
@@ -33,6 +35,7 @@ fun main(args: Array<String>) {
         val athletes = context.getBean(AthleteRepository::class.java)
         val activities = context.getBean(ActivityRepository::class.java)
         val metrics = context.getBean(MetricsService::class.java)
+        val transactions = TransactionTemplate(context.getBean(PlatformTransactionManager::class.java))
         val result = importAthlete(
             File(options.getValue("--zip")),
             File(options.getValue("--index")),
@@ -42,6 +45,7 @@ fun main(args: Array<String>) {
             athletes,
             activities,
             metrics,
+            transactions,
         )
         println("athlete=${result.athleteId} activities=${result.activities} skipped=${result.skipped} thresholds=${result.thresholds}")
     } finally {
@@ -62,6 +66,7 @@ fun importAthlete(
     athletes: AthleteRepository,
     activities: ActivityRepository,
     metrics: MetricsService,
+    transactions: TransactionTemplate,
 ): ImportResult {
     require(label == "cp" || label == "ftp") { "--label must be cp or ftp" }
     val tree = JsonMapper.builder().build().readTree(index)
@@ -99,17 +104,16 @@ fun importAthlete(
             if (samples.size < 2) { skipped++; continue }
             val interval = RecordingInterval.analyse(samples.secs)
             val startedAt = LocalDateTime.parse(ride.path("date").asString().removeSuffix(" UTC"), DATE_FORMAT).atOffset(ZoneOffset.UTC)
-            val power = samples.power.mapIndexed { i, w -> if (i < samples.size) w.toInt() else null }
             val series = SampleSeries(
                 secs = samples.secs.toList(),
-                power = power,
+                power = parsed.extras.powerNullable, // missing cells stay NULL in storage
                 heartRate = parsed.extras.heartRate,
                 cadence = parsed.extras.cadence,
                 distanceM = parsed.extras.distanceM,
                 altitudeM = parsed.extras.altitudeM,
             )
             val id = try {
-                activities.insert(
+                transactions.execute { activities.insert(
                     ActivityRepository.NewActivity(
                         athleteId = athlete.id,
                         startedAt = startedAt,
@@ -127,12 +131,11 @@ fun importAthlete(
                         powerMissing = samples.powerMissing,
                     ),
                     series,
-                )
+                ).also { newId -> metrics.computeAndStore(newId, athlete.id, startedAt, series, true) } }!!
             } catch (e: DuplicateActivityException) {
                 skipped++
                 continue
             }
-            metrics.computeAndStore(id, athlete.id, startedAt, series, true)
             stored++
         }
     }

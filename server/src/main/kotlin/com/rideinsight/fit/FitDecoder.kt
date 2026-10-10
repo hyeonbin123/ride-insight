@@ -21,6 +21,7 @@ object FitDecoder {
     const val MAX_DATA_SIZE = 64 * 1024 * 1024
 
     private const val MAX_RECORDS = 2_000_000
+    private const val MAX_CHAINED_BLOCKS = 16
 
     /**
      * Decodes a FIT file, including chained files (several header + data + CRC blocks back to
@@ -32,8 +33,10 @@ object FitDecoder {
         val messages = ArrayList<FitMessage>()
         var crcValid = true
         var developerFields = 0
+        var blocks = 0
         while (offset < bytes.size) {
-            val part = decodeOne(bytes, offset)
+            if (++blocks > MAX_CHAINED_BLOCKS) throw FitDecodeException("more than $MAX_CHAINED_BLOCKS chained FIT blocks")
+            val part = decodeOne(bytes, offset, MAX_RECORDS - messages.size)
             if (first == null) first = part
             messages.addAll(part.messages)
             crcValid = crcValid && part.crcValid
@@ -44,7 +47,7 @@ object FitDecoder {
         return FitFile(header.header, crcValid, messages, developerFields)
     }
 
-    private fun decodeOne(bytes: ByteArray, offset: Int): FitFile {
+    private fun decodeOne(bytes: ByteArray, offset: Int, messageBudget: Int): FitFile {
         val header = readHeader(bytes, offset)
         val dataEnd = offset + header.headerSize + header.dataSize
         if (dataEnd + 2 > bytes.size) {
@@ -89,7 +92,9 @@ object FitDecoder {
                 message.timestampRaw?.let { lastTimestamp = it }
                 messages.add(message)
             }
-            if (messages.size > MAX_RECORDS) throw FitDecodeException("more than $MAX_RECORDS messages")
+            // The budget is shared by all chained blocks (Codex review 2026-10-10: per-block caps let
+            // five small blocks allocate 7.5 million messages from a 7.5 MB file).
+            if (messages.size > messageBudget) throw FitDecodeException("more than $MAX_RECORDS messages in file")
         }
         return FitFile(header, crcValid, messages, developerFieldsSeen)
     }

@@ -44,7 +44,7 @@ class AthleteService(
     /** Sets the FTP from a date and recomputes the TSS of activities from that date on. */
     @Transactional
     fun setThreshold(id: UUID, effectiveFrom: LocalDate, ftpWatts: Int): Int {
-        if (!athletes.exists(id)) throw NotFoundException("athlete $id not found")
+        if (!athletes.lock(id)) throw NotFoundException("athlete $id not found")
         athletes.setThreshold(id, effectiveFrom, ftpWatts, "manual")
         return metrics.recomputeFrom(id, effectiveFrom.atStartOfDay().atOffset(ZoneOffset.UTC))
     }
@@ -53,10 +53,12 @@ class AthleteService(
         if (!athletes.exists(id)) throw NotFoundException("athlete $id not found")
         require(!to.isBefore(from)) { "'to' must not be before 'from'" }
         require(java.time.temporal.ChronoUnit.DAYS.between(from, to) <= 3 * 366) { "range must be at most three years" }
-        // Warm up the loads from activities before 'from' so the series does not start at zero.
-        val warmFrom = from.minusDays(120)
+        // Warm up the loads from the athlete's first activity so CTL does not depend on the query
+        // start (Codex review 2026-10-10: a 120-day warm-up left about 6 % of CTL missing).
+        val firstDay = activities.firstActivityDate(id)
+        val warmFrom = if (firstDay != null && firstDay.isBefore(from)) firstDay else from
         val daily = activities.dailyTss(id, warmFrom, to)
-        val warm = TrainingLoad.series(warmFrom, from.minusDays(1), daily).lastOrNull()
+        val warm = if (warmFrom.isBefore(from)) TrainingLoad.series(warmFrom, from.minusDays(1), daily).lastOrNull() else null
         return TrainingLoad.series(from, to, daily, warm?.ctl ?: 0.0, warm?.atl ?: 0.0)
     }
 

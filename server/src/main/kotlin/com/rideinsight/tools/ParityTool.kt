@@ -86,6 +86,7 @@ internal fun compare(athlete: String, ride: JsonNode, csv: String, parsed: OpenD
         "over_3000" to over3000,
         "negative" to negative,
         "cp" to cp,
+        "weight" to gc.path("athlete_weight").nullableDouble()?.takeIf { it > 20.0 && it < 300.0 },
         "ours" to linkedMapOf("np" to np, "if" to intensity, "tss" to tss, "mmp" to mmp),
         "gc" to linkedMapOf(
             "np" to gc.path("coggan_np").nullableDouble(),

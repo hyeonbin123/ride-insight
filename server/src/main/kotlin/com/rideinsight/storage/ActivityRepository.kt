@@ -178,13 +178,18 @@ class ActivityRepository(private val jdbc: JdbcClient) {
             .query { rs, _ -> rs.getObject("day", java.time.LocalDate::class.java) to rs.getDouble("tss") }
             .list().toMap()
 
-    /** Per-window maximum of the stored MMP values over activities started in [from, to]. */
+    /** UTC date of the athlete's earliest activity, or null. */
+    fun firstActivityDate(athleteId: UUID): java.time.LocalDate? =
+        jdbc.sql("select min((started_at at time zone 'UTC')::date) from activity where athlete_id = ?")
+            .param(athleteId).query(java.time.LocalDate::class.java).optional().orElse(null)
+
+    /** Per-window maximum of the stored MMP values over activities started in [from, to). */
     fun maxMmp(athleteId: UUID, from: OffsetDateTime, to: OffsetDateTime): Map<String, Double> =
         jdbc.sql(
             """
             select kv.key as k, max((kv.value)::text::double precision) as v
             from activity a join activity_metrics m on m.activity_id = a.id, jsonb_each(m.mmp) kv
-            where a.athlete_id = ? and a.started_at between ? and ? and jsonb_typeof(kv.value) = 'number'
+            where a.athlete_id = ? and a.started_at >= ? and a.started_at < ? and jsonb_typeof(kv.value) = 'number'
             group by kv.key
             """,
         ).params(athleteId, from, to).query { rs, _ -> rs.getString("k") to rs.getDouble("v") }.list().toMap()
