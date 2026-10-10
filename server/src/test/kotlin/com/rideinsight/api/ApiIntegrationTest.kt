@@ -146,6 +146,21 @@ class ApiIntegrationTest : ApiTestBase() {
     }
 
     @Test
+    fun `unknown routes, wrong methods and bad content types are 4xx with security headers`() {
+        // ZAP scan 1 found 500s on every unknown path.
+        assertEquals(404, get("/").status)
+        assertEquals(404, get("/api").status)
+        assertEquals(404, get("/api/nope").status)
+        assertEquals(405, delete("/api/athletes").status)
+        val id = createAthlete()
+        assertEquals(415, call(org.springframework.http.HttpMethod.POST, "/api/athletes/$id/activities", json = "{}").status)
+        assertEquals(400, get("/api/athletes/$id/activities?limit=abc").status)
+        val headers = client.get().uri("/api/athletes/$id").exchange({ _, res -> res.headers }, false)
+        assertEquals("nosniff", headers.getFirst("X-Content-Type-Options"))
+        assertEquals("no-store", headers.getFirst("Cache-Control"))
+    }
+
+    @Test
     fun `health endpoint is up`() {
         val r = get("/actuator/health")
         assertEquals(200, r.status)

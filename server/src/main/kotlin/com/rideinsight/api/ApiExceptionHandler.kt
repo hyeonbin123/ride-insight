@@ -9,7 +9,14 @@ import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.http.converter.HttpMessageNotReadableException
+import org.springframework.web.HttpMediaTypeNotAcceptableException
+import org.springframework.web.HttpMediaTypeNotSupportedException
+import org.springframework.web.HttpRequestMethodNotSupportedException
 import org.springframework.web.bind.MethodArgumentNotValidException
+import org.springframework.web.bind.MissingServletRequestParameterException
+import org.springframework.web.multipart.MultipartException
+import org.springframework.web.servlet.NoHandlerFoundException
+import org.springframework.web.servlet.resource.NoResourceFoundException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
@@ -55,6 +62,21 @@ class ApiExceptionHandler {
         MissingServletRequestPartException::class,
     )
     fun badRequest(e: Exception) = respond(HttpStatus.BAD_REQUEST, "bad_request", e.message?.lineSequence()?.first() ?: "bad request")
+
+    // Routing and protocol errors are 4xx, not "unexpected" (OWASP ZAP scan 1, 2026-10-10: every
+    // unknown path answered 500 because the catch-all below swallowed NoResourceFoundException).
+    @ExceptionHandler(NoResourceFoundException::class, NoHandlerFoundException::class)
+    fun noRoute(e: Exception) = respond(HttpStatus.NOT_FOUND, "not_found", "no such endpoint")
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException::class)
+    fun method(e: HttpRequestMethodNotSupportedException) =
+        respond(HttpStatus.METHOD_NOT_ALLOWED, "method_not_allowed", "method ${e.method} is not supported here")
+
+    @ExceptionHandler(HttpMediaTypeNotSupportedException::class, HttpMediaTypeNotAcceptableException::class)
+    fun mediaType(e: Exception) = respond(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "unsupported_media_type", "unsupported content type")
+
+    @ExceptionHandler(MissingServletRequestParameterException::class, MultipartException::class)
+    fun missing(e: Exception) = respond(HttpStatus.BAD_REQUEST, "bad_request", e.message?.lineSequence()?.first() ?: "bad request")
 
     @ExceptionHandler(Exception::class)
     fun other(e: Exception): ResponseEntity<ErrorResponse> {

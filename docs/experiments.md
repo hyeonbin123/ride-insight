@@ -132,6 +132,17 @@ R4(CP 3변수)는 돌리지 않는다. 비선형 적합이 필요하고 FTP 추�
 - 시나리오: ELEMNT 파일(715 KB, 레코드 13,471개)을 동시 10개 업로드 × 3회(선수 10명에 각각), 그다음 `samples?every=1`과 `power-curve` 동시 20개 조회. 측정: p50·p95 응답 시간, 오류 수. 도구는 Python `concurrent.futures` + `urllib`(`ml/.../load.py`). 조건: GPU 무관, 다른 Gradle 작업 없을 때
 - 판정 없이 보고만 한다(목표치를 미리 정할 근거가 없다). 다만 **오류(5xx) 0건**은 조건(**H10**)
 
+### 5단계 결과 (2026-10-10)
+- **H8 변조 FIT (지지)**: `TamperedFitTest`(테스트용 FIT 인코더로 생성). 결과: 데이터 크기 과대 → 400 `invalid_fit`, 과소 → 400 `invalid_fit`, CRC 변조 → 201 + `crcValid=false`, 정의 없는 데이터 메시지 → 400 `invalid_fit`, 255필드 정의 뒤 EOF → 400 `invalid_fit`, 타임스탬프 역행 → 400 `invalid_activity`, 10 MB + 1 바이트 → 413(Tomcat이 413을 보내고 연결을 닫아 클라이언트는 전송 중 끊김을 볼 수 있음). 500 없음
+- **부하 (판정 없음, H10 조건 충족)**: ELEMNT 파일(715 KB, 13,471 레코드) 동시 10개 업로드 × 3회 + 동시 20개 조회. 조건: 같은 PC에서 799명 특징 내보내기(Gradle)가 동시에 돌고 있었고, 서버는 bootRun 직후(1회차에 JIT 워밍업 포함). 결과(`reports/load/2026-10-10-elemnt.json`): 업로드 p50/p95 1회차 790/792 ms, 2회차 376/378, 3회차 373/376; 조회 p50 196 / p95 232 ms; 5xx 0, 비2xx 0
+- **H9 ZAP 1차 (지지, 그러나 고칠 것이 있었음)**: OWASP ZAP 2.17.0, 시드 11개(선수·활동 읽기 전부, 선수 생성, FTP 변경), spider + active scan(29초, 끝점 20개). `reports/dast/2026-10-10-scan1.md`. High 0, Medium 0, **Low 3**, Informational 1
+  - Application Error Disclosure(7): `/`, `/api`, `/api/activities`, `/api/athletes`(GET), `/robots.txt` 등 **존재하지 않는 경로나 지원하지 않는 메서드에 500**을 돌려줬다. 원인은 예외 처리기의 catch-all이 `NoResourceFoundException`·`HttpRequestMethodNotSupportedException`까지 삼킨 것. 진짜 버그 → 404·405·415·400으로 매핑하고 통합 테스트 추가. 응답의 12%가 5xx였다
+  - X-Content-Type-Options Header Missing(5): 진짜 → `nosniff`, `X-Frame-Options`, `Referrer-Policy`, CSP, `Cache-Control: no-store`를 붙이는 필터 추가
+  - Timestamp Disclosure - Unix(3): `samples` 응답의 숫자 배열을 타임스탬프로 오인. 오탐
+  - User Agent Fuzzer(정보): 참고
+  - (ZAP 프록시 포트 기본값 8080이 서버와 겹쳐 첫 실행은 시작 실패 → `-port 8099`)
+- **H9 ZAP 2차**: 수정 뒤 재스캔 예정(아래에 추가)
+
 ## 규칙 변경
 4. **2026-10-10, 개발 세트 측정 뒤·봉인 측정 전**: H3에서 **GC에 TSS가 없거나 0인 라이딩을 뺀다**. 개발 세트 31,703개 중 748개(선수 13명, 한 명이 550개)가 IF는 있는데 TSS가 없었다. IF와 TSS는 같은 입력에서 나오므로 이는 GC가 그 라이딩의 TSS를 저장하지 않은 것(저장 시점·버전 차이)이고 계산 차이가 아니다. 그 수는 따로 보고한다
 3. **2026-10-10, 개발 세트 측정 뒤·봉인 측정 전**: H3에서 **GC TSS가 정확히 정수인 라이딩을 뺀다**(수동 입력 추정). 개발 세트에서 정수 TSS 172건 중 170건이 계산값과 어긋났고(예: 50.0, 67.0, 10.0), 한 선수(255352f9)가 117건이었다. GoldenCheetah는 사용자가 지표를 직접 덮어쓸 수 있고 그 값은 정수로 입력된다. 계산된 TSS가 우연히 정수가 될 확률은 매우 낮지만 0은 아니므로 뺀 수는 보고한다

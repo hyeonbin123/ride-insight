@@ -126,10 +126,8 @@ def main(argv: list[str] | None = None) -> None:
     a.out.write_text(json.dumps(report, indent=1), encoding="utf-8")
     for ph in phases:
         print(
-            print(
-                f"{ph['phase']}: n={ph['n']} p50={ph['p50_ms']:.0f}ms p95={ph['p95_ms']:.0f}ms "
-                f"max={ph['max_ms']:.0f}ms statuses={ph['status_counts']}"
-            )
+            f"{ph['phase']}: n={ph['n']} p50={ph['p50_ms']:.0f}ms p95={ph['p95_ms']:.0f}ms "
+            f"max={ph['max_ms']:.0f}ms statuses={ph['status_counts']}"
         )
     print("any_5xx", report["any_5xx"])
 

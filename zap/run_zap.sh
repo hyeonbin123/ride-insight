@@ -34,7 +34,8 @@ SEED_HAR=$(native "$seed")
 REPORT_DIR=$(native "$out")
 
 status=0
-java -Xmx2g -jar "$(native "${jars[0]}")" -cmd -notel -dir "$(native "$out/home")" \
+# -port: ZAP's own proxy must not collide with the server on 8080.
+java -Xmx2g -jar "$(native "${jars[0]}")" -cmd -notel -port "${ZAP_PORT:-8099}" -dir "$(native "$out/home")" \
   -config start.checkForUpdates=false -autorun "$(native "$root/zap/automation.yaml")" \
   > "$out/zap.log" 2>&1 || status=$?
 echo "ZAP exit status $status, reports and log in $out"
