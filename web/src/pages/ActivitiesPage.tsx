@@ -15,7 +15,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link as RouterLink } from "react-router";
+import { useNavigate } from "react-router";
 import { api, ApiRequestError } from "../api/client";
 import type { Activity } from "../api/types";
 import { formatDate, formatDuration, formatNumber, formatWatts } from "../format";
@@ -28,6 +28,7 @@ const PAGE = 30;
 export function ActivitiesPage() {
   const athleteId = useAthleteStore((s) => s.athleteId);
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const fileInput = useRef<HTMLInputElement>(null);
   const [uploadLog, setUploadLog] = useState<{ name: string; ok: boolean; text: string }[]>([]);
 
@@ -129,7 +130,7 @@ export function ActivitiesPage() {
               </TableHead>
               <TableBody>
                 {items.map((a) => (
-                  <TableRow key={a.id} hover component={RouterLink} to={`/activities/${a.id}`} sx={{ textDecoration: "none", cursor: "pointer" }}>
+                  <TableRow key={a.id} hover onClick={() => navigate(`/activities/${a.id}`)} sx={{ cursor: "pointer" }}>
                     <TableCell>{formatDate(a.startedAt)}</TableCell>
                     <TableCell>{formatDuration(a.durationSecs)}</TableCell>
                     <TableCell align="right">{formatWatts(a.metrics?.averagePower)}</TableCell>

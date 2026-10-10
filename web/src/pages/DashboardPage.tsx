@@ -1,5 +1,17 @@
 import { useMemo, useState } from "react";
-import { Alert, Card, CardContent, Grid, LinearProgress, Stack, ToggleButton, ToggleButtonGroup, Typography } from "@mui/material";
+import {
+  Alert,
+  Button,
+  Card,
+  CardContent,
+  Grid,
+  LinearProgress,
+  Stack,
+  TextField,
+  ToggleButton,
+  ToggleButtonGroup,
+  Typography,
+} from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { PowerCurveChart } from "../components/charts/PowerCurveChart";
@@ -13,29 +25,53 @@ export function DashboardPage() {
   const athleteId = useAthleteStore((s) => s.athleteId);
   const [days, setDays] = useState(90);
   const [weeks, setWeeks] = useState(6);
+  // Reference date ("as of"). Defaults to today; "마지막 라이딩" jumps to the newest activity so
+  // imported or old data still shows a chart.
+  const [today] = useState(() => isoDate(new Date()));
+  const [asOf, setAsOf] = useState(today);
 
-  // "Today" is fixed when the page mounts; the range follows the selected number of days.
-  const [now] = useState(() => Date.now());
-  const { from, to } = useMemo(
-    () => ({ to: isoDate(new Date(now)), from: isoDate(new Date(now - days * 86_400_000)) }),
-    [days, now],
-  );
+  const { from, to } = useMemo(() => {
+    const end = new Date(asOf + "T00:00:00Z");
+    return { to: asOf, from: isoDate(new Date(end.getTime() - days * 86_400_000)) };
+  }, [days, asOf]);
+  const latest = useQuery({
+    queryKey: ["activities", athleteId, "latest"],
+    queryFn: () => api.listActivities(athleteId!, 1),
+    enabled: !!athleteId,
+  });
   const load = useQuery({
     queryKey: ["training-load", athleteId, from, to],
     queryFn: () => api.getTrainingLoad(athleteId!, from, to),
     enabled: !!athleteId,
   });
   const curve = useQuery({
-    queryKey: ["athlete-curve", athleteId, weeks],
-    queryFn: () => api.getAthletePowerCurve(athleteId!, weeks),
+    queryKey: ["athlete-curve", athleteId, weeks, asOf],
+    queryFn: () => api.getAthletePowerCurve(athleteId!, weeks, asOf),
     enabled: !!athleteId,
   });
 
   if (!athleteId) return <NeedAthlete />;
   const last = load.data?.days.at(-1);
+  const latestDate = latest.data?.items[0]?.startedAt.slice(0, 10);
 
   return (
     <Stack spacing={2}>
+      <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }}>
+        <TextField
+          type="date"
+          size="small"
+          label="기준일"
+          value={asOf}
+          onChange={(e) => e.target.value && setAsOf(e.target.value)}
+          slotProps={{ inputLabel: { shrink: true } }}
+        />
+        <Button size="small" disabled={!latestDate || latestDate === asOf} onClick={() => latestDate && setAsOf(latestDate)}>
+          마지막 라이딩 기준{latestDate ? ` (${latestDate})` : ""}
+        </Button>
+        <Button size="small" disabled={asOf === today} onClick={() => setAsOf(today)}>
+          오늘 기준
+        </Button>
+      </Stack>
       <Grid container spacing={2}>
         {[
           { label: "CTL (체력)", value: formatNumber(last?.ctl, 1) },
