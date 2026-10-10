@@ -4,6 +4,7 @@ import type {
   ApiError,
   Athlete,
   CreateAthleteRequest,
+  FtpEstimate,
   PowerCurve,
   Samples,
   TrainingLoadResponse,
@@ -66,6 +67,11 @@ export const api = {
     const params = new URLSearchParams({ weeks: String(weeks) });
     if (asOf) params.set("asOf", asOf);
     return request<PowerCurve>(`/api/athletes/${athleteId}/power-curve?${params}`);
+  },
+  getFtpEstimate: (athleteId: string, weeks = 6, asOf?: string) => {
+    const params = new URLSearchParams({ weeks: String(weeks) });
+    if (asOf) params.set("asOf", asOf);
+    return request<FtpEstimate>(`/api/athletes/${athleteId}/ftp-estimate?${params}`);
   },
   getTrainingLoad: (athleteId: string, from: string, to: string) =>
     request<TrainingLoadResponse>(`/api/athletes/${athleteId}/training-load?from=${from}&to=${to}`),

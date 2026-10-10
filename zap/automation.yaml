@@ -1,0 +1,60 @@
+# OWASP ZAP automation plan for the ride-insight API (ZAP 2.17.0 cross-platform release, Java 17+).
+# zap/run_zap.sh sets the variables and starts ZAP; nothing secret lives here.
+#
+#   TARGET       the local server, e.g. http://127.0.0.1:8080 (never a remote host)
+#   SEED_HAR     absolute path of the HAR written by zap/make_seed_har.py
+#   REPORT_DIR   absolute folder for the reports; REPORT_NAME their file name without extension
+#
+# The API has no authentication (local demo, see README). DELETE is not seeded so the scan does not
+# destroy the demo data; the integration tests cover DELETE.
+env:
+  contexts:
+    - name: ride-insight
+      urls:
+        - ${TARGET}
+      includePaths:
+        - "${TARGET}/api.*"
+        - "${TARGET}/actuator.*"
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
+
+jobs:
+  - type: import
+    parameters:
+      type: har
+      fileName: ${SEED_HAR}
+
+  - type: spider
+    parameters:
+      context: ride-insight
+      maxDuration: 2
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 5
+
+  - type: activeScan
+    parameters:
+      context: ride-insight
+      threadPerHost: 4
+      maxScanDurationInMins: 90
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 5
+
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: ${REPORT_DIR}
+      reportFile: ${REPORT_NAME}
+      reportTitle: ride-insight ZAP scan
+
+  - type: report
+    parameters:
+      template: traditional-md
+      reportDir: ${REPORT_DIR}
+      reportFile: ${REPORT_NAME}
+      reportTitle: ride-insight ZAP scan

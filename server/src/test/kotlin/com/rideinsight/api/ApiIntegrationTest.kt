@@ -1,6 +1,5 @@
 package com.rideinsight.api
 
-import com.rideinsight.TestcontainersConfiguration
 import com.rideinsight.fit.FitActivity
 import com.rideinsight.metrics.MeanMaximalPower
 import com.rideinsight.metrics.PowerMetrics
@@ -13,72 +12,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import org.junit.jupiter.api.BeforeAll
-import org.junit.jupiter.api.TestInstance
-import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.boot.test.context.SpringBootTest
-import org.springframework.context.annotation.Import
-import org.springframework.core.env.Environment
-import org.springframework.core.io.ByteArrayResource
-import org.springframework.http.HttpHeaders
-import org.springframework.http.HttpMethod
-import org.springframework.http.MediaType
-import org.springframework.http.HttpEntity
-import org.springframework.util.LinkedMultiValueMap
-import org.springframework.web.client.RestClient
-import tools.jackson.databind.JsonNode
-import tools.jackson.databind.json.JsonMapper
 
 /** End-to-end checks for docs/api.md against a PostgreSQL container. */
-@Import(TestcontainersConfiguration::class)
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@TestInstance(TestInstance.Lifecycle.PER_CLASS)
-class ApiIntegrationTest {
-    @Autowired lateinit var env: Environment
-
-    private lateinit var client: RestClient
-    private val mapper = JsonMapper.builder().build()
-    private val fitDir = File("src/test/resources/fit")
-
-    class Response(val status: Int, val body: JsonNode?)
-
-    @BeforeAll
-    fun setUp() {
-        val port = env.getProperty("local.server.port")
-        client = RestClient.builder().baseUrl("http://localhost:$port").build()
-    }
-
-    private fun call(method: HttpMethod, path: String, json: String? = null, multipartName: String? = null, bytes: ByteArray? = null): Response {
-        val spec = client.method(method).uri(path)
-        if (json != null) spec.contentType(MediaType.APPLICATION_JSON).body(json)
-        if (multipartName != null) {
-            // Plain MultiValueMap parts: MultipartBodyBuilder needs reactive-streams on the classpath.
-            val parts = LinkedMultiValueMap<String, Any>()
-            val partHeaders = HttpHeaders()
-            partHeaders.setContentDispositionFormData("file", multipartName)
-            partHeaders.contentType = MediaType.APPLICATION_OCTET_STREAM
-            parts.add("file", HttpEntity(ByteArrayResource(bytes!!), partHeaders))
-            spec.contentType(MediaType.MULTIPART_FORM_DATA).body(parts)
-        }
-        return spec.exchange({ _, res ->
-            val text = res.body.readAllBytes().toString(Charsets.UTF_8)
-            Response(res.statusCode.value(), if (text.isBlank()) null else mapper.readTree(text))
-        }, false)
-    }
-
-    private fun post(path: String, json: String) = call(HttpMethod.POST, path, json = json)
-    private fun put(path: String, json: String) = call(HttpMethod.PUT, path, json = json)
-    private fun get(path: String) = call(HttpMethod.GET, path)
-    private fun delete(path: String) = call(HttpMethod.DELETE, path)
-    private fun upload(athleteId: String, name: String) =
-        call(HttpMethod.POST, "/api/athletes/$athleteId/activities", multipartName = "$name.fit", bytes = File(fitDir, "$name.fit").readBytes())
-
-    private fun createAthlete(ftp: Int? = 315): String {
-        val r = post("/api/athletes", """{"name":"Tester","gender":"M","birthYear":1990,"weightKg":72.5${if (ftp != null) ",\"ftp\":$ftp" else ""}}""")
-        assertEquals(201, r.status, r.body.toString())
-        return r.body!!.path("id").asString()
-    }
-
+class ApiIntegrationTest : ApiTestBase() {
     @Test
     fun `athlete validation and lookup`() {
         assertEquals(400, post("/api/athletes", """{"name":""}""").status)

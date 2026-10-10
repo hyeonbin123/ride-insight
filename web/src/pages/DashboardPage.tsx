@@ -49,6 +49,11 @@ export function DashboardPage() {
     queryFn: () => api.getAthletePowerCurve(athleteId!, weeks, asOf),
     enabled: !!athleteId,
   });
+  const estimate = useQuery({
+    queryKey: ["ftp-estimate", athleteId, weeks, asOf],
+    queryFn: () => api.getFtpEstimate(athleteId!, weeks, asOf),
+    enabled: !!athleteId,
+  });
 
   if (!athleteId) return <NeedAthlete />;
   const last = load.data?.days.at(-1);
@@ -94,7 +99,29 @@ export function DashboardPage() {
 
       <Card>
         <CardContent>
-          <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between",  mb: 1 }}>
+          <Typography variant="h6" gutterBottom>
+            FTP 추정 ({weeks}주 기준)
+          </Typography>
+          {estimate.isLoading && <LinearProgress />}
+          {estimate.isError && <Alert severity="error">{String(estimate.error)}</Alert>}
+          {estimate.data && (
+            <Stack direction="row" spacing={3} sx={{ alignItems: "baseline", flexWrap: "wrap" }}>
+              <Typography variant="h4">{formatWatts(estimate.data.ftpWatts)}</Typography>
+              <Typography variant="body2" color="text.secondary">
+                방법 {estimate.data.method} · 20분 최대 {formatWatts(estimate.data.best20m)} · 60분 최대 {formatWatts(estimate.data.best60m)}
+                {estimate.data.rules["R3_critical_power"] != null ? ` · CP 모델 ${formatWatts(estimate.data.rules["R3_critical_power"])}` : ""}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {estimate.data.note}
+              </Typography>
+            </Stack>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent>
+          <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between", mb: 1 }}>
             <Typography variant="h6">훈련 부하 (PMC)</Typography>
             <ToggleButtonGroup size="small" exclusive value={days} onChange={(_, v) => v && setDays(v)}>
               <ToggleButton value={42}>6주</ToggleButton>
@@ -111,7 +138,7 @@ export function DashboardPage() {
 
       <Card>
         <CardContent>
-          <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between",  mb: 1 }}>
+          <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between", mb: 1 }}>
             <Typography variant="h6">최근 최고 파워 커브</Typography>
             <ToggleButtonGroup size="small" exclusive value={weeks} onChange={(_, v) => v && setWeeks(v)}>
               <ToggleButton value={6}>6주</ToggleButton>

@@ -94,3 +94,15 @@ export interface ApiError {
   error: string;
   message: string;
 }
+
+export interface FtpEstimate {
+  method: string;
+  ftpWatts?: number;
+  rules: Record<string, number | null>;
+  criticalPowerWPrimeKj?: number;
+  windowsUsed: number;
+  best20m?: number;
+  best60m?: number;
+  weeks: number;
+  note: string;
+}

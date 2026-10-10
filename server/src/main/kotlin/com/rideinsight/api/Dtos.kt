@@ -135,3 +135,15 @@ data class TrainingLoadDay(val date: LocalDate, val tss: Double, val ctl: Double
 data class TrainingLoadResponse(val days: List<TrainingLoadDay>)
 
 data class ErrorResponse(val error: String, val message: String)
+
+data class FtpEstimateResponse(
+    val method: String,
+    val ftpWatts: Double?,
+    val rules: Map<String, Double?>,
+    val criticalPowerWPrimeKj: Double?,
+    val windowsUsed: Int,
+    val best20m: Double?,
+    val best60m: Double?,
+    val weeks: Int,
+    val note: String,
+)

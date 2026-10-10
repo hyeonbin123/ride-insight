@@ -2,6 +2,7 @@ package com.rideinsight.api
 
 import com.rideinsight.service.ActivityService
 import com.rideinsight.service.AthleteService
+import com.rideinsight.service.FtpEstimateService
 import com.rideinsight.service.InvalidActivityException
 import jakarta.validation.Valid
 import java.net.URI
@@ -23,7 +24,11 @@ import org.springframework.web.multipart.MultipartFile
 
 @RestController
 @RequestMapping("/api/athletes")
-class AthleteController(private val athletes: AthleteService, private val activities: ActivityService) {
+class AthleteController(
+    private val athletes: AthleteService,
+    private val activities: ActivityService,
+    private val ftp: FtpEstimateService,
+) {
     @PostMapping
     fun create(@Valid @RequestBody req: CreateAthleteRequest): ResponseEntity<AthleteResponse> {
         val (athlete, threshold) = athletes.create(req.name.trim(), req.gender, req.birthYear, req.weightKg, req.ftp)
@@ -74,6 +79,16 @@ class AthleteController(private val athletes: AthleteService, private val activi
         return TrainingLoadResponse(
             athletes.trainingLoad(id, start, end).map { TrainingLoadDay(it.date, it.tss, it.ctl, it.atl, it.tsb) },
         )
+    }
+
+    @GetMapping("/{id}/ftp-estimate")
+    fun ftpEstimate(
+        @PathVariable id: UUID,
+        @RequestParam(defaultValue = "6") weeks: Int,
+        @RequestParam(required = false) asOf: LocalDate?,
+    ): FtpEstimateResponse {
+        val e = ftp.estimate(id, weeks, asOf ?: LocalDate.now(ZoneOffset.UTC))
+        return FtpEstimateResponse(e.method, e.ftpWatts, e.rules, e.criticalPowerWPrimeKj, e.windowsUsed, e.best20m, e.best60m, weeks, e.note)
     }
 
     @GetMapping("/{id}/power-curve")
