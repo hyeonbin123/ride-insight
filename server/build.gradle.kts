@@ -57,3 +57,12 @@ allOpen {
 tasks.withType<Test> {
 	useJUnitPlatform()
 }
+
+// Offline parity tool: computes metrics from OpenData zips and writes JSONL for ml/ to analyse.
+// Usage: ./gradlew -q parity --args="--zips ../data/opendata --athletes ../manifests/parity_dev.txt --out ../reports/parity/dev.jsonl"
+tasks.register<JavaExec>("parity") {
+	group = "tools"
+	description = "Compute metrics for OpenData athletes and compare with GoldenCheetah metadata"
+	classpath = sourceSets.main.get().runtimeClasspath
+	mainClass.set("com.rideinsight.tools.ParityToolKt")
+}
