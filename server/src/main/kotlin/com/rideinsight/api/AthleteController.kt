@@ -88,7 +88,9 @@ class AthleteController(
         @RequestParam(required = false) asOf: LocalDate?,
     ): FtpEstimateResponse {
         val e = ftp.estimate(id, weeks, asOf ?: LocalDate.now(ZoneOffset.UTC))
-        return FtpEstimateResponse(e.method, e.ftpWatts, e.rules, e.criticalPowerWPrimeKj, e.windowsUsed, e.best20m, e.best60m, weeks, e.note)
+        return FtpEstimateResponse(
+            e.method, e.ftpWatts, e.rules, e.criticalPowerWPrimeKj, e.windowsUsed, e.ridesInWindow, e.best20m, e.best60m, weeks, e.note,
+        )
     }
 
     @GetMapping("/{id}/power-curve")

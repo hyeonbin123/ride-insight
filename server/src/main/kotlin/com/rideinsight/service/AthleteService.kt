@@ -62,6 +62,12 @@ class AthleteService(
         return TrainingLoad.series(from, to, daily, warm?.ctl ?: 0.0, warm?.atl ?: 0.0)
     }
 
+    /** Number of rides with power in the last [weeks] weeks before [asOf] (inclusive). */
+    fun powerRideCount(id: UUID, weeks: Int, asOf: LocalDate): Int {
+        val to = asOf.plusDays(1).atStartOfDay().atOffset(ZoneOffset.UTC)
+        return activities.countPowerActivities(id, to.minusWeeks(weeks.toLong()), to)
+    }
+
     /** Best power per standard window over the last [weeks] weeks before [asOf] (inclusive). */
     fun powerCurve(id: UUID, weeks: Int, asOf: LocalDate): List<Pair<Int, Double>> {
         if (!athletes.exists(id)) throw NotFoundException("athlete $id not found")

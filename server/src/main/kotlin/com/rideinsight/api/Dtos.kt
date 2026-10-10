@@ -142,6 +142,7 @@ data class FtpEstimateResponse(
     val rules: Map<String, Double?>,
     val criticalPowerWPrimeKj: Double?,
     val windowsUsed: Int,
+    val ridesInWindow: Int,
     val best20m: Double?,
     val best60m: Double?,
     val weeks: Int,

@@ -178,6 +178,11 @@ class ActivityRepository(private val jdbc: JdbcClient) {
             .query { rs, _ -> rs.getObject("day", java.time.LocalDate::class.java) to rs.getDouble("tss") }
             .list().toMap()
 
+    /** Activities with power started in [from, to). */
+    fun countPowerActivities(athleteId: UUID, from: OffsetDateTime, to: OffsetDateTime): Int =
+        jdbc.sql("select count(*) from activity where athlete_id = ? and has_power and started_at >= ? and started_at < ?")
+            .params(athleteId, from, to).query(Long::class.java).single().toInt()
+
     /** UTC date of the athlete's earliest activity, or null. */
     fun firstActivityDate(athleteId: UUID): java.time.LocalDate? =
         jdbc.sql("select min((started_at at time zone 'UTC')::date) from activity where athlete_id = ?")

@@ -101,6 +101,7 @@ export interface FtpEstimate {
   rules: Record<string, number | null>;
   criticalPowerWPrimeKj?: number;
   windowsUsed: number;
+  ridesInWindow: number;
   best20m?: number;
   best60m?: number;
   weeks: number;

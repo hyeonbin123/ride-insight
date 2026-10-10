@@ -104,14 +104,6 @@ def reference_dates(dates: pd.Series) -> list[pd.Timestamp]:
     return refs
 
 
-def _label_at(rides: pd.DataFrame, when: pd.Timestamp, after: bool) -> float | None:
-    sub = rides[rides["date"] > when] if after else rides[rides["date"] <= when]
-    if sub.empty:
-        return None
-    r = sub.iloc[0] if after else sub.iloc[-1]
-    return r["thr"] if pd.notna(r["thr"]) else (r["cp"] if pd.notna(r["cp"]) else None)
-
-
 def build_units(rides: pd.DataFrame, athletes: dict[str, dict], splits: dict[str, str]) -> pd.DataFrame:
     units = []
     for athlete, g in rides.groupby("athlete", sort=False):
@@ -125,11 +117,15 @@ def build_units(rides: pd.DataFrame, athletes: dict[str, dict], splits: dict[str
             label = last["thr"] if pd.notna(last["thr"]) else (last["cp"] if pd.notna(last["cp"]) else None)
             if label is None or not (LABEL_MIN <= label <= LABEL_MAX):
                 continue
-            before = _label_at(g, ref - pd.Timedelta(days=FRESH_DAYS), after=False)
-            after = _label_at(
-                g[g["date"] <= ref + pd.Timedelta(days=60)], ref + pd.Timedelta(days=FRESH_DAYS), after=True
-            )
-            fresh = (before is not None and before != label) or (after is not None and after != label)
+            # Fresh = the athlete's FTP label changed within +-FRESH_DAYS of the reference date, i.e.
+            # some ride in that span carries a different label (rule as registered; the first draft
+            # compared the values at -28 d and after +28 d instead, Codex review 3, 2026-10-10).
+            near = g[
+                (g["date"] >= ref - pd.Timedelta(days=FRESH_DAYS))
+                & (g["date"] <= ref + pd.Timedelta(days=FRESH_DAYS))
+            ]
+            near_labels = near["thr"].where(near["thr"].notna(), near["cp"]).dropna()
+            fresh = bool((near_labels != label).any())
             weights = w["weight"].dropna()
             yob = meta.get("yob")
             unit = {
@@ -168,6 +164,16 @@ def cmd_build(features: Path, index_dir: Path, sample: Path, out: Path) -> None:
     units = build_units(rides, athletes, splits)
     out.parent.mkdir(parents=True, exist_ok=True)
     units.to_parquet(out, index=False)
+    summary = {
+        "rides": int(len(rides)),
+        "athletes": int(rides["athlete"].nunique()),
+        "units": int(len(units)),
+        "by_split": {k: int(v) for k, v in units["split"].value_counts().items()},
+        "fresh": int(units["fresh"].sum()),
+        "with_20m": int(units["mmp_20m"].notna().sum()),
+        "with_weight": int(units["weight"].notna().sum()),
+    }
+    out.with_suffix(".summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
     print(
         f"rides={len(rides)} athletes={rides['athlete'].nunique()} units={len(units)} "
         f"by_split={units['split'].value_counts().to_dict()} fresh={int(units['fresh'].sum())} "
@@ -399,7 +405,10 @@ def evaluate(units: pd.DataFrame, split: str, adopt: str | None) -> dict:
             "adopted": adopt,
             "mae_fresh": fresh,
             "mae_stale": stale,
-            "verdict": _h7(target, preds[adopt]),
+            **_h7(target, preds[adopt]),
+        }
+        results["breakdown"] = {
+            name: breakdown(preds[name], target) for name in ("R1", adopt) if name in preds
         }
     if "R1" in preds:
         bias = results["methods"]["R1"]["bias"]
@@ -424,12 +433,13 @@ def _verdict_le(diff: dict | None, threshold: float) -> str:
     return "판정 불가"
 
 
-def _h7(target: pd.DataFrame, p: pd.Series, n=BOOTSTRAP_N, seed=SEED) -> str:
+def _h7(target: pd.DataFrame, p: pd.Series, n=BOOTSTRAP_N, seed=SEED) -> dict:
+    """Stale minus fresh MAE with independent athlete resampling; returns the interval and verdict."""
     err = (p - target["label_ftp"]).abs()
     fresh = err[target["fresh"] & err.notna()]
     stale = err[~target["fresh"] & err.notna()]
     if len(fresh) < 20 or len(stale) < 20:
-        return "판정 불가"
+        return {"diff_stale_minus_fresh": None, "verdict": "판정 불가"}
     rng = np.random.default_rng(seed)
     fa = target.loc[fresh.index, "athlete"]
     sa = target.loc[stale.index, "athlete"]
@@ -441,8 +451,30 @@ def _h7(target: pd.DataFrame, p: pd.Series, n=BOOTSTRAP_N, seed=SEED) -> str:
         f = np.concatenate([gf[kf[i]] for i in rng.integers(0, len(kf), len(kf))]).mean()
         s = np.concatenate([gs[ks[i]] for i in rng.integers(0, len(ks), len(ks))]).mean()
         diffs.append(s - f)
-    lo, hi = np.quantile(diffs, 0.025), np.quantile(diffs, 0.975)
-    return "지지" if lo >= 5 else ("기각" if hi < 5 else "판정 불가")
+    lo, hi = float(np.quantile(diffs, 0.025)), float(np.quantile(diffs, 0.975))
+    verdict = "지지" if lo >= 5 else ("기각" if hi < 5 else "판정 불가")
+    return {
+        "diff_stale_minus_fresh": {"point": float(stale.mean() - fresh.mean()), "ci": [lo, hi]},
+        "verdict": verdict,
+    }
+
+
+def breakdown(pred: pd.Series, u: pd.DataFrame) -> dict:
+    """MAE by gender, by decade of age and by rides in the window (reporting only)."""
+    ok = pred.notna() & u["label_ftp"].notna()
+    err = (pred[ok] - u.loc[ok, "label_ftp"]).abs()
+    t = u.loc[ok].assign(err=err)
+    gender = t["gender_m"].map({1.0: "M", 0.0: "F"}).fillna("unknown")
+    decade = (t["age"] // 10 * 10).fillna(-1).astype(int).astype(str).replace("-1", "unknown")
+    bucket = pd.cut(t["n_rides"], [0, 12, 20, 30, 10_000], labels=["8-12", "13-20", "21-30", "31+"])
+
+    def groups(key):
+        return {
+            str(k): {"n": int(len(g)), "mae": float(g["err"].mean())}
+            for k, g in t.groupby(key, observed=True)
+        }
+
+    return {"gender": groups(gender), "age_decade": groups(decade), "rides_in_window": groups(bucket)}
 
 
 def to_markdown(r: dict) -> str:
@@ -483,6 +515,12 @@ def to_markdown(r: dict) -> str:
         if h in r:
             lines.append("")
             lines.append(f"- **{h}**: {json.dumps(r[h], ensure_ascii=False, default=str)}")
+    if "breakdown" in r:
+        lines += ["", "## 보고: 집단별 MAE (판정 없음)", ""]
+        for name, b in r["breakdown"].items():
+            for key, groups in b.items():
+                cells = ", ".join(f"{k}: {v['mae']:.1f} W (n={v['n']})" for k, v in groups.items())
+                lines.append(f"- {name} / {key}: {cells}")
     return "\n".join(lines) + "\n"
 
 

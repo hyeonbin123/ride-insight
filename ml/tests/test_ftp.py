@@ -97,6 +97,24 @@ def test_build_units_labels_and_freshness(tmp_path: Path):
     assert set(units["split"]) == {"train", "dev", "test"}
 
 
+def test_freshness_follows_the_registered_definition(tmp_path: Path):
+    # Label 250 until day 100, then 270. A unit is fresh only when a ride within +-28 days of its
+    # reference date carries a different label.
+    rows = [_ride("a", d, 250 if d < 100 else 270) for d in range(0, 200, 2)]
+    jsonl = tmp_path / "r.jsonl"
+    jsonl.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    rides = ftp.load_rides(jsonl)
+    units = ftp.build_units(rides, {"a": {"gender": "M", "yob": "1990"}}, {"a": "train"})
+    by_day = {
+        int((pd.Timestamp(u.ref_date) - pd.Timestamp("2020-01-01")).days): bool(u.fresh)
+        for u in units.itertuples()
+    }
+    assert by_day[84] is True  # change on day 100 is 16 days ahead
+    assert by_day[28] is False  # change 72 days ahead
+    assert by_day[112] is True  # change 12 days back
+    assert by_day[168] is False
+
+
 def test_rules_on_known_curve():
     u = pd.DataFrame(
         {

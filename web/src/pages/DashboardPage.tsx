@@ -108,7 +108,7 @@ export function DashboardPage() {
             <Stack direction="row" spacing={3} sx={{ alignItems: "baseline", flexWrap: "wrap" }}>
               <Typography variant="h4">{formatWatts(estimate.data.ftpWatts)}</Typography>
               <Typography variant="body2" color="text.secondary">
-                방법 {estimate.data.method} · 20분 최대 {formatWatts(estimate.data.best20m)} · 60분 최대 {formatWatts(estimate.data.best60m)}
+                방법 {estimate.data.method} · 라이딩 {estimate.data.ridesInWindow}개 · 20분 최대 {formatWatts(estimate.data.best20m)} · 60분 최대 {formatWatts(estimate.data.best60m)}
                 {estimate.data.rules["R3_critical_power"] != null ? ` · CP 모델 ${formatWatts(estimate.data.rules["R3_critical_power"])}` : ""}
               </Typography>
               <Typography variant="caption" color="text.secondary" sx={{ flexBasis: "100%" }}>

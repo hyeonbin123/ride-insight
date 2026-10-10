@@ -50,18 +50,14 @@ class TamperedFitTest : ApiTestBase() {
             results[name] = code(r)
             if (name == "3-broken-crc" && r.status == 201) assertFalse(r.body!!.path("crcValid").asBoolean(), "crcValid must be false")
         }
-        // 7: one byte over the 10 MB multipart limit. Tomcat answers 413 and closes the connection
-        // without swallowing the rest of the body, so a client that is still sending may see a reset
-        // instead of the status line; both outcomes are the intended rejection.
+        // 7: one byte over the 10 MB multipart limit. server.tomcat.max-swallow-size lets Tomcat read
+        // the rest of the body, so the client sees the real 413 (a first draft accepted a dropped
+        // connection here, which could not tell a 413 from a crash).
         val big = ByteArray(10 * 1024 * 1024 + 1)
-        results["7-over-10mb"] = try {
-            code(uploadBytes(id, "big.fit", big))
-        } catch (e: org.springframework.web.client.ResourceAccessException) {
-            "413 (connection closed by server: ${e.message?.take(60)})"
-        }
+        results["7-over-10mb"] = code(uploadBytes(id, "big.fit", big))
         println("TAMPERED_FIT_RESULTS " + results.entries.joinToString(" | ") { "${it.key}=${it.value}" })
         for ((name, exp) in expected) assertEquals(exp, results[name], name)
-        assertTrue(results["7-over-10mb"]!!.startsWith("413"), results["7-over-10mb"])
+        assertEquals("413 file_too_large", results["7-over-10mb"])
         assertTrue(results.values.none { it.startsWith("500") }, "no 500s: $results")
     }
 }

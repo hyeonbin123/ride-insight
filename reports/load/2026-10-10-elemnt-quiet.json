@@ -1,0 +1,56 @@
+{
+ "target": "http://127.0.0.1:8080",
+ "fit": "2019-02-17-062644-ELEMNT-297E-195-0.fit",
+ "fit_bytes": 715726,
+ "phases": [
+  {
+   "phase": "upload-round-1",
+   "n": 10,
+   "concurrency": 10,
+   "p50_ms": 635.0985499448143,
+   "p95_ms": 637.7532199840061,
+   "max_ms": 637.7975000068545,
+   "non_2xx": 0,
+   "status_counts": {
+    "201": 10
+   }
+  },
+  {
+   "phase": "upload-round-2",
+   "n": 10,
+   "concurrency": 10,
+   "p50_ms": 358.7205000221729,
+   "p95_ms": 360.89951497269794,
+   "max_ms": 360.9576999442652,
+   "non_2xx": 0,
+   "status_counts": {
+    "201": 10
+   }
+  },
+  {
+   "phase": "upload-round-3",
+   "n": 10,
+   "concurrency": 10,
+   "p50_ms": 326.71379996463656,
+   "p95_ms": 329.7357150586322,
+   "max_ms": 329.9217000603676,
+   "non_2xx": 0,
+   "status_counts": {
+    "201": 10
+   }
+  },
+  {
+   "phase": "reads",
+   "n": 20,
+   "concurrency": 20,
+   "p50_ms": 195.51779993344098,
+   "p95_ms": 229.38125503715128,
+   "max_ms": 232.00049996376038,
+   "non_2xx": 0,
+   "status_counts": {
+    "200": 20
+   }
+  }
+ ],
+ "any_5xx": false
+}

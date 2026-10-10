@@ -1,0 +1,13 @@
+{
+ "rides": 160803,
+ "athletes": 755,
+ "units": 8093,
+ "by_split": {
+  "train": 4985,
+  "test": 1586,
+  "dev": 1522
+ },
+ "fresh": 1638,
+ "with_20m": 8078,
+ "with_weight": 8046
+}
