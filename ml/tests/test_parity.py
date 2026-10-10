@@ -55,6 +55,17 @@ def test_tss_uses_gc_threshold_not_cp_setting(tmp_path: Path):
     assert r["cp_differs_from_gc_threshold"] == {"n": 1, "differs": 1}
 
 
+def test_integer_gc_tss_is_excluded_from_h3(tmp_path: Path):
+    lines = [_line("a", i, 1.0, 201.0, 201.0, tss_gc=64.6416) for i in range(5)]
+    lines.append(_line("a", 6, 1.0, 201.0, 201.0, tss_gc=50.0))  # manual override: computed is 64.64
+    jsonl = tmp_path / "t.jsonl"
+    jsonl.write_text("\n".join(json.dumps(x) for x in lines), encoding="utf-8")
+    r = parity.analyse(parity.load(jsonl))
+    assert r["rides_with_integer_gc_tss"] == 1
+    assert r["H3_tss_1s"]["n"] == 5
+    assert r["H3_tss_1s"]["rate"] == 1.0
+
+
 def test_agree_treats_absent_and_gc_zero_as_absent():
     ours = pd.Series([None, None, 100.0, 100.0, 100.0])
     theirs = pd.Series([None, 0.0, 100.5, 102.0, None])
@@ -65,11 +76,11 @@ def test_analysis_verdicts_on_synthetic_data(tmp_path: Path):
     lines = []
     # 300 one-second rides agreeing exactly -> H1/H2/H3 supported.
     for i in range(300):
-        lines.append(_line(f"a{i % 10}", i % 28, 1.0, 200.0, 200.0))
+        lines.append(_line(f"a{i % 10}", i % 28, 1.0, 201.0, 201.0, tss_ours=64.6416, tss_gc=64.6416))
     # 100 five-second rides, 40 % disagreeing by 3 W -> H4 (1 s rate higher by >= 5 pp) supported.
     for i in range(100):
         off = 3.0 if i % 5 < 2 else 0.0
-        lines.append(_line(f"b{i % 5}", i % 28, 5.0, 200.0 + off, 200.0))
+        lines.append(_line(f"b{i % 5}", i % 28, 5.0, 201.0 + off, 201.0, tss_ours=64.6416, tss_gc=64.6416))
     jsonl = tmp_path / "dev.jsonl"
     jsonl.write_text("\n".join(json.dumps(x) for x in lines), encoding="utf-8")
     df = parity.load(jsonl)
@@ -86,7 +97,9 @@ def test_analysis_verdicts_on_synthetic_data(tmp_path: Path):
 
 
 def test_rejection_when_rate_is_clearly_low():
-    lines = [_line("a", i % 28, 1.0, 200.0 + (2.0 if i % 2 else 0.0), 200.0) for i in range(200)]
+    lines = [
+        _line("a", i % 28, 1.0, 201.0 + (2.0 if i % 2 else 0.0), 201.0, tss_gc=64.6416) for i in range(200)
+    ]
     df = parity.load(_write(lines))
     r = parity.analyse(df)
     assert r["H1_np_1s"]["rate"] == 0.5

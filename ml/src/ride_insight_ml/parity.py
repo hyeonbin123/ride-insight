@@ -63,6 +63,10 @@ def load(jsonl: Path) -> pd.DataFrame:
     hours = df["samples"] * df["rec_int"] / 3600.0
     df["tss_ours_thr"] = np.where(df["thr_gc"] > 0, 100.0 * hours * (np_ours / df["thr_gc"]) ** 2, np.nan)
     df["cp_differs"] = (df["cp"] - df["thr_gc"]).abs() > 1.0
+    # Rule change 3: an exactly integer coggan_tss is almost always a manual override typed by the
+    # athlete (170 of 172 integer values in the development set disagreed with the computed TSS).
+    tss_gc = pd.to_numeric(df["tss_gc"], errors="coerce")
+    df["tss_gc_integer"] = tss_gc.notna() & ((tss_gc - tss_gc.round()).abs() < 1e-6)
     df["jitter"] = pd.to_numeric(df["rec_int_share"], errors="coerce") < 0.9
     df["interval_group"] = np.where(df["rec_int"] == 1.0, "1s", np.where(df["rec_int"] == 5.0, "5s", "other"))
     return df
@@ -121,7 +125,10 @@ def analyse(df: pd.DataFrame) -> dict:
     mmp_keys = [c[len("mmp_gc_") :] for c in df.columns if c.startswith("mmp_gc_")]
     one_s = df[df["interval_group"] == "1s"]
     other = df[df["interval_group"] != "1s"]
-    with_cp = one_s[one_s["thr_gc"].notna()]
+    # Rule change 4: GC has IF but no TSS for some rides (745 of 31,703 in the development set, 13
+    # athletes); that is a GoldenCheetah storage artefact, not a computation difference.
+    tss_gc_present = pd.to_numeric(one_s["tss_gc"], errors="coerce").fillna(0.0) != 0.0
+    with_cp = one_s[one_s["thr_gc"].notna() & ~one_s["tss_gc_integer"] & tss_gc_present]
 
     np_agree_1s = agree(one_s["np_ours"], one_s["np_gc"], TOL_WATTS)
     np_agree_other = agree(other["np_ours"], other["np_gc"], TOL_WATTS)
@@ -180,6 +187,10 @@ def analyse(df: pd.DataFrame) -> dict:
         "rides_with_negative": int((df["negative"] > 0).sum()),
         "rides_with_bad_rows": int((df["bad_rows"] > 0).sum()),
         "rides_with_jitter": int(df["jitter"].sum()),
+        "rides_with_integer_gc_tss": int(df["tss_gc_integer"].sum()),
+        "rides_with_if_but_no_gc_tss": int(
+            (df["thr_gc"].notna() & (pd.to_numeric(df["tss_gc"], errors="coerce").fillna(0.0) == 0.0)).sum()
+        ),
         "cp_differs_from_gc_threshold": {
             "n": int(df["thr_gc"].notna().sum()),
             "differs": int((df["cp_differs"] & df["thr_gc"].notna()).sum()),
@@ -226,7 +237,9 @@ def to_markdown(r: dict, title: str) -> str:
         f"- 파워 결측 없는 라이딩 {miss['zero']}, 1% 미만 {miss['under_1pct']}, 1% 이상 {miss['over_1pct']}",
         f"- 3000 W 이상 샘플이 있는 라이딩 {r['rides_with_over_3000']}, "
         f"음수 파워 {r['rides_with_negative']}, 깨진 행 {r['rides_with_bad_rows']}, "
-        f"타임스탬프 흔들림 {r['rides_with_jitter']}",
+        f"타임스탬프 흔들림 {r['rides_with_jitter']}, "
+        f"정수 TSS(수동 입력 추정) {r['rides_with_integer_gc_tss']}, "
+        f"GC에 IF는 있고 TSS는 없는 라이딩 {r['rides_with_if_but_no_gc_tss']}",
         f"- GC가 IF에 쓴 임계값이 cp_setting과 1 W 넘게 다른 라이딩: "
         f"{r['cp_differs_from_gc_threshold']['differs']} / {r['cp_differs_from_gc_threshold']['n']}",
         "",
@@ -234,7 +247,8 @@ def to_markdown(r: dict, title: str) -> str:
         "|---|---|---|",
         f"| H1 NP (1초, ≤1 W) | {rate(r['H1_np_1s'])} | {r['H1_np_1s']['verdict']} |",
         f"| H2 MMP (1초, 16구간, ≤1 W) | {rate(r['H2_mmp_1s'])} | {r['H2_mmp_1s']['verdict']} |",
-        f"| H3 TSS (1초, GC 임계값, ≤0.5) | {rate(r['H3_tss_1s'])} | {r['H3_tss_1s']['verdict']} |",
+        f"| H3 TSS (1초, GC 임계값, 정수·부재 TSS 제외, ≤0.5) | {rate(r['H3_tss_1s'])} "
+        f"| {r['H3_tss_1s']['verdict']} |",
         f"| H4 NP (1초 아님) | {rate(h4)}; 차이(1초 - 그 외) {h4['diff_1s_minus_other']} | {h4['verdict']} |",
         "",
         "## 차이 분포 (|ours - GC|)",
