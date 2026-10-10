@@ -37,5 +37,5 @@
 2. 샘플 FIT 9개를 업로드하는 통합 테스트: 사이클링 5개 저장, 러닝 1개 422, 손상 2개 400, Coros(개발자 필드 정렬 오류, fitparse도 거절)는 저장 또는 400 둘 다 허용하되 500은 아님
 3. 업로드한 Edge810 파일의 NP·TSS·MMP가 `com.rideinsight.metrics` 단위 계산과 같고, 세션 메시지의 `normalized_power`(301)·`training_stress_score`(118.7, FTP 315)와의 차이를 테스트가 기록한다(기기 계산과의 차이는 판정하지 않고 보고만)
 4. OpenData 선수 1명을 가져온 뒤 `training-load`가 날짜별 CTL/ATL/TSB를 돌려주고, 손으로 계산한 3일 예제와 일치하는 단위 테스트가 있다
-5. `docker compose up`으로 DB + 서버가 뜨고 `GET /actuator/health`가 UP
+5. `docker compose up`으로 DB + 서버가 뜨고 `GET /actuator/health`가 UP — **확인(2026-10-10)**: 루트 `compose.yaml`(postgres:16 + 서버 이미지 529 MB + nginx 웹 74 MB)을 `docker compose up --build`로 띄워 health UP, 웹 200, nginx 프록시를 거친 선수 생성과 FIT 업로드 201을 확인하고 내렸다
 6. `docs/ai-verification.md`에 2단계 항목(AI가 만든 것, 검증, 잡은 실수)을 적는다
