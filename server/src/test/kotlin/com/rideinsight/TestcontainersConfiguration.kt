@@ -12,7 +12,8 @@ class TestcontainersConfiguration {
 	@Bean
 	@ServiceConnection
 	fun postgresContainer(): PostgreSQLContainer {
-		return PostgreSQLContainer(DockerImageName.parse("postgres:latest"))
+		// Same major version as compose.yaml so tests and the local service agree.
+		return PostgreSQLContainer(DockerImageName.parse("postgres:16"))
 	}
 
 }
