@@ -41,6 +41,7 @@
   10. (P3) TSS KDoc의 GC `count` 설명 오류(계산식은 맞음) → 주석 수정
   - 제안한 경계 테스트(첫 샘플이 최고, 단일 샘플, 중복 시각, 1.26초 간격, 정확히 3000 W)를 추가했다. 중복 시각은 GC와 같은 결과(합이 됨)를 내므로 구현은 두고 CSV 리더가 중복 행 수를 세서 보고하게 했다
 - **개발 세트 측정 뒤 분류(2026-10-10)**: TSS 불일치 210건을 원인별로 나눴다. 170건은 GC TSS가 정수(50.0, 67.0 등)인 수동 입력, 745건(불일치가 아니라 "GC에 TSS 없음"으로 집계됨)은 GC가 IF만 저장하고 TSS를 저장하지 않은 라이딩. 둘 다 계산 차이가 아니어서 규칙 변경 3·4로 비교에서 빼고 수를 보고하게 했다. 구현을 고친 것은 없다
+- **남은 불일치**: 타임스탬프가 1.00·1.03초로 흔들리는 파일 4건은 GC의 recIntSecs(1.0325, 1.0163으로 역산)를 CSV에서 복원할 수 없어 MMP·TSS가 1.6~3.3% 어긋난다. 고치지 않고 불일치로 센다
 
 ### 2026-10-10 FIT 디코더 (`server/.../fit/FitDecoder.kt`, `FitProfile.kt`, `FitActivity.kt`)
 - **만든 것**: Claude Code. Garmin FIT SDK의 라이선스(내부 업무 목적, 기밀 유지) 때문에 공개 프로토콜 설명과 python-fitparse(MIT)의 프로필 번호를 참고해 직접 구현. 헤더, 정의·데이터 메시지, 압축 타임스탬프 헤더, 개발자 필드, CRC-16, 체인 파일
@@ -49,5 +50,15 @@
   1. 세션의 `threshold_power` 필드 번호를 112로 적었는데 fitparse 프로필은 45다. Edge810 파일의 FTP 315가 null로 나와 발견
   2. 개발자 필드 정의를 필드당 2바이트로 읽었다(실제 3바이트: 번호, 크기, 개발자 데이터 인덱스). Wahoo ELEMNT 파일에서 29번째 메시지부터 어긋나 "정의되지 않은 로컬 타입 1" 오류. 같은 논리를 Python으로 다시 써서 어디서 어긋나는지 찍어 찾았다
 - **설계 판단**: 활동+설정이 이어진 체인 파일은 모두 읽고, 뒤에 남은 바이트가 올바른 FIT 헤더가 아니면 오류로 본다(fitparse도 이 파일을 거절한다). 중복 시각·개발자 필드 수는 보고용으로 센다
-- **남은 불일치**: 타임스탬프가 1.00·1.03초로 흔들리는 파일 4건은 GC의 recIntSecs(1.0325, 1.0163으로 역산)를 CSV에서 복원할 수 없어 MMP·TSS가 1.6~3.3% 어긋난다. 고치지 않고 불일치로 센다
+### 2026-10-10 2단계: 저장·API (`server/.../storage`, `service`, `api`, `V1__init.sql`)
+- **만든 것**: Claude Code. `docs/api.md`의 완료 기준을 먼저 적고 구현. JdbcClient + Flyway, 배열 컬럼, FIT 업로드부터 지표 저장까지, 훈련 부하, 기간 파워 커브, OpenData 가져오기
+- **검증**: Testcontainers(PostgreSQL 16)에서 API 통합 테스트 6개(검증 실패 400, 종목 거절 422, 손상 파일 400, 중복 409, 없는 선수 404, 페이지네이션, 샘플 간격·상한, FTP 변경 후 TSS 재계산이 1/FTP² 비율로 맞는지, 훈련 부하가 그날 TSS와 같은지, 삭제 후 404, health UP). 업로드한 Edge810 라이딩의 NP·TSS·20분 MMP가 순수 함수 계산과 1e-3 안에서 같고, 기기(Garmin)가 세션에 적은 값과도 NP 300.6 vs 301, TSS 118.9 vs 118.7, IF 0.954 vs 0.956으로 가깝다(판정 없이 보고)
+- **잡은 실수**
+  - (컴파일) `JdbcClient.params(vararg Any)`에 Kotlin null 인자를 넘길 수 없음 → `params(listOf(...))`. `IntArray.mapNotNull` 없음
+  - (런타임, 통합 테스트가 잡음) PgJDBC는 `float4` 컬럼을 `getObject(col, java.lang.Double::class.java)`로 읽지 못해 선수 조회가 전부 500 → `getDouble` + `wasNull` 도우미로 바꿈. 단위 테스트로는 못 잡고 실제 DB로만 잡히는 종류
+  - (테스트 클라이언트) `MultipartBodyBuilder`가 reactive-streams를 요구해 `NoClassDefFoundError` → `MultiValueMap` + `HttpEntity`로 업로드
+  - (AI의 테스트 가정 오류) FTP 변경 재계산 테스트에 Edge 500 파일을 썼는데 그 파일에는 파워가 없어 재계산 0건. fitparse 기대값으로 파워 유무를 확인하고 ELEMNT 파일로 바꿈
+- **사람이 정한 것**: JPA 대신 JdbcClient, 시계열을 배열 컬럼에 저장, FTP는 날짜별 이력 테이블, 거절하는 종목 목록(러닝·수영·걷기·하이킹), 1~2단계에서 인증 없음(5단계에서 결정)
+- **아직 안 한 완료 기준**: `docker compose up`으로 서버까지 뜨는 것(5단계에서 Dockerfile과 함께), OpenData 선수 가져오기 실측(DB를 띄운 뒤)
+
 - **사람이 정한 것**: 비교 허용 오차(1 W, 0.5 TSS), 봉인 세트는 손대지 않음, 라벨 후보를 CP·FTP 둘로 둠
