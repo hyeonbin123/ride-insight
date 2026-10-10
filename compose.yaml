@@ -1,0 +1,46 @@
+# Whole stack: PostgreSQL + Kotlin server + nginx-served web. `docker compose up --build`, then open
+# http://localhost:8081. The server alone is on http://localhost:8080.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: rideinsight
+      POSTGRES_USER: rideinsight
+      POSTGRES_PASSWORD: rideinsight
+    volumes:
+      - ride-insight-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rideinsight -d rideinsight"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  server:
+    build: ./server
+    environment:
+      RIDE_INSIGHT_DB_URL: jdbc:postgresql://postgres:5432/rideinsight
+      RIDE_INSIGHT_DB_USER: rideinsight
+      RIDE_INSIGHT_DB_PASSWORD: rideinsight
+      SPRING_DOCKER_COMPOSE_ENABLED: "false"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  web:
+    build: ./web
+    ports:
+      - "8081:80"
+    depends_on:
+      server:
+        condition: service_healthy
+
+volumes:
+  ride-insight-pg:

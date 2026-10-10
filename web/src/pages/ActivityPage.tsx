@@ -5,7 +5,6 @@ import { api } from "../api/client";
 import { PowerCurveChart } from "../components/charts/PowerCurveChart";
 import { TimeSeriesChart } from "../components/charts/TimeSeriesChart";
 import { formatDate, formatDuration, formatNumber, formatWatts, windowLabel } from "../format";
-import { useAthleteStore } from "../state/athleteStore";
 
 const WINDOWS = ["5s_critical_power", "1m_critical_power", "5m_critical_power", "20m_critical_power", "60m_critical_power"];
 
@@ -14,9 +13,9 @@ export function ActivityPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const athleteId = useAthleteStore((s) => s.athleteId);
-
   const activity = useQuery({ queryKey: ["activity", id], queryFn: () => api.getActivity(id) });
+  // The comparison curve belongs to the ride's owner, not to the athlete selected in the header.
+  const athleteId = activity.data?.athleteId;
   const samples = useQuery({ queryKey: ["samples", id], queryFn: () => api.getSamples(id, 1) });
   const curve = useQuery({ queryKey: ["curve", id], queryFn: () => api.getActivityPowerCurve(id) });
   const asOf = activity.data?.startedAt.slice(0, 10);

@@ -120,6 +120,7 @@ export function DashboardPage() {
             </ToggleButtonGroup>
           </Stack>
           {curve.isLoading && <LinearProgress />}
+          {curve.isError && <Alert severity="error">{String(curve.error)}</Alert>}
           {curve.data && curve.data.points.length > 0 ? (
             <>
               <PowerCurveChart points={curve.data.points} labels={[`${weeks}주 최고`, ""]} />

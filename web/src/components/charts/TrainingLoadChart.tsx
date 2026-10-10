@@ -19,12 +19,18 @@ export function TrainingLoadChart({ days, height = 300 }: Props) {
   const innerH = height - margin.top - margin.bottom;
 
   const parsed = useMemo(() => days.map((d) => ({ ...d, t: new Date(d.date + "T00:00:00Z") })), [days]);
+  // Dates are UTC days from the API, so the axis must be UTC too (Codex review 2026-10-10).
   const x = useMemo(
-    () => d3.scaleTime().domain(d3.extent(parsed, (d) => d.t) as [Date, Date]).range([0, innerW]),
+    () => d3.scaleUtc().domain(d3.extent(parsed, (d) => d.t) as [Date, Date]).range([0, innerW]),
     [parsed, innerW],
   );
   const yLoad = useMemo(
-    () => d3.scaleLinear().domain([0, (d3.max(parsed, (d) => Math.max(d.tss, d.ctl, d.atl)) ?? 1) * 1.05]).range([innerH, 0]).nice(),
+    () =>
+      d3
+        .scaleLinear()
+        .domain([0, Math.max(10, (d3.max(parsed, (d) => Math.max(d.tss, d.ctl, d.atl)) ?? 0) * 1.05)])
+        .range([innerH, 0])
+        .nice(),
     [parsed, innerH],
   );
   const yTsb = useMemo(() => {
@@ -68,7 +74,7 @@ export function TrainingLoadChart({ days, height = 300 }: Props) {
           ))}
           {x.ticks(6).map((t) => (
             <text key={+t} x={x(t)} y={innerH + 18} textAnchor="middle" fontSize={11} fill="#666">
-              {d3.timeFormat("%m/%d")(t)}
+              {d3.utcFormat("%m/%d")(t)}
             </text>
           ))}
           {parsed.map((d) => (

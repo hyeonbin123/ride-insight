@@ -68,6 +68,7 @@ export function PowerCurveChart({ points, comparison, labels = ["이 라이딩",
             <path d={line(comparison) ?? ""} fill="none" stroke="#9e9e9e" strokeWidth={1.5} strokeDasharray="5 4" />
           )}
           {points.length > 1 && <path d={line(points) ?? ""} fill="none" stroke="#1565c0" strokeWidth={2} />}
+          {points.length <= 3 && points.map((p) => <circle key={p.secs} cx={x(p.secs)} cy={y(p.watts)} r={3} fill="#1565c0" />)}
           {hovered && <circle cx={x(hovered.secs)} cy={y(hovered.watts)} r={4} fill="#1565c0" />}
         </g>
       </svg>
