@@ -84,3 +84,40 @@ def test_load_meta_repairs_unescaped_sport_quotes():
     meta = opendata.load_meta(raw)
     assert meta["RIDES"][0]["sport"] == "'3.5-4.5 hours'"
     assert opendata.load_meta(b'{"a": 1}') == {"a": 1}
+
+
+def test_metric_rejects_non_finite_values():
+    assert opendata._metric({"average_power": "Infinity"}, "average_power") is None
+    assert opendata._metric({"average_power": "1e309"}, "average_power") is None
+    assert opendata._metric({"average_power": "nan"}, "average_power") is None
+    assert opendata._metric({"average_power": ["180.5", "3600"]}, "average_power") == 180.5
+
+
+def test_cp_changes_are_counted_in_date_order(tmp_path: Path):
+    def ride(date, cp):
+        return {"date": date, "sport": "Bike", "METRICS": {"average_power": "150", "cp_setting": cp}}
+
+    # Stored out of order: Jan 1 (200), Jan 3 (210), Jan 2 (200) -> one change in time order.
+    rides = [
+        ride("2020/01/01 10:00:00 UTC", "200.00000"),
+        ride("2020/01/03 10:00:00 UTC", "210.00000"),
+        ride("2020/01/02 10:00:00 UTC", "200.00000"),
+    ]
+    inv = opendata.inventory_of_zip(_athlete_zip(tmp_path, rides, {}))
+    assert inv["cp_changes"] == 1
+    assert inv["cp_values"] == 2
+
+
+def test_inventory_can_be_restricted_to_the_sample(tmp_path: Path):
+    rides = [{"date": "2020/01/01 10:00:00 UTC", "sport": "Bike", "METRICS": {"average_power": "150"}}]
+    first = _athlete_zip(tmp_path, rides, {})
+    first.replace(tmp_path / "ffffffff-0000-0000-0000-000000000000.zip")
+    _athlete_zip(tmp_path, rides, {})
+    sample = tmp_path / "sample.json"
+    sample.write_text(json.dumps([{"id": "0123abcd-0000-0000-0000-000000000000"}]), encoding="utf-8")
+    out = tmp_path / "inv.json"
+    opendata.cmd_inventory(tmp_path, out, sample)
+    ids = [r["id"] for r in json.loads(out.read_text(encoding="utf-8"))]
+    assert ids == ["0123abcd-0000-0000-0000-000000000000"]
+    opendata.cmd_inventory(tmp_path, out, None)
+    assert len(json.loads(out.read_text(encoding="utf-8"))) == 2

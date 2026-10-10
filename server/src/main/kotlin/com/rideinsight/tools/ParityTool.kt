@@ -82,6 +82,7 @@ internal fun compare(athlete: String, ride: JsonNode, csv: String, parsed: OpenD
         "last_secs" to (samples.secs.lastOrNull()),
         "power_missing" to samples.powerMissing,
         "bad_rows" to parsed.badRows,
+        "duplicate_rows" to parsed.duplicateRows,
         "over_3000" to over3000,
         "negative" to negative,
         "cp" to cp,

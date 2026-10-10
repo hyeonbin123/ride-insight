@@ -56,3 +56,5 @@ def test_csv_name_and_last_secs_parsing():
     assert rides.parse_csv_name("INDEX.csv") is None
     assert rides.last_secs_of_csv("secs,km\n0,0\n5,0.1\n10,0.2\n") == 10.0
     assert rides.last_secs_of_csv("secs,km\n") is None
+    assert rides.last_secs_of_csv("secs,km\n0,0\nInfinity,1\n") is None
+    assert rides.last_secs_of_csv("secs,km\n0,0\n5,0.1\n\n\n") == 5.0

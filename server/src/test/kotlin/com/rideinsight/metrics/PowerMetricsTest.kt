@@ -44,6 +44,14 @@ class PowerMetricsTest {
     }
 
     @Test
+    fun `single sample NP is the sample divided by the window length`() {
+        // One 300 W sample in a 30-sample window: rolling average 10 W, so NP = 10 W (GC gives the same).
+        close(10.0, PowerMetrics.normalizedPower(doubleArrayOf(300.0), 1.0))
+        // 1.26 s recording: window = (30 / 1.26).toInt() = 23 samples.
+        close(300.0 / 23.0, PowerMetrics.normalizedPower(doubleArrayOf(300.0), 1.26))
+    }
+
+    @Test
     fun `window of one sample or less has no NP`() {
         assertNull(PowerMetrics.normalizedPower(DoubleArray(100) { 100.0 }, 30.0))
         assertNull(PowerMetrics.normalizedPower(DoubleArray(100) { 100.0 }, 20.0))

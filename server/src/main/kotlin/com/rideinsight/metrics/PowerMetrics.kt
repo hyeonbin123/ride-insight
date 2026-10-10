@@ -41,7 +41,8 @@ object PowerMetrics {
 
     /**
      * Training Stress Score = (NP × duration × IF) / (threshold × 3600) × 100, where duration is
-     * `sampleCount × recIntSecs` (GoldenCheetah's `np->count()` times the recording interval).
+     * `sampleCount × recIntSecs` seconds. GoldenCheetah stores that duration as the NP metric's
+     * `count` (already in seconds) and multiplies it with NP and IF in the same way.
      */
     fun trainingStressScore(
         normalizedPower: Double,

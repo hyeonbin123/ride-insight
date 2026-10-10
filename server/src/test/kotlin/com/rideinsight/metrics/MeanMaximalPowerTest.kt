@@ -62,6 +62,25 @@ class MeanMaximalPowerTest {
         val r = ride(3500.0, 3500.0)
         assertEquals(0.0, MeanMaximalPower.peakPower(r, 1.0, 1.0))
         close(2999.0, MeanMaximalPower.peakPower(ride(2999.0, 2999.0), 1.0, 1.0))
+        // GoldenCheetah keeps only averages strictly below 3000 W.
+        assertEquals(0.0, MeanMaximalPower.peakPower(ride(3000.0, 3000.0), 1.0, 1.0))
+    }
+
+    @Test
+    fun `edge inputs from the Codex review`() {
+        // Best window at the very first sample.
+        close(400.0, MeanMaximalPower.best(ride(400.0, 100.0), 1.0, 1.0))
+        // A single sample covers exactly one recording interval.
+        close(200.0, MeanMaximalPower.best(ride(200.0), 1.0, 1.0))
+        assertNull(MeanMaximalPower.best(ride(200.0), 1.0, 2.0))
+        // Duplicate timestamps: two samples at 0 s span one interval, so the 1 s "average" is their
+        // sum. This matches GoldenCheetah's window rule; the CSV reader counts such rows so they can
+        // be reported rather than silently trusted.
+        val dup = RideSamples(doubleArrayOf(0.0, 0.0, 1.0), doubleArrayOf(200.0, 200.0, 200.0))
+        close(400.0, MeanMaximalPower.best(dup, 1.0, 1.0))
+        // Fractional recording interval: 4 samples at 1.26 s span 5.04 s; a 5 s window needs all four.
+        val frac = ride(100.0, 200.0, 300.0, 400.0, interval = 1.26)
+        close(1000.0 * 1.26 / 5.04, MeanMaximalPower.best(frac, 1.26, 5.0))
     }
 
     @Test

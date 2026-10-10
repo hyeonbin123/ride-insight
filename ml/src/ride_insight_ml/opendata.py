@@ -17,6 +17,7 @@ import argparse
 import collections
 import hashlib
 import json
+import math
 import re
 import sys
 import time
@@ -148,9 +149,15 @@ def cmd_download(sample: Path, dest: Path, limit: int | None) -> None:
         if limit is not None and i >= limit:
             break
         target = dest / r["name"]
-        if target.exists() and _file_sha256(target) == r["sha256"]:
-            skipped += 1
-            continue
+        if target.exists():
+            if _file_sha256(target) == r["sha256"]:
+                skipped += 1
+                continue
+            # A file that fails verification must never be analysed: move it aside first
+            # (Codex review 2026-10-10), then try to download a fresh copy.
+            stale = target.with_suffix(".bad")
+            target.replace(stale)
+            print(f"stale file moved to {stale.name}", file=sys.stderr)
         tmp = target.with_suffix(".part")
         try:
             urllib.request.urlretrieve(r["download"], tmp)
@@ -167,6 +174,8 @@ def cmd_download(sample: Path, dest: Path, limit: int | None) -> None:
             failed += 1
             print(f"download failed: {r['name']}: {e}", file=sys.stderr)
     print(f"downloaded={done} skipped={skipped} failed={failed}")
+    if failed:
+        raise SystemExit(2)
 
 
 # ----------------------------------------------------------------------------- inventory
@@ -197,9 +206,10 @@ def _metric(metrics: dict, key: str) -> float | None:
     if v in (None, "", "nan", "inf", "-inf"):
         return None
     try:
-        return float(v)
+        f = float(v)
     except (TypeError, ValueError):
         return None
+    return f if math.isfinite(f) else None
 
 
 def _interval_of_csv(text: str) -> float | None:
@@ -223,7 +233,8 @@ def inventory_of_zip(path: Path, csv_probe: int = 50) -> dict:
         rides = meta.get("RIDES", [])
         bike = [r for r in rides if (r.get("sport") or "") in ("Bike", "Turbo", "")]
         power = [r for r in bike if (_metric(r.get("METRICS", {}), "average_power") or 0) > 0]
-        cps = [_metric(r.get("METRICS", {}), "cp_setting") for r in bike]
+        by_date = sorted(bike, key=lambda r: r.get("date") or "")
+        cps = [_metric(r.get("METRICS", {}), "cp_setting") for r in by_date]
         cps = [c for c in cps if c]
         cp_changes = sum(1 for a, b in zip(cps, cps[1:], strict=False) if a != b)
         dates = sorted(r.get("date", "") for r in rides)
@@ -253,9 +264,15 @@ def inventory_of_zip(path: Path, csv_probe: int = 50) -> dict:
     }
 
 
-def cmd_inventory(dest: Path, out: Path) -> None:
+def cmd_inventory(dest: Path, out: Path, sample: Path | None = None) -> None:
+    """Summarise the zips in ``dest``; with ``sample`` only athletes listed in that manifest."""
+    allowed = None
+    if sample is not None:
+        allowed = {r["id"] for r in json.loads(sample.read_text(encoding="utf-8"))}
     rows = []
     for p in sorted(dest.glob(f"*{ATHLETE_ZIP_SUFFIX}")):
+        if allowed is not None and athlete_id_from_name(p.name) not in allowed:
+            continue
         try:
             rows.append(inventory_of_zip(p))
         except (zipfile.BadZipFile, KeyError, json.JSONDecodeError) as e:
@@ -310,6 +327,7 @@ def main(argv: list[str] | None = None) -> None:
     s = sub.add_parser("inventory", help="summarise downloaded athletes")
     s.add_argument("--dest", type=Path, required=True)
     s.add_argument("--out", type=Path, required=True)
+    s.add_argument("--sample", type=Path, default=None, help="restrict to athletes in this sample manifest")
 
     s = sub.add_parser("split", help="assign train/dev/test per athlete")
     s.add_argument("--inventory", type=Path, required=True)
@@ -324,7 +342,7 @@ def main(argv: list[str] | None = None) -> None:
     elif a.cmd == "download":
         cmd_download(a.sample, a.dest, a.limit)
     elif a.cmd == "inventory":
-        cmd_inventory(a.dest, a.out)
+        cmd_inventory(a.dest, a.out, a.sample)
     elif a.cmd == "split":
         cmd_split(a.inventory, a.min_power_rides, a.out)
 

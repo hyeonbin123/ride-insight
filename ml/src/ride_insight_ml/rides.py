@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 import sys
 import zipfile
 from pathlib import Path
@@ -75,13 +76,20 @@ def has_power_flag(flags: str | None) -> bool:
 
 
 def last_secs_of_csv(text: str) -> float | None:
-    lines = text.rstrip("\n").splitlines()
-    if len(lines) < 2:
+    """``secs`` of the last non-empty data row, without building a list of all lines."""
+    last = None
+    rows = 0
+    for line in text.splitlines():
+        if line.strip():
+            last = line
+            rows += 1
+    if last is None or rows < 2:
         return None
     try:
-        return float(lines[-1].split(",")[0])
+        value = float(last.split(",")[0])
     except (ValueError, IndexError):
         return None
+    return value if math.isfinite(value) else None
 
 
 def match_rides(rides: list[dict], csv_last_secs: dict[str, float | None]) -> tuple[list[dict], dict]:
