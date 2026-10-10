@@ -192,11 +192,12 @@ def load_meta(raw: bytes) -> dict:
     ``sport`` lines are replaced by single quotes and parsing is retried once.
     """
     text = raw.decode("utf-8", "replace")
+    # strict=False: another export (athlete d0375ff2) has a raw control character inside a string.
     try:
-        return json.loads(text)
+        return json.loads(text, strict=False)
     except json.JSONDecodeError:
         repaired = _SPORT_LINE.sub(lambda m: m.group(1) + m.group(2).replace('"', "'") + m.group(3), text)
-        return json.loads(repaired)
+        return json.loads(repaired, strict=False)
 
 
 def _metric(metrics: dict, key: str) -> float | None:
