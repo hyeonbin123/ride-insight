@@ -4,15 +4,31 @@ Usage: ``python -m ride_insight_ml.parity --jsonl ../reports/parity/dev.jsonl --
 writes ``<out>.json`` (all numbers) and ``<out>.md`` (summary table).
 """
 
+# [파일 역할] 1단계(지표 구현의 정확성) 판정 스크립트. Kotlin parity 도구(ParityTool.kt)가 라이딩마다 '우리
+# 구현의 NP·TSS·MMP 16구간'과 'GoldenCheetah 메타데이터 값'을 나란히 적은 JSONL을 읽어, 미리 정한 허용 오차
+# 안에서 일치하는 비율과 부트스트랩 95% 구간을 내고 H1~H4를 판정한다.
+# [왜 필요한가] 직접 구현한 지표가 맞는지를 '널리 쓰이는 다른 구현(GoldenCheetah)이 같은 데이터로 계산한 값'과
+# 대조해 수치로 보이려는 것이다. 판정 기준(1 W, TSS 0.5, 99%)은 측정 전에 docs/experiments.md 1단계에 적었다.
+# [흐름] load(JSONL → 표, 파생 열: GC 임계값, GC 임계값으로 다시 계산한 TSS, 정수 TSS, 흔들림, 간격 그룹) →
+# analyse(가설별 일치 여부 → 부트스트랩 → 판정, 보고 항목) → to_markdown.
+# [결과] 봉인 세트(선수 100명, 라이딩 32,907개)에서 H1 NP 99.61%, H2 MMP 99.65%, H3 TSS 99.97% 지지, H4
+# 기각(reports/parity/sealed.md).
+
 from __future__ import annotations
 
 import argparse
 import json
 from pathlib import Path
 
+# numpy: 부트스트랩 재표집(seed 0 Generator)과 조건부 계산(np.where). pandas: 라이딩 표 처리.
 import numpy as np
 import pandas as pd
 
+# 판정 상수(docs/experiments.md 1단계 가설).
+# - TOL_WATTS: NP·MMP가 GC와 '일치'로 인정되는 차이 1 W 이하
+# - TOL_TSS: TSS 차이 0.5 이하
+# - TARGET_RATE: 일치율 99% 이상이면 가설 지지(구간 하한 기준)
+# - BOOTSTRAP_N·SEED: 공통 규칙의 라이딩 단위 부트스트랩 2,000회, seed 0
 TOL_WATTS = 1.0
 TOL_TSS = 0.5
 TARGET_RATE = 0.99
@@ -20,6 +36,10 @@ BOOTSTRAP_N = 2000
 SEED = 0
 
 
+# JSONL을 라이딩 한 행짜리 DataFrame으로 읽고 판정에 필요한 파생 열을 붙인다. 호출 위치: main,
+# tests/test_parity.py.
+# 라이딩이 하나도 없으면 분명한 메시지로 끝낸다. 짝지어진 라이딩이 없는 입력에서 분석이 KeyError로 죽던 것을
+# 고친 것이다(docs/ai-verification.md 1단계).
 def load(jsonl: Path) -> pd.DataFrame:
     rows = []
     for line in jsonl.read_text(encoding="utf-8").splitlines():
@@ -45,6 +65,7 @@ def load(jsonl: Path) -> pd.DataFrame:
             "if_gc": d["gc"]["if"],
             "workout_time_gc": d["gc"]["workout_time"],
         }
+        # MMP 16구간은 구간마다 열 하나로 펼친다(mmp_ours_<키>, mmp_gc_<키>).
         for k, v in d["ours"]["mmp"].items():
             row[f"mmp_ours_{k}"] = v
         for k, v in d["gc"]["mmp"].items():
@@ -53,7 +74,12 @@ def load(jsonl: Path) -> pd.DataFrame:
     if not rows:
         raise SystemExit(f"no rides in {jsonl}: did the parity tool find the athletes' zips and index files?")
     df = pd.DataFrame(rows)
+    # 파워 결측 비율(보고용). samples가 0이어도 0으로 나누지 않게 1 이상으로 자른다.
     df["missing_ratio"] = df["power_missing"] / df["samples"].clip(lower=1)
+    # 규칙 변경 2: GC가 IF에 실제로 쓴 임계값 = NP / IF로 역산한다(thr_gc). 이 값으로 우리 NP에서 TSS를 다시
+    # 계산해(tss_ours_thr) GC TSS와 비교한다. TSS = 시간(h) × IF² × 100이고 IF = NP / 임계값이므로 100 × hours
+    # × (NP / thr)²가 같은 식이다. 시간은 샘플 수 × 기록 간격(GC의 'NP × 샘플 수 × recIntSecs' 정의와 같은
+    # 기준).
     # Threshold GoldenCheetah actually used for IF/TSS (rule change 2): NP / IF. It is the zone FTP,
     # which can differ from cp_setting (the zone CP).
     np_gc = pd.to_numeric(df["np_gc"], errors="coerce")
@@ -62,16 +88,24 @@ def load(jsonl: Path) -> pd.DataFrame:
     np_ours = pd.to_numeric(df["np_ours"], errors="coerce")
     hours = df["samples"] * df["rec_int"] / 3600.0
     df["tss_ours_thr"] = np.where(df["thr_gc"] > 0, 100.0 * hours * (np_ours / df["thr_gc"]) ** 2, np.nan)
+    # cp_setting과 GC 임계값이 1 W 넘게 다른 라이딩 표시(보고용, 3단계 라벨 정의의 근거가 됐다).
     df["cp_differs"] = (df["cp"] - df["thr_gc"]).abs() > 1.0
+    # 규칙 변경 3: GC TSS가 정확히 정수(1e-6 안)면 사용자가 직접 입력한 값으로 보고 H3에서 뺀다.
     # Rule change 3: an exactly integer coggan_tss is almost always a manual override typed by the
     # athlete (170 of 172 integer values in the development set disagreed with the computed TSS).
     tss_gc = pd.to_numeric(df["tss_gc"], errors="coerce")
     df["tss_gc_integer"] = tss_gc.notna() & ((tss_gc - tss_gc.round()).abs() < 1e-6)
+    # jitter: 최빈 간격이 전체 양수 간격의 90% 미만이면 '타임스탬프가 흔들리는 라이딩'(규칙의 보고 항목).
+    # interval_group: 기록 간격 1초 / 5초 / 그 외. H1~H3은 1초 라이딩만, H4는 1초 아닌 라이딩을 본다.
     df["jitter"] = pd.to_numeric(df["rec_int_share"], errors="coerce") < 0.9
     df["interval_group"] = np.where(df["rec_int"] == 1.0, "1s", np.where(df["rec_int"] == 5.0, "5s", "other"))
     return df
 
 
+# 행마다 일치 여부(True/False). 규칙: 둘 다 값이 없으면 일치, 한쪽만 있으면 불일치, 둘 다 있으면 |차이| ≤
+# tol일 때 일치. GC 쪽은 0도 '없음'으로 본다(GC는 결과가 없거나 3000 W 이상일 때 0을 쓴다; Codex 1차 검토 지적
+# 5로 규칙에 명시). 우리 쪽은 NaN만 '없음'이라, 우리 값이 0(예: 3000 W 가드)이고 GC도 0이면 불일치로 센다.
+# 호출 위치: analyse, tests/test_parity.py.
 def agree(ours: pd.Series, theirs: pd.Series, tol: float) -> pd.Series:
     """Agreement per row: both absent (None/NaN or GC 0) counts as agreement; one side absent as not."""
     o = pd.to_numeric(ours, errors="coerce")
@@ -83,6 +117,9 @@ def agree(ours: pd.Series, theirs: pd.Series, tol: float) -> pd.Series:
     return both_absent | (both_present & ((o - t).abs() <= tol))
 
 
+# 일치 여부 배열의 비율과 라이딩 단위 부트스트랩 95% 구간. (n × 라이딩 수) 크기의 인덱스 행렬을 한 번에 뽑아
+# 벡터 연산으로 2,000개 재표집 비율을 계산한다(파이썬 반복문보다 빠르다). 대신 2,000 × 라이딩 수 크기의 배열을
+# 만들므로 라이딩이 수만 개면 메모리를 수백 MB 쓴다. 입력이 비면 rate None.
 def bootstrap_rate(mask: pd.Series, n: int = BOOTSTRAP_N, seed: int = SEED) -> dict:
     values = mask.to_numpy(dtype=float)
     if len(values) == 0:
@@ -97,6 +134,7 @@ def bootstrap_rate(mask: pd.Series, n: int = BOOTSTRAP_N, seed: int = SEED) -> d
     }
 
 
+# '비율 ≥ target' 가설 판정. 구간 하한 ≥ 99%면 지지, 상한 < 99%면 기각, 걸치면 판정 불가(규칙의 판정 방식).
 def verdict_at_least(ci: list, target: float) -> str:
     if ci[0] is None:
         return "판정 불가"
@@ -107,6 +145,7 @@ def verdict_at_least(ci: list, target: float) -> str:
     return "판정 불가"
 
 
+# |우리 − GC| 차이 분포(보고용): 둘 다 값이 있는 행의 개수, 중앙값, p95, 최대.
 def diff_stats(ours: pd.Series, theirs: pd.Series) -> dict:
     o = pd.to_numeric(ours, errors="coerce")
     t = pd.to_numeric(theirs, errors="coerce")
@@ -121,10 +160,17 @@ def diff_stats(ours: pd.Series, theirs: pd.Series) -> dict:
     }
 
 
+# 가설 판정과 보고 항목을 계산한다. 호출 위치: main, tests/test_parity.py.
+# - H1: 1초 라이딩의 NP 일치율
+# - H2: 1초 라이딩의 (라이딩, 16구간) MMP 일치율
+# - H3: 1초 라이딩 중 GC 임계값이 있고, GC TSS가 정수가 아니며 0·결측이 아닌 라이딩의 TSS 일치율
+# - H4: 1초가 아닌 라이딩의 NP 일치율과, '1초 − 그 외' 차이가 5%p 이상인가
 def analyse(df: pd.DataFrame) -> dict:
     mmp_keys = [c[len("mmp_gc_") :] for c in df.columns if c.startswith("mmp_gc_")]
     one_s = df[df["interval_group"] == "1s"]
     other = df[df["interval_group"] != "1s"]
+    # 규칙 변경 4: GC에 IF는 있는데 TSS가 없거나 0인 라이딩은 H3에서 뺀다(계산 차이가 아니라 GC가 TSS를
+    # 저장하지 않은 것). with_cp는 이름과 달리 cp_setting이 아니라 GC 임계값(thr_gc)이 있는 라이딩을 뜻한다.
     # Rule change 4: GC has IF but no TSS for some rides (745 of 31,703 in the development set, 13
     # athletes); that is a GoldenCheetah storage artefact, not a computation difference.
     tss_gc_present = pd.to_numeric(one_s["tss_gc"], errors="coerce").fillna(0.0) != 0.0
@@ -134,6 +180,10 @@ def analyse(df: pd.DataFrame) -> dict:
     np_agree_other = agree(other["np_ours"], other["np_gc"], TOL_WATTS)
     tss_agree = agree(with_cp["tss_ours_thr"], with_cp["tss_gc"], TOL_TSS)
 
+    # mmp_pairs: 모든 (라이딩, 구간) 쌍을 한 줄로 이어 붙인 일치 여부(쌍 단위 비율 보고용).
+    # per_ride_mmp → ride_mmp_rate: 라이딩마다 16쌍의 일치 비율. 부트스트랩은 쌍이 아니라 라이딩을 다시 뽑아야
+    # 한다(같은 라이딩의 16쌍은 독립이 아니므로). 라이딩마다 쌍 수가 16으로 같아 라이딩 비율의 평균은 쌍 단위
+    # 비율과 같다.
     mmp_pairs = pd.concat(
         [agree(one_s[f"mmp_ours_{k}"], one_s[f"mmp_gc_{k}"], TOL_WATTS) for k in mmp_keys], ignore_index=True
     )
@@ -147,6 +197,8 @@ def analyse(df: pd.DataFrame) -> dict:
     h2 = bootstrap_rate(ride_mmp_rate)
     h3 = bootstrap_rate(tss_agree)
     h4_other = bootstrap_rate(np_agree_other)
+    # H4의 차이 구간: 1초 그룹과 그 외 그룹을 각각 독립으로 다시 뽑아 '1초 일치율 − 그 외 일치율'을 2,000번
+    # 구한다(규칙의 독립 재표집 차이, Codex 1차 검토 지적 7). 한쪽 그룹이 비면 판정 불가.
     h4_diff = None
     if len(np_agree_1s) and len(np_agree_other):
         rng = np.random.default_rng(SEED)
@@ -161,6 +213,8 @@ def analyse(df: pd.DataFrame) -> dict:
             "ci": [float(np.quantile(diffs, 0.025)), float(np.quantile(diffs, 0.975))],
         }
 
+    # 차이 하한 ≥ 5%p면 지지, 상한 < 5%p면 기각. 봉인 세트는 3.3%p [2.4, 4.1]로 기각됐다(5초 기록이 많았고
+    # GC와 잘 맞았다).
     def h4_verdict() -> str:
         if h4_diff is None:
             return "판정 불가"
@@ -171,8 +225,13 @@ def analyse(df: pd.DataFrame) -> dict:
             return "기각"
         return "판정 불가"
 
+    # 1초 라이딩 중 NP 차이가 가장 큰 5개(보고의 '어긋난 라이딩 예시'). 봉인 세트에서는 메타데이터에 파워가
+    # 있다는데 CSV 파워 열이 빈 라이딩들이었다.
     worst = one_s.assign(np_diff=(one_s["np_ours"] - one_s["np_gc"]).abs())
     worst = worst.sort_values("np_diff", ascending=False).head(5)
+    # 보고 항목(판정 없음)도 함께 돌려준다: 간격 그룹·간격 값 분포, 파워 결측 비율 구간, 3000 W 이상·음수
+    # 파워·깨진 행·흔들림이 있는 라이딩 수, 정수 TSS 수, IF는 있고 TSS가 없는 수, cp_setting과 GC 임계값이
+    # 다른 라이딩 수, 지표별 차이 분포, 구간별 MMP 일치율.
     return {
         "rides": int(len(df)),
         "athletes": int(df["athlete"].nunique()),
@@ -222,6 +281,8 @@ def analyse(df: pd.DataFrame) -> dict:
     }
 
 
+# analyse 결과를 Markdown 보고서(reports/parity/*.md)로 만든다: 데이터 요약, 가설 표(일치율 [구간] (n), 판정),
+# 차이 분포 표, 구간별 MMP 일치율, NP 차이 상위 5개. 내부 함수 rate()가 비율을 백분율 문자열로 바꾼다.
 def to_markdown(r: dict, title: str) -> str:
     def rate(h):
         if h["rate"] is None:
@@ -271,6 +332,8 @@ def to_markdown(r: dict, title: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+# 명령행 진입점. --jsonl을 분석해 --out.json(모든 수치)과 --out.md(요약)를 쓴다. 보고서 제목은 JSONL 파일
+# 이름(dev, sealed 등)이다.
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--jsonl", type=Path, required=True)

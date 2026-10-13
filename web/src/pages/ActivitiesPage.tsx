@@ -1,3 +1,9 @@
+// [파일 역할] 라이딩 화면(/activities). 위 카드에서 FIT 파일을 여러 개 올리고 결과를 줄마다 보여 주며, 아래
+// 카드에서 선수의 라이딩 목록(최신순, '더 보기' 페이지네이션)을 표로 보여 준다. 행을 누르면 상세 화면으로
+// 간다.
+// [데이터 흐름] 업로드는 POST /athletes/{id}/activities(서버가 디코딩·종목 확인·지표 계산까지 하고 요약을
+// 돌려줌), 목록은 GET .../activities?limit&before(커서 방식).
+
 import { useRef, useState } from "react";
 import {
   Alert,
@@ -22,6 +28,7 @@ import { formatDate, formatDuration, formatNumber, formatWatts } from "../format
 import { useAthleteStore } from "../state/athleteStore";
 import { NeedAthlete } from "../components/NeedAthlete";
 
+// 목록을 한 번에 30개씩 받는다(서버 기본 50, 최대 200).
 const PAGE = 30;
 
 /** FIT upload plus the paginated activity list. */
@@ -32,6 +39,9 @@ export function ActivitiesPage() {
   const fileInput = useRef<HTMLInputElement>(null);
   const [uploadLog, setUploadLog] = useState<{ name: string; ok: boolean; text: string }[]>([]);
 
+  // 커서 페이지네이션 목록. 첫 페이지는 before 없이 받고, 다음 페이지는 직전 응답의 nextBefore(마지막 항목의
+  // 시작 시각)를 before로 넘긴다. nextBefore가 없으면 hasNextPage가 false가 돼 '더 보기'가 사라진다. 오프셋
+  // 방식과 달리 중간에 업로드가 생겨도 항목이 겹치거나 빠지지 않는다(서버에서 같은 선수의 시작 시각은 유일).
   const list = useInfiniteQuery({
     queryKey: ["activities", athleteId],
     queryFn: ({ pageParam }) => api.listActivities(athleteId!, PAGE, pageParam ?? undefined),
@@ -40,6 +50,11 @@ export function ActivitiesPage() {
     enabled: !!athleteId,
   });
 
+  // 여러 파일 업로드. 파일을 하나씩 차례로 올리고(병렬이 아니라 순서대로), 한 파일이 실패해도 예외를 밖으로
+  // 던지지 않고 결과 목록에 남긴 뒤 다음 파일로 넘어간다. 그래서 mutation 자체는 항상 성공하고 파일별
+  // 성공·실패가 uploadLog에 쌓인다.
+  // 실패 메시지는 서버 오류 형식 그대로(예: 422 unsupported_sport, 400 invalid_fit, 409 duplicate_activity,
+  // 413 file_too_large) 보여 준다.
   const upload = useMutation({
     mutationFn: async (files: File[]) => {
       const results: { name: string; ok: boolean; text: string }[] = [];
@@ -58,6 +73,8 @@ export function ActivitiesPage() {
       return results;
     },
     onSuccess: (results) => {
+      // 새 결과를 위에 붙이고 최근 20줄만 남긴다. 그다음 이 선수의 목록, 훈련 부하, 기간 파워 커브 캐시를
+      // 무효화해 새 라이딩이 반영되게 한다.
       setUploadLog((prev) => [...results, ...prev].slice(0, 20));
       qc.invalidateQueries({ queryKey: ["activities", athleteId] });
       qc.invalidateQueries({ queryKey: ["training-load", athleteId] });
@@ -65,6 +82,8 @@ export function ActivitiesPage() {
     },
   });
 
+  // 선수를 고르지 않았으면 안내만 보여 준다. 훅 호출(위의 useInfiniteQuery 등)은 이 return보다 앞에 있어야
+  // 렌더마다 훅 순서가 같다는 React 규칙을 지킨다. 받은 페이지들은 하나의 배열로 펼쳐 표에 쓴다.
   if (!athleteId) return <NeedAthlete />;
   const items: Activity[] = list.data?.pages.flatMap((p) => p.items) ?? [];
 
@@ -74,6 +93,8 @@ export function ActivitiesPage() {
         <CardContent>
           <Stack sx={{ alignItems: "center", flexWrap: "wrap" }} direction="row" spacing={2}>
             <Typography variant="h6">FIT 파일 올리기</Typography>
+            {/* 숨긴 파일 입력. 버튼이 click()으로 대신 열어 MUI 버튼 모양을 쓴다. 선택 후 value를 비워 */}
+            {/* 같은 파일을 다시 골라도 onChange가 다시 일어나게 한다(중복 업로드 409 확인 등). */}
             <input
               ref={fileInput}
               type="file"
@@ -89,6 +110,7 @@ export function ActivitiesPage() {
             <Button variant="contained" onClick={() => fileInput.current?.click()} disabled={upload.isPending}>
               파일 선택
             </Button>
+            {/* 서버 규칙 안내: 러닝·수영·걷기·하이킹은 422로 거절되고, 10 MB를 넘으면 413(docs/api.md). */}
             <Typography variant="body2" color="text.secondary">
               사이클링 활동만 저장됩니다(러닝 등은 422). 파일당 10 MB까지.
             </Typography>
@@ -108,6 +130,7 @@ export function ActivitiesPage() {
 
       <Card>
         <CardContent>
+          {/* 제목 옆 개수: 받은 라이딩 수이고, 다음 페이지가 남아 있으면 '+'를 붙인다. */}
           <Typography variant="h6" gutterBottom>
             라이딩 {items.length ? `(${items.length}${list.hasNextPage ? "+" : ""})` : ""}
           </Typography>
@@ -129,6 +152,8 @@ export function ActivitiesPage() {
                 </TableRow>
               </TableHead>
               <TableBody>
+                {/* 행 전체를 눌러 상세로 이동한다. 표 안에 링크(a)를 끼워 넣던 방식 대신 행 onClick + */}
+                {/* navigate로 바꿨다(커밋 c3546ab). 값이 없는 지표는 format 함수가 '-'로 표시한다. */}
                 {items.map((a) => (
                   <TableRow key={a.id} hover onClick={() => navigate(`/activities/${a.id}`)} sx={{ cursor: "pointer" }}>
                     <TableCell>{formatDate(a.startedAt)}</TableCell>

@@ -1,3 +1,10 @@
+# [테스트 묶음] ftp.py(3단계 FTP 추정 실험)의 단위 테스트. 실제 OpenData 없이 '정답을 아는' 합성 라이딩으로
+# 예측 단위 만들기(기준일, 라벨, 신선도, 분할), 규칙 후보(R1, R3), 평가 전체 흐름, 선수 단위 부트스트랩이
+# 의도대로 동작하는지 확인한다.
+# [왜 중요한가] 봉인 test는 한 번만 재므로 라벨·신선도·부트스트랩 정의가 틀리면 다시 잴 기회가 없다. 실제로
+# 신선도 정의가 등록 규칙과 달랐던 버그(규칙 변경 5)를 고친 뒤 경계 테스트를 여기
+# 추가했다(docs/ai-verification.md).
+
 import datetime as dt
 import json
 from pathlib import Path
@@ -8,6 +15,9 @@ import pandas as pd
 from ride_insight_ml import ftp
 
 
+# 합성 라이딩 한 줄(Kotlin parity JSONL 형식)을 만든다. MMP 곡선은 FTP × (1 + 2 / (1 + t/60))로 짧을수록 높고
+# 길수록 FTP에 가까워지는 단순한 모양이다(20분이면 약 1.095 × FTP). GC 값은 NP = 0.8 × FTP, IF = 0.8로 둬서
+# 역산 임계값 NP / IF가 정확히 FTP(=L_FTP)가 되고, cp_setting은 FTP + 10이라 L_CP와 L_FTP가 구분된다.
 def _ride(athlete, day, ftp_w, np_w=None):
     """A ride whose mean-maximal powers follow a simple curve scaled by the athlete's FTP."""
     secs = {
@@ -41,6 +51,9 @@ def _ride(athlete, day, ftp_w, np_w=None):
     }
 
 
+# 선수 12명의 합성 데이터 세트를 tmp_path에 쓴다: 라이딩 JSONL(3일마다 라이딩, 기본 FTP 200 + 10 × i W,
+# 100일째에 20 W 오름), 선수 인덱스 JSON(성별 번갈아, 출생 연도 1985), 표본 매니페스트(앞 8명 train, 2명 dev,
+# 2명 test). 100일째의 FTP 상승이 신선도 판정의 재료다. rng는 만들었다가 쓰지 않고 지운다(남은 흔적).
 def _write_fixture(tmp_path: Path, n_athletes=12):
     rows = []
     rng = np.random.default_rng(1)
@@ -71,12 +84,18 @@ def _write_fixture(tmp_path: Path, n_athletes=12):
     return jsonl, index, sample
 
 
+# 기준일이 '첫 라이딩, 그다음은 직전 기준일 + 28일 이후의 첫 라이딩'으로 뽑히는지 확인한다. 1/10(9일 뒤)과
+# 2/1(3일 뒤)은 건너뛰어야 한다.
 def test_reference_dates_step_every_28_days():
     dates = pd.Series(pd.to_datetime(["2020-01-01", "2020-01-10", "2020-01-29", "2020-02-01", "2020-03-15"]))
     refs = ftp.reference_dates(dates)
     assert [d.date().isoformat() for d in refs] == ["2020-01-01", "2020-01-29", "2020-03-15"]
 
 
+# 예측 단위의 라벨·보조 라벨·신선도·나이·창 크기·분할을 확인한다. 라벨은 창의 마지막 라이딩의 NP / IF여야
+# 하므로 FTP 상승 전 200, 뒤 220이 나와야 하고, L_CP는 cp_setting(210)이어야 한다. 첫 단위는 ±28일 안에 라벨
+# 변화가 없어 신선하지 않고, 상승 시점 근처 단위는 신선해야 한다. 라벨 정의가 어긋나면 3단계 전체 수치가
+# 무의미해지므로 가장 기본이 되는 검사다.
 def test_build_units_labels_and_freshness(tmp_path: Path):
     jsonl, index, sample = _write_fixture(tmp_path)
     rides = ftp.load_rides(jsonl)
@@ -97,6 +116,9 @@ def test_build_units_labels_and_freshness(tmp_path: Path):
     assert set(units["split"]) == {"train", "dev", "test"}
 
 
+# 신선도 정의의 경계를 날짜별로 고정한다. 라벨이 100일째에 바뀔 때 기준일 84일(16일 뒤 변화)·112일(12일 전
+# 변화)은 신선, 28일(72일 뒤)·168일은 신선하지 않아야 한다. 처음 구현은 −28일 값과 +28일 이후 첫 값을 비교해
+# +45일 변화도 신선으로 셌다. Codex 3차 검토가 이를 잡았고(규칙 변경 5), 이 테스트가 같은 회귀를 막는다.
 def test_freshness_follows_the_registered_definition(tmp_path: Path):
     # Label 250 until day 100, then 270. A unit is fresh only when a ride within +-28 days of its
     # reference date carries a different label.
@@ -115,6 +137,9 @@ def test_freshness_follows_the_registered_definition(tmp_path: Path):
     assert by_day[168] is False
 
 
+# 규칙 후보를 손으로 아는 값으로 확인한다. R1 = 0.95 × 300 = 285, 20분 기록이 없으면 NaN. R3(CP 적합)는 20분
+# 최대보다 낮고 60분 최대보다 높은 범위에 있어야 하고, 3·5·8·10·20분 중 값이 3개 미만이면(두 번째 행)
+# NaN이어야 한다.
 def test_rules_on_known_curve():
     u = pd.DataFrame(
         {
@@ -135,6 +160,11 @@ def test_rules_on_known_curve():
     assert np.isnan(r3.iloc[1])  # fewer than three durations
 
 
+# build → evaluate(dev, 채택 R1) → Markdown까지 한 번에 돌려 흐름이 끊기지 않는지 본다. 합성 곡선의 20분
+# 최대가 1.095 × FTP라 R1(0.95배)은 약 4% 과대 추정이 되므로 편향이 양수이고 H6이 '지지'여야 한다(판정 방향
+# 검사). train 단위가 적어 모델 후보는 min_train(50) 때문에 건너뛸 수 있으므로, 돌았으면 적용 비율이 (0, 1]
+# 안인지만 확인한다. 반대로 규칙 R1은 학습이 필요 없어 데이터가 작아도 항상 평가돼야 한다(규칙에도 최소 학습
+# 수를 적용해 R1이 빠지고 KeyError가 나던 실수, docs/ai-verification.md 3단계).
 def test_evaluate_runs_end_to_end(tmp_path: Path):
     jsonl, index, sample = _write_fixture(tmp_path)
     out = tmp_path / "units.parquet"
@@ -153,6 +183,9 @@ def test_evaluate_runs_end_to_end(tmp_path: Path):
         assert "skipped" in m or 0 < m["coverage"] <= 1
 
 
+# 부트스트랩이 단위가 아니라 선수를 다시 뽑는지 확인한다. 선수 2명(오차 1과 9, 각 50개)이면 선수 단위 재표집
+# 평균은 1, 5, 9 중 하나라 구간이 정확히 [1, 9]가 된다. 단위를 하나씩 뽑았다면 평균이 5 근처에 몰려 구간이
+# 훨씬 좁게 나왔을 것이다.
 def test_athlete_bootstrap_uses_athlete_resampling():
     err = pd.Series([1.0] * 50 + [9.0] * 50)
     ath = pd.Series(["a"] * 50 + ["b"] * 50)

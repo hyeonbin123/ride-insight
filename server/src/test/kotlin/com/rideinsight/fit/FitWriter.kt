@@ -1,5 +1,12 @@
 package com.rideinsight.fit
 
+// [파일 역할] 테스트 전용의 아주 작은 FIT 인코더. 정의·데이터 메시지와 14바이트 헤더, CRC를 써서 구조적으로
+// 올바른 파일을 만든다.
+// [왜 필요한가] 변조 테스트(TamperedFitTest, 5단계 H8)는 정상 파일에서 한 가지씩만 망가뜨려야 어떤 변조가
+// 어떤 응답을 낳는지 특정할 수 있다. 바이트 구조를 아는 인코더로 만들면 크기 필드·CRC·정의 순서를 하나씩
+// 정확히 조작할 수 있다.
+// [연결] TamperedFitTest가 쓴다. CRC는 FitDecoder.crc16을 그대로 불러 디코더와 같은 계산을 한다.
+
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -9,9 +16,13 @@ import java.nio.ByteOrder
  * fields. Produces structurally valid files so the tests can tamper with one thing at a time.
  */
 class FitWriter {
+    // data는 데이터 영역 바이트, definitions는 로컬 타입별 필드 정의(필드 번호, 크기, 기본 타입). data()가
+    // 값마다 몇 바이트를 쓸지 정의에서 찾는다.
     private val data = ByteArrayOutputStream()
     private val definitions = HashMap<Int, List<Triple<Int, Int, Int>>>() // local type -> (field, size, base type)
 
+    // 정의 메시지: 헤더 0x40|로컬 타입, 예약 0, 아키텍처 0(리틀 엔디언), 전역 번호 2바이트, 필드 수, 필드마다
+    // 3바이트(번호, 크기, 기본 타입).
     /** Defines local message [local] for [global] with fields (field number, size, base type). */
     fun define(local: Int, global: Int, fields: List<Triple<Int, Int, Int>>): FitWriter {
         definitions[local] = fields
@@ -29,6 +40,8 @@ class FitWriter {
         return this
     }
 
+    // 데이터 메시지: 헤더(로컬 타입) 뒤에 값마다 정의된 크기만큼 리틀 엔디언 바이트. 값을 8바이트 Long으로 쓴
+    // 뒤 앞에서부터 필요한 바이트만 잘라 쓴다(리틀 엔디언이라 하위 바이트가 앞에 온다).
     /** Writes a data message; [values] are raw integers in field order. */
     fun data(local: Int, values: List<Long>): FitWriter {
         val fields = definitions.getValue(local)
@@ -41,12 +54,16 @@ class FitWriter {
         return this
     }
 
+    // 정의를 거치지 않은 바이트를 그대로 붙인다(정의 없는 데이터, 잘린 정의 같은 변조용).
     /** Appends raw bytes to the data section (for deliberately broken content). */
     fun raw(bytes: ByteArray): FitWriter {
         data.write(bytes)
         return this
     }
 
+    // 헤더: 길이 14, 프로토콜 버전 0x20(2.0), 프로필 버전 2170, 데이터 크기, '.FIT', 헤더 CRC 0(생략 표시).
+    // 파일 CRC는 헤더 + 데이터 전체로 계산해 끝에 리틀 엔디언으로 붙인다. declaredDataSize로 크기 필드만
+    // 속이거나(변조 1·2), breakCrc로 CRC만 바꾼다(변조 3).
     /** Full file: 14-byte header, data, CRC. [declaredDataSize] overrides the header's size field. */
     fun build(declaredDataSize: Int? = null, breakCrc: Boolean = false): ByteArray {
         val body = data.toByteArray()
@@ -63,6 +80,9 @@ class FitWriter {
     companion object {
         const val FIT_EPOCH = FitDecoder.FIT_EPOCH_OFFSET
 
+        // 정상 사이클링 라이딩: file_id(activity, 제조사 1 = garmin) + session(sport = cycling) + count개
+        // record(1초 간격, 일정한 파워). backwards면 시각을 거꾸로 쓴다(변조 6). 기본 타입 0x84·0x86은
+        // uint16(4)·uint32(6)에 엔디언 비트(0x80)를 켠 값이고, 시각은 FIT 기준 시각으로 바꿔 넣는다.
         /** A valid cycling ride: file_id + session(sport) + [count] records at 1 s with the given power. */
         fun ride(count: Int, power: Int = 200, startUnix: Long = 1_600_000_000L, backwards: Boolean = false): FitWriter {
             val w = FitWriter()

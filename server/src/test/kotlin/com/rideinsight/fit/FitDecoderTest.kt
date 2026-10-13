@@ -1,5 +1,12 @@
 package com.rideinsight.fit
 
+// [파일 역할] 직접 쓴 FIT 디코더를 python-fitparse(MIT)의 디코딩 결과와 대조하는 테스트. 기대값
+// JSON(src/test/resources/fit/expected/)은 ml/의 fit_expected.py가 같은 샘플 FIT 파일을 fitparse로 읽어
+// 만든다.
+// [왜 중요한가] 직접 구현한 바이너리 디코더의 필드 번호·정의 크기 실수는 작은 손 예제로는 놓치기 쉽다. 이
+// 대조가 실제로 버그 2개를 잡았다: session의 threshold_power 필드 번호(112 → 45), 개발자 필드 정의를 필드당
+// 2바이트로 읽어 Wahoo ELEMNT 파일이 어긋난 문제(docs/ai-verification.md FIT 디코더).
+
 import java.io.File
 import kotlin.math.abs
 import kotlin.test.Test
@@ -22,9 +29,12 @@ class FitDecoderTest {
 
     private fun bytes(name: String): ByteArray = File(dir, "$name.fit").readBytes()
 
+    // fitparse는 제조사·파일 종류를 이름으로 내보내므로, 비교에 쓰는 번호 → 이름 표.
     private val manufacturerNames = mapOf(1L to "garmin", 32L to "wahoo_fitness", 294L to "coros")
     private val fileTypeNames = mapOf(4L to "activity")
 
+    // 정상적으로 읽혀야 하는 샘플 6개: Garmin Edge 810(파워미터 Vector)·500·820, Wahoo ELEMNT, 실내 트레이너,
+    // Garmin fenix 5 러닝. 손상 파일과 Coros 파일은 아래 별도 테스트에서 다룬다.
     private val decodable = listOf(
         "Edge810-Vector-2013-08-16-15-35-10",
         "garmin-edge-500-activity",
@@ -34,6 +44,7 @@ class FitDecoderTest {
         "garmin-fenix-5-run",
     )
 
+    // 모든 정상 샘플이 예외 없이 디코딩되는지. 실패한 파일을 모두 모아 한 번에 보여 준다.
     @Test
     fun `every decodable sample decodes`() {
         val failures = decodable.mapNotNull { name ->
@@ -47,6 +58,8 @@ class FitDecoderTest {
         assertTrue(failures.isEmpty(), failures.joinToString("\n"))
     }
 
+    // record 시계열 대조: 개수와 CRC, 그리고 모든 record의 timestamp와 파워·심박·케이던스·거리·속도·고도를
+    // 1e-6 안에서 비교한다. fitparse에 값이 없으면 우리도 null이어야 한다(없는 값을 지어내지 않는지도 확인).
     @Test
     fun `record series match python-fitparse on every decodable sample`() {
         for (name in decodable) {
@@ -83,6 +96,9 @@ class FitDecoderTest {
         }
     }
 
+    // file_id(종류·제조사·일련번호·만든 시각)와 세션 요약(종목, 시간·거리, TSS·IF, 평균·최대·NP 파워,
+    // threshold_power, 상승 고도, 시작 시각)을 fitparse와 비교한다. threshold_power 필드 번호 오류를 잡은
+    // 테스트가 이것이다.
     @Test
     fun `file id and session summaries match python-fitparse`() {
         for (name in decodable) {
@@ -120,6 +136,7 @@ class FitDecoderTest {
         }
     }
 
+    // 배율이 적용된 값 비교: fitparse 값이 없으면 null, 있으면 1e-6 안에서 같아야 한다.
     private fun assertScaled(e: JsonNode, a: Double?, what: String) {
         if (e.isNull || e.isMissingNode) {
             assertEquals(null, a, "$what should be absent")
@@ -129,6 +146,8 @@ class FitDecoderTest {
         }
     }
 
+    // 손상 파일(헤더 손상, 중간에 끊김), 빈 입력, 텍스트 입력은 FitDecodeException만 내야 한다. 다른 예외
+    // 형이 나오면 API에서 400이 아니라 500이 되기 때문이다.
     @Test
     fun `corrupt files fail with FitDecodeException only`() {
         assertFailsWith<FitDecodeException> { FitActivity.decode(bytes("activity-settings-corruptheader")) }
@@ -137,6 +156,8 @@ class FitDecoderTest {
         assertFailsWith<FitDecodeException> { FitActivity.decode("not a fit file at all, just text".toByteArray()) }
     }
 
+    // fitparse도 거절하는 Coros 파일(개발자 필드 정렬 오류)은 디코딩되거나 FitDecodeException으로 깔끔하게
+    // 거절되면 된다. 다른 예외 형이면 실패다.
     @Test
     fun `misaligned developer fields are either decoded or rejected cleanly`() {
         // python-fitparse raises FitParseError on this Coros file; we accept either outcome but no
@@ -149,6 +170,8 @@ class FitDecoderTest {
         }
     }
 
+    // 정상 파일의 CRC는 맞고, 가운데 바이트 하나를 바꾸면 CRC가 틀리거나(crcValid=false) 구조 오류 예외가
+    // 난다. 어느 쪽이든 변조를 놓치지 않는다.
     @Test
     fun `crc of the header and data is verified`() {
         val good = bytes("garmin-edge-820-bike")
@@ -163,6 +186,7 @@ class FitDecoderTest {
         }
     }
 
+    // 종목 판별: fenix 5 러닝 파일은 RUNNING, Edge 820 파일은 CYCLING. 업로드 거절(422)의 근거가 되는 값이다.
     @Test
     fun `running files are identified by sport`() {
         val run = FitActivity.decode(bytes("garmin-fenix-5-run"))

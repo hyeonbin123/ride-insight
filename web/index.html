@@ -1,13 +1,22 @@
 <!doctype html>
+<!-- [파일 역할] Vite가 개발 서버와 빌드의 입구로 쓰는 단일 HTML 페이지(SPA 껍데기)다. 화면은 모두 React가 -->
+<!-- #root 안에 그린다. -->
+<!-- [참고] lang="en"과 title "web"은 Vite 템플릿 기본값 그대로이고, 실제 화면 문구는 한국어다. -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- 파비콘은 web/public/favicon.svg(정적 파일, 빌드 때 그대로 복사). -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>web</title>
   </head>
   <body>
+    <!-- React가 화면을 붙이는 자리. src/main.tsx의 createRoot(document.getElementById('root'))가 이 -->
+    <!-- 요소를 찾는다. -->
     <div id="root"></div>
+    <!-- 앱 진입점. 개발 중에는 Vite가 TSX를 즉석에서 변환해 내려주고, npm run build 때는 이 경로를 따라 -->
+    <!-- 번들을 만든 뒤 해시가 붙은 JS 파일 경로로 바꿔 dist/index.html에 쓴다. 배포 이미지에서는 nginx가 -->
+    <!-- dist를 서빙한다(web/Dockerfile). -->
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

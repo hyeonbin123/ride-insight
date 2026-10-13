@@ -1,4 +1,13 @@
+/* [파일 역할] 앱 전체에 적용되는 전역 스타일. src/main.tsx가 가장 먼저 import한다. 내용은 Vite React */
+/* 템플릿이 만든 것이 거의 그대로 남아 있다. */
+/* [실제로 앱에 영향을 주는 것] :root의 글꼴·글자 크기, body 여백 0, 그리고 #root 규칙(폭 1126px·가운데 */
+/* 정렬·좌우 테두리·세로 flex)이 앱 전체 틀에 적용된다. 색과 컴포넌트 모양은 대부분 MUI 테마(App.tsx)와 각 */
+/* 컴포넌트의 sx가 정한다. */
+/* [템플릿 잔재] #social, .counter, code 규칙은 앱 컴포넌트에서 쓰지 않는 선택자다. */
+
 :root {
+  /* 색 변수(라이트 모드 기본값). 글자색, 제목색, 배경, 테두리, 코드 배경, 강조색, 그림자. App.css(현재 */
+  /* 미사용)도 이 변수를 쓴다. */
   --text: #6b6375;
   --text-h: #08060d;
   --bg: #fff;
@@ -11,10 +20,13 @@
   --shadow:
     rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
 
+  /* 글꼴 변수: 운영체제 기본 글꼴(system-ui)을 우선 써서 웹 글꼴을 내려받지 않는다. */
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
   --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
   --mono: ui-monospace, Consolas, monospace;
 
+  /* 기본 글자 크기·줄 간격과 글꼴 렌더링 설정. color-scheme: light dark는 브라우저 기본 위젯(스크롤바, */
+  /* 입력창)이 OS 다크 모드를 따르게 한다. 1024px 이하에서는 글자를 16px로 줄인다. */
   font: 18px/145% var(--sans);
   letter-spacing: 0.18px;
   color-scheme: light dark;
@@ -30,6 +42,8 @@
   }
 }
 
+/* OS가 다크 모드일 때 색 변수를 어두운 값으로 바꾼다. MUI 테마는 라이트 모드로 고정돼 있어(App.tsx) MUI */
+/* 컴포넌트 색은 이 변수와 무관하다. */
 @media (prefers-color-scheme: dark) {
   :root {
     --text: #9ca3af;
@@ -50,6 +64,9 @@
   }
 }
 
+/* React가 그리는 #root 상자: 최대 1126px 폭으로 가운데 두고, 좌우 테두리와 화면 높이 이상의 세로 flex */
+/* 배치를 준다. text-align: center는 상속되므로 정렬을 따로 지정하지 않은 글자에도 적용된다. 100svh는 */
+/* 모바일 주소창을 뺀 작은 뷰포트 높이 단위다. */
 #root {
   width: 1126px;
   max-width: 100%;
@@ -66,6 +83,8 @@ body {
   margin: 0;
 }
 
+/* 제목 글꼴·크기(템플릿 기본). 앱 화면은 MUI Typography의 h4~h6 variant만 써서 h1·h2 태그가 나오지 */
+/* 않으므로 이 규칙은 현재 쓰이지 않는다. */
 h1,
 h2 {
   font-family: var(--heading);
@@ -95,6 +114,7 @@ p {
   margin: 0;
 }
 
+/* 코드 글꼴(모노스페이스) 스타일. 템플릿의 .counter 버튼과 code 태그용이다. */
 code,
 .counter {
   font-family: var(--mono);

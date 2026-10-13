@@ -12,8 +12,21 @@ the ride carries power samples.
 Usage: ``python -m ride_insight_ml.rides --zips ../data/opendata --out ../data/opendata_index [--ids file]``
 """
 
+# [파일 역할] 선수 zip 안의 라이딩 메타데이터(JSON)와 초 단위 CSV를 짝지어 선수별 '라이딩 인덱스' JSON을
+# 만든다. 이 인덱스가 Kotlin parity 도구(어떤 CSV를 어떤 GC 값과 비교할지), parity_sets(선수 조건),
+# ftp.py(성별·출생 연도)의 입력이다.
+# [왜 필요한가] OpenData의 메타데이터 날짜는 UTC인데 CSV 파일 이름은 기기의 현지 시각이라, 이름이 그대로 맞는
+# 라이딩은 일부(첫 선수 203/731)뿐이다. 그래서 시간대 차이를 허용하되 잘못 짝짓지 않도록 엄격한
+# 규칙(docs/experiments.md 1단계 '라이딩↔CSV 매핑')을 둔다.
+# [매핑 규칙] 파일 이름 시각 − UTC 날짜가 ±14시간 안의 15분 배수(세계 시간대 오프셋은 15분 단위)이고, CSV
+# 마지막 secs가 workout_time과 60초 또는 2% 안에서 맞는 CSV가 정확히 하나일 때만 짝짓는다. 후보가 둘 이상이면
+# '모호'로 두고 쓰지 않는다. 잘못 짝지은 CSV는 GC 값과의 비교를 그대로 오염시키므로 확실한 것만 쓴다.
+# [보고] 매핑 결과(짝지음·모호·미매칭·데이터 없음 수)는 측정 결과와 함께 보고하는 것이 규칙이다. main이 선수
+# 전체 합계를 출력한다.
+
 from __future__ import annotations
 
+# 표준 라이브러리만 쓴다. zipfile로 zip을 풀지 않고 안의 JSON·CSV를 바로 읽는다.
 import argparse
 import datetime as dt
 import json
@@ -22,8 +35,11 @@ import sys
 import zipfile
 from pathlib import Path
 
+# opendata.py의 도우미를 재사용한다: GC 메트릭 값을 안전하게 숫자로 바꾸는 _metric, zip 이름 → 선수 id, 깨진
+# GC JSON을 수리해 읽는 load_meta.
 from ride_insight_ml.opendata import _metric, athlete_id_from_name, load_meta
 
+# MMP_KEYS: GC가 라이딩마다 저장해 둔 16구간 최대 평균 파워 메트릭 이름(1초~90분). 파리티 비교의 GC 쪽 값이다.
 MMP_KEYS = [
     "1s_critical_power",
     "5s_critical_power",
@@ -42,6 +58,9 @@ MMP_KEYS = [
     "60m_critical_power",
     "90m_critical_power",
 ]
+# GC_KEYS: 인덱스에 옮겨 둘 GC 메트릭. cp_setting(그날의 CP 설정 = 라벨 후보), coggan_np/if/tss(비교 대상),
+# workout_time(매핑 검증), athlete_weight(FTP 특징) 등. 인덱스에 미리 옮겨 두면 이후 도구가 zip 안의 큰 JSON을
+# 다시 읽지 않아도 된다.
 GC_KEYS = [
     "cp_setting",
     "coggan_np",
@@ -55,15 +74,21 @@ GC_KEYS = [
     "max_power",
     *MMP_KEYS,
 ]
+# POWER_FLAG_INDEX: 라이딩 data 플래그 문자열(예: TDSPHC-AGL-----)에서 4번째 글자(인덱스 3)가 'P'면 파워
+# 시계열이 있다.
+# MAX_OFFSET_SECS·OFFSET_STEP_SECS: UTC와 현지 시각 차이로 허용하는 범위(±14시간)와 단위(15분 = 900초).
 POWER_FLAG_INDEX = 3
 MAX_OFFSET_SECS = 14 * 3600
 OFFSET_STEP_SECS = 900
 
 
+# 메타데이터 날짜 '2020/01/31 07:00:00 UTC'를 시간대 없는 datetime(UTC 기준)으로 읽는다.
 def parse_ride_date(text: str) -> dt.datetime:
     return dt.datetime.strptime(text.replace(" UTC", ""), "%Y/%m/%d %H:%M:%S")
 
 
+# CSV 파일 이름 '2020_01_31_08_00_00.csv'(기기 현지 시각)를 datetime으로 읽는다. 형식이 다르면 None이라 매핑
+# 후보에서 빠진다.
 def parse_csv_name(name: str) -> dt.datetime | None:
     try:
         return dt.datetime.strptime(name[:-4], "%Y_%m_%d_%H_%M_%S")
@@ -71,10 +96,14 @@ def parse_csv_name(name: str) -> dt.datetime | None:
         return None
 
 
+# data 플래그에 파워 표시('P')가 있는지. 플래그가 비었거나 짧으면 False.
 def has_power_flag(flags: str | None) -> bool:
     return bool(flags) and len(flags) > POWER_FLAG_INDEX and flags[POWER_FLAG_INDEX] == "P"
 
 
+# CSV의 마지막 데이터 행의 secs(라이딩 길이)를 돌려준다. 매핑 검증에서 workout_time과 비교하는 값이다. 헤더만
+# 있거나(행 2개 미만) 숫자가 아니거나 유한하지 않으면 None. 마지막 줄만 변수에 남겨 행 목록을 따로 모으지는
+# 않지만, splitlines()가 모든 줄의 목록을 한 번 만든다(docstring의 'without building a list'와 다름).
 def last_secs_of_csv(text: str) -> float | None:
     """``secs`` of the last non-empty data row, without building a list of all lines."""
     last = None
@@ -92,6 +121,9 @@ def last_secs_of_csv(text: str) -> float | None:
     return value if math.isfinite(value) else None
 
 
+# 한 선수의 라이딩 목록을 CSV와 짝짓는다. 입력: 메타데이터 RIDES, CSV 이름 → 마지막 secs. 출력: 라이딩마다
+# 항목(date, sport, flags, power_flag, csv, offset_secs, match, gc 값)과 집계(matched, ambiguous, unmatched,
+# no_data). 호출 위치: index_zip, tests/test_rides.py.
 def match_rides(rides: list[dict], csv_last_secs: dict[str, float | None]) -> tuple[list[dict], dict]:
     """Return (ride entries, counters). Each entry has ``csv`` (name or None) and ``match``."""
     csv_times = {n: t for n in csv_last_secs if (t := parse_csv_name(n)) is not None}
@@ -113,11 +145,15 @@ def match_rides(rides: list[dict], csv_last_secs: dict[str, float | None]) -> tu
             "match": None,
             "gc": {k: _metric(metrics, k) for k in GC_KEYS},
         }
+        # 플래그가 전부 '-'이면 시계열이 없는 라이딩(수동 입력 등)이라 CSV를 찾지 않는다.
         if not flags.strip("-"):
             entry["match"] = "no_data"
             counters["no_data"] += 1
             entries.append(entry)
             continue
+        # 후보 조건 두 가지를 모두 만족하는 CSV만 모은다. (1) 파일 이름 시각과 UTC 날짜의 차이가 ±14시간
+        # 안이고 15분의 배수(시간대 오프셋). (2) CSV 길이가 workout_time과 60초 또는 2% 중 큰 허용치 안.
+        # 시각만 보면 하루 여러 번 탄 라이딩끼리 섞일 수 있어 길이로 한 번 더 거른다.
         candidates = []
         for name, t in csv_times.items():
             delta = (t - date).total_seconds()
@@ -128,6 +164,8 @@ def match_rides(rides: list[dict], csv_last_secs: dict[str, float | None]) -> tu
                 continue
             if abs(last - workout_time) <= max(60.0, 0.02 * workout_time):
                 candidates.append((name, delta))
+        # 후보가 정확히 하나일 때만 짝짓는다. 그 CSV를 이미 앞선 라이딩이 가져갔으면 같은 CSV가 두 라이딩에
+        # 붙지 않도록 '모호'로 센다(먼저 처리된 라이딩의 짝은 유지된다).
         if len(candidates) == 1:
             name, delta = candidates[0]
             if name in used:
@@ -147,6 +185,9 @@ def match_rides(rides: list[dict], csv_last_secs: dict[str, float | None]) -> tu
     return entries, counters
 
 
+# 선수 zip 하나를 인덱스 dict로 만든다. 메타데이터 JSON(첫 번째 .json)을 load_meta로 읽고, 모든 CSV의 마지막
+# secs를 구한 뒤 match_rides로 짝짓는다. 출력에는 선수 id, 성별, 출생 연도, CSV 수, 집계, 라이딩 항목이
+# 들어간다. 호출 위치: main.
 def index_zip(path: Path) -> dict:
     with zipfile.ZipFile(path) as z:
         names = z.namelist()
@@ -168,6 +209,9 @@ def index_zip(path: Path) -> dict:
     }
 
 
+# 명령행 진입점. --zips 폴더의 선수 zip마다 --out/<선수 id>.json 인덱스를 쓴다. --ids가 있으면 그 선수만
+# 처리한다. 이미 인덱스가 있으면 다시 만들지 않고 읽어서 집계만 한다(긴 작업을 이어 돌릴 수 있게). 그래서 매핑
+# 규칙을 바꾼 뒤에는 기존 인덱스를 지워야 새 규칙이 적용된다. 깨진 zip·JSON은 건너뛰고 표준 오류에 남긴다.
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--zips", type=Path, required=True)

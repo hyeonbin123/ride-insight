@@ -1,3 +1,10 @@
+/* [파일 역할] Vite React 템플릿(create-vite)이 시작 화면용으로 만든 스타일이 그대로 남은 파일이다. 지금 */
+/* 어느 파일도 이 CSS를 import하지 않아(App.tsx는 MUI 테마와 sx로 스타일을 정한다) 빌드 결과에 들어가지 */
+/* 않는다. 여기 선택자(.counter, .hero, #center, #next-steps, #docs, #spacer, .ticks)도 앱 컴포넌트에서 */
+/* 쓰지 않는다. */
+/* 아래 규칙들은 index.css의 CSS 변수(--accent, --border 등)와 CSS 중첩 문법(&:hover, 규칙 안의 @media)을 */
+/* 쓴다. */
+
 .counter {
   font-size: 16px;
   padding: 5px 10px;
@@ -17,6 +24,8 @@
   }
 }
 
+/* 템플릿 시작 화면의 로고 묶음: 기준 이미지 위에 프레임워크·Vite 로고를 3D 변환(perspective, rotate)으로 */
+/* 겹쳐 놓는다. */
 .hero {
   position: relative;
 
@@ -56,6 +65,7 @@
   }
 }
 
+/* 시작 화면 가운데 영역의 세로 flex 배치. 1024px 이하 화면에서는 여백과 간격을 줄인다(반응형). */
 #center {
   display: flex;
   flex-direction: column;
@@ -70,6 +80,7 @@
   }
 }
 
+/* 시작 화면 아래쪽 '다음 단계' 두 칸 배치. 넓은 화면은 가로, 1024px 이하는 세로로 쌓는다. */
 #next-steps {
   display: flex;
   border-top: 1px solid var(--border);
@@ -95,6 +106,7 @@
   }
 }
 
+/* 두 칸 사이 구분선: 넓은 화면은 오른쪽 테두리, 좁은 화면은 아래쪽 테두리로 바꾼다. */
 #docs {
   border-right: 1px solid var(--border);
 
@@ -104,6 +116,7 @@
   }
 }
 
+/* 링크 버튼 목록. 마우스를 올리면 그림자로 강조하고, 좁은 화면에서는 두 개씩 줄바꿈해 가운데 정렬한다. */
 #next-steps ul {
   list-style: none;
   padding: 0;
@@ -153,6 +166,7 @@
   }
 }
 
+/* 페이지 아래 빈 공간(위 테두리 포함). 좁은 화면에서 높이를 줄인다. */
 #spacer {
   height: 88px;
   border-top: 1px solid var(--border);
@@ -161,6 +175,8 @@
   }
 }
 
+/* 가로선 양 끝의 작은 삼각형 표시. 투명한 테두리 중 한쪽만 색을 칠하는 CSS 삼각형 기법(::before 왼쪽, */
+/* ::after 오른쪽)이다. */
 .ticks {
   position: relative;
   width: 100%;
