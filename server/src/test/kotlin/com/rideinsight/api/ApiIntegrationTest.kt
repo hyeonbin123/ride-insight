@@ -8,6 +8,7 @@ package com.rideinsight.api
 // 찾은 404→500 버그도 여기서 회귀를 막는다(docs/ai-verification.md 2·5단계).
 
 import com.rideinsight.fit.FitActivity
+import com.rideinsight.fit.FitWriter
 import com.rideinsight.metrics.MeanMaximalPower
 import com.rideinsight.metrics.PowerMetrics
 import com.rideinsight.metrics.RecordingInterval
@@ -16,8 +17,7 @@ import java.io.File
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
-import kotlin.test.assertNull
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /** End-to-end checks for docs/api.md against a PostgreSQL container. */
@@ -36,6 +36,26 @@ class ApiIntegrationTest : ApiTestBase() {
         assertEquals(315, got.body!!.path("currentThreshold").path("ftpWatts").asInt())
         assertEquals(404, get("/api/athletes/00000000-0000-0000-0000-000000000000").status)
         assertEquals(400, get("/api/athletes/not-a-uuid").status)
+    }
+
+    // 체중 검증: DB의 check(20 < weight_kg < 300, real 컬럼) 밖의 값은 DB까지 가지 않고 400 validation이어야
+    // 한다. 처음에는 체중에 검증이 없어 이 값들이 check 위반 예외로 500이 됐다. 20.0000001·299.99999는 그
+    // 자체로는 범위 안이지만 real(4바이트 부동소수)로 저장하면 20.0·300.0으로 반올림돼 check에 걸리는 값이라,
+    // 검증도 저장되는 값 기준이어야 한다는 것을 확인한다. 범위 안의 값은 201로 저장되고 그대로 돌아온다.
+    @Test
+    fun `athlete weight outside the stored range is a 400 validation error, not a 500`() {
+        for (w in listOf("20", "300", "5", "1000", "-1", "20.0000001", "299.99999")) {
+            val r = post("/api/athletes", """{"name":"w","weightKg":$w}""")
+            assertEquals(400, r.status, "weightKg=$w: ${r.body}")
+            assertEquals("validation", r.body!!.path("error").asString(), "weightKg=$w")
+        }
+        // A number too large for a 4-byte float is rejected as well (never a 500).
+        assertEquals(400, post("/api/athletes", """{"name":"w","weightKg":1e40}""").status)
+        for (w in listOf("20.5", "72.5", "299.5")) {
+            val r = post("/api/athletes", """{"name":"w","weightKg":$w}""")
+            assertEquals(201, r.status, "weightKg=$w: ${r.body}")
+            assertEquals(w.toDouble(), r.body!!.path("weightKg").asDouble(), 1e-3)
+        }
     }
 
     // 완료 기준 2: 샘플 중 사이클링 5개 201, 러닝 422, 손상 2개 400 invalid_fit, Coros(개발자 필드 정렬 오류,
@@ -129,6 +149,27 @@ class ApiIntegrationTest : ApiTestBase() {
         assertTrue(abs(curve.body!!.path("standard").path("20m_critical_power").asDouble() - mmp20) < 1e-3)
     }
 
+    // samples 점 수 상한(docs/api.md: 응답이 20,000점을 넘지 않도록 N을 자동으로 키운다). 1초 기록 20,001개(경과
+    // 시간 0~20,000초)는 구간 번호가 0~20,000이라, 구간 폭을 길이 / 20,000으로 올림해 정하던 처음 계산으로는
+    // every=1이 그대로 남아 20,001점이 나갔다. 상한을 넘지 않는지와, 상한 안에 드는 20,000개짜리 라이딩은
+    // every=1 그대로인지 함께 본다.
+    @Test
+    fun `samples never exceed 20,000 points, even for a ride of exactly 20,000 seconds`() {
+        val id = createAthlete()
+        val long = uploadBytes(id, "long.fit", FitWriter.ride(20_001, startUnix = 1_600_200_000L).build())
+        assertEquals(201, long.status, long.body.toString())
+        val s = get("/api/activities/${long.body!!.path("id").asString()}/samples?every=1")
+        assertEquals(200, s.status)
+        assertTrue(s.body!!.path("secs").size() <= ActivityController.MAX_POINTS, "points: ${s.body!!.path("secs").size()}")
+        assertEquals(2, s.body!!.path("every").asInt())
+
+        val fits = uploadBytes(id, "fits.fit", FitWriter.ride(20_000, startUnix = 1_600_300_000L).build())
+        assertEquals(201, fits.status, fits.body.toString())
+        val f = get("/api/activities/${fits.body!!.path("id").asString()}/samples?every=1")
+        assertEquals(1, f.body!!.path("every").asInt())
+        assertEquals(20_000, f.body!!.path("secs").size())
+    }
+
     // FTP 변경 재계산과 훈련 부하: FTP 300으로 만든 선수에 파워가 있는 ELEMNT 라이딩을 올리고 2000-01-01부터
     // FTP 250을 등록하면, 활동 1개가 다시 계산되고 TSS가 (300/250)²배가 돼야 한다(TSS ∝ 1/FTP²). 이어서 그날
     // 훈련 부하의 TSS가 활동 TSS와 같은지, from > to가 400인지, 52주 기간 커브가 10구간 이상인지, 삭제 뒤
@@ -189,6 +230,19 @@ class ApiIntegrationTest : ApiTestBase() {
         assertEquals("no-store", headers.getFirst("Cache-Control"))
     }
 
+    // 미디어 타입 오류 두 가지를 구분한다: 보낸 본문 형식을 받지 않으면 415(Unsupported Media Type), 응답을
+    // 클라이언트가 받겠다는 형식(Accept)으로 만들 수 없으면 406(Not Acceptable). 이 API는 JSON만 돌려주므로
+    // Accept: text/plain 요청은 406이어야 한다. 예외 처리기가 406을 415로 묶어 두었을 때도 응답은 Spring 기본
+    // 처리로 406이었으므로, 이 테스트는 처리기를 정리한 뒤에도 같은 응답이 유지되는지 지킨다.
+    @Test
+    fun `an Accept header the API cannot satisfy is 406, an unsupported body type is 415`() {
+        val id = createAthlete()
+        assertEquals(415, call(org.springframework.http.HttpMethod.POST, "/api/athletes/$id/activities", json = "{}").status)
+        val status = client.get().uri("/api/athletes/$id").accept(org.springframework.http.MediaType.TEXT_PLAIN)
+            .exchange({ _, res -> res.statusCode.value() }, false)
+        assertEquals(406, status)
+    }
+
     // actuator health가 UP인지(완료 기준 5에서 쓰는 엔드포인트).
     @Test
     fun `health endpoint is up`() {
@@ -197,23 +251,23 @@ class ApiIntegrationTest : ApiTestBase() {
         assertEquals("UP", r.body!!.path("status").asString())
     }
 
-    // 파워가 없는 FIT은 저장하되 지표는 비운다(api.md). 기대값은 파일에 실제로 파워가 있는지를 디코더로
-    // 확인해 정하므로, 어느 쪽이든 서버 응답이 파일 내용과 맞는지 검사한다.
+    // 파워가 없는 FIT은 저장하되 지표는 비운다(api.md). 먼저 디코더로 이 파일에 정말 파워가 없는지 확인해
+    // 테스트의 전제를 고정한다(전제가 깨지면 이 테스트는 파워 없는 경로를 검사하지 못하므로 실패시킨다). 처음
+    // 버전은 파워가 있는 경우로도 갈라져, 그 가지의 assertNotNull(JsonNode.path는 null을 돌려주지 않는다)과 끝의
+    // assertNull(null)이 항상 통과해 아무것도 검사하지 않았다.
     @Test
     fun `file without power is stored without metrics`() {
         // The Edge 820 commute has no power meter: stored, metrics null.
+        val fit = FitActivity.decode(File(fitDir, "garmin-edge-820-bike.fit").readBytes())
+        assertTrue(fit.records.none { it.power != null }, "precondition: the Edge 820 sample has no power")
         val id = createAthlete()
         val r = upload(id, "garmin-edge-820-bike")
         assertEquals(201, r.status, r.body.toString())
-        val fit = FitActivity.decode(File(fitDir, "garmin-edge-820-bike.fit").readBytes())
-        val hasPower = fit.records.any { it.power != null }
-        assertEquals(hasPower, r.body!!.path("hasPower").asBoolean())
-        if (!hasPower) {
-            assertTrue(r.body!!.path("metrics").isMissingNode || r.body!!.path("metrics").isNull)
-        } else {
-            assertNotNull(r.body!!.path("metrics").path("normalizedPower"))
-        }
-        // 이 줄은 항상 통과한다(검사 효과 없음).
-        assertNull(null)
+        assertFalse(r.body!!.path("hasPower").asBoolean())
+        assertTrue(r.body!!.path("metrics").isMissingNode, "metrics must be absent: ${r.body!!.path("metrics")}")
+        // 다시 조회해도 지표가 없다(저장 단계에서 지표 행을 만들지 않았다).
+        val stored = get("/api/activities/${r.body!!.path("id").asString()}")
+        assertEquals(200, stored.status)
+        assertTrue(stored.body!!.path("metrics").isMissingNode)
     }
 }

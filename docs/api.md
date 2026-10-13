@@ -14,7 +14,7 @@
 ## API (모두 `/api` 아래, JSON)
 | 메서드·경로 | 동작 | 완료 기준 |
 |---|---|---|
-| `POST /athletes` | 선수 생성 {name, gender?, birthYear?, weightKg?, ftp?} | 201 + id. 이름 1~100자, FTP 50~1000 W 아니면 400 |
+| `POST /athletes` | 선수 생성 {name, gender?, birthYear?, weightKg?, ftp?} | 201 + id. 이름 1~100자, FTP 50~1000 W 아니면 400. 체중은 20 kg 초과 300 kg 미만(DB check와 같은 범위)이 아니면 400(2026-10-13 추가: 그 전에는 검증이 없어 범위 밖 체중이 500이었다) |
 | `GET /athletes/{id}` | 선수 + 현재 FTP | 없으면 404 |
 | `PUT /athletes/{id}/threshold` | FTP 등록 {effectiveFrom, ftpWatts} | 그 날짜 이후 활동의 TSS를 다시 계산한다 |
 | `POST /athletes/{id}/activities` | FIT 업로드(multipart, 파일 1개) | 201 + 활동 요약(지표 포함). 디코딩 실패 400(`FitDecodeException` 메시지), 종목이 러닝·수영·걷기·하이킹이면 422(그 외 종목과 종목 미상은 저장), 파워 없는 파일은 저장하되 지표 null, 같은 시작 시각이면 409, 10 MB 초과 413 |

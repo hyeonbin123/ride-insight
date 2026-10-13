@@ -102,10 +102,10 @@ def has_power_flag(flags: str | None) -> bool:
 
 
 # CSV의 마지막 데이터 행의 secs(라이딩 길이)를 돌려준다. 매핑 검증에서 workout_time과 비교하는 값이다. 헤더만
-# 있거나(행 2개 미만) 숫자가 아니거나 유한하지 않으면 None. 마지막 줄만 변수에 남겨 행 목록을 따로 모으지는
-# 않지만, splitlines()가 모든 줄의 목록을 한 번 만든다(docstring의 'without building a list'와 다름).
+# 있거나(행 2개 미만) 숫자가 아니거나 유한하지 않으면 None. splitlines()가 모든 줄의 목록을 한 번 만든다(예전
+# docstring의 'without building a list'는 틀린 설명이라 고쳤다).
 def last_secs_of_csv(text: str) -> float | None:
-    """``secs`` of the last non-empty data row, without building a list of all lines."""
+    """``secs`` of the last non-empty data row; None for a header-only file or a non-finite value."""
     last = None
     rows = 0
     for line in text.splitlines():

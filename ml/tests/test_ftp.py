@@ -194,3 +194,27 @@ def test_athlete_bootstrap_uses_athlete_resampling():
     assert r["n_athletes"] == 2
     # With two athletes the resampled mean is 1, 5 or 9: the interval must reach both extremes.
     assert r["ci"][0] == 1.0 and r["ci"][1] == 9.0
+
+
+# H7 하한(규칙 변경 10): 신선 집단이 H7_MIN_UNITS(20)개보다 하나 적으면 구간 없이 판정 불가, 정확히 20개면
+# 구간을 낸다. 묵은 라벨 오차가 신선보다 10 W 크게 만들어, 구간이 나오면 '지지'가 되는 데이터다.
+def test_h7_needs_min_units_per_group():
+    def units(n_fresh):
+        n = n_fresh + 40
+        target = pd.DataFrame(
+            {
+                "athlete": [f"a{i % 10}" for i in range(n)],
+                "label_ftp": [250.0] * n,
+                "fresh": [True] * n_fresh + [False] * 40,
+            }
+        )
+        pred = pd.Series([252.0] * n_fresh + [262.0] * 40)
+        return target, pred
+
+    target, pred = units(ftp.H7_MIN_UNITS - 1)
+    r = ftp._h7(target, pred, n=200)
+    assert r == {"diff_stale_minus_fresh": None, "verdict": "판정 불가"}
+    target, pred = units(ftp.H7_MIN_UNITS)
+    r = ftp._h7(target, pred, n=200)
+    assert r["diff_stale_minus_fresh"]["point"] == 10.0
+    assert r["verdict"] == "지지"

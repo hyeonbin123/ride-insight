@@ -104,14 +104,17 @@ def load(jsonl: Path) -> pd.DataFrame:
 
 # 행마다 일치 여부(True/False). 규칙: 둘 다 값이 없으면 일치, 한쪽만 있으면 불일치, 둘 다 있으면 |차이| ≤
 # tol일 때 일치. GC 쪽은 0도 '없음'으로 본다(GC는 결과가 없거나 3000 W 이상일 때 0을 쓴다; Codex 1차 검토 지적
-# 5로 규칙에 명시). 우리 쪽은 NaN만 '없음'이라, 우리 값이 0(예: 3000 W 가드)이고 GC도 0이면 불일치로 센다.
+# 5로 규칙에 명시). 우리 Kotlin 구현도 같은 경우에 0을 내므로(MeanMaximalPower.peakPower의 3000 W 가드)
+# 우리 쪽의 0도 '없음'으로 본다. 처음 구현은 우리 쪽은 NaN만 '없음'으로 봐서, 두 구현이 똑같이 가드에 걸려 둘
+# 다 0인 쌍을 불일치로 셌다(2026-10-13 수정, docs/experiments.md 규칙 변경 9).
 # 호출 위치: analyse, tests/test_parity.py.
 def agree(ours: pd.Series, theirs: pd.Series, tol: float) -> pd.Series:
-    """Agreement per row: both absent (None/NaN or GC 0) counts as agreement; one side absent as not."""
+    """Agreement per row: both absent (None/NaN or 0, on either side) counts as agreement; one side
+    absent as not. Both implementations write 0 for "no value" (e.g. the 3000 W PeakPower guard)."""
     o = pd.to_numeric(ours, errors="coerce")
     t = pd.to_numeric(theirs, errors="coerce")
     t_absent = t.isna() | (t == 0.0)
-    o_absent = o.isna()
+    o_absent = o.isna() | (o == 0.0)
     both_absent = t_absent & o_absent
     both_present = ~t_absent & ~o_absent
     return both_absent | (both_present & ((o - t).abs() <= tol))

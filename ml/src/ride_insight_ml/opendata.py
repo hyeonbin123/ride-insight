@@ -8,7 +8,8 @@ Sub-commands (run as ``python -m ride_insight_ml.opendata <cmd>``):
 * ``inventory`` summarise each downloaded athlete (rides, power rides, intervals, cp_setting changes)
 * ``split``     assign train/dev/test per athlete from the SHA-256 of the id
 
-Nothing here resamples or cleans ride data; that lives in ``preprocess``.
+Nothing here resamples or cleans ride data: ``rides`` maps rides to their CSV files and the Kotlin
+``parity`` tool (``OpenDataCsv``) reads and cleans the samples.
 """
 
 # [파일 역할] GoldenCheetah OpenData(선수 6,613명, 115.6 GB)에서 이 프로젝트가 쓰는 표본 800명을 정하고,
@@ -21,8 +22,9 @@ Nothing here resamples or cleans ride data; that lives in ``preprocess``.
 # [흐름] manifest(OSF API로 전체 파일 목록) → sample(80 MB 이하 중 해시 순서 앞 800명 + 분할) →
 # download(SHA-256 검증) → inventory(선수별 라이딩·파워·cp_setting 요약) → split(파워 라이딩 수 조건으로
 # 분할표).
-# [연결] rides.py가 이 파일의 load_meta, _metric, athlete_id_from_name을 가져다 쓴다. docstring 끝의
-# 'preprocess' 모듈은 현재 저장소에 없다(라이딩 매핑은 rides.py가 한다).
+# [연결] rides.py가 이 파일의 load_meta, _metric, athlete_id_from_name을 가져다 쓴다. 라이딩과 CSV 짝짓기는
+# rides.py가, CSV 읽기·정리(깨진 행, 결측 파워)는 Kotlin parity 도구의 OpenDataCsv가 한다. docstring이 예전에
+# 가리키던 'preprocess' 모듈은 만들지 않았다.
 
 from __future__ import annotations
 

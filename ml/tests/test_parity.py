@@ -88,6 +88,26 @@ def test_agree_treats_absent_and_gc_zero_as_absent():
     assert parity.agree(ours, theirs, 1.0).tolist() == [True, True, True, False, False]
 
 
+# 우리 쪽의 0도 '없음'이다(규칙 변경 9). 두 구현이 모두 3000 W 가드에 걸려 둘 다 0이면 일치, 우리 0과 GC
+# 없음도 일치, 한쪽만 0이고 다른 쪽에 값이 있으면 불일치. 처음 구현은 첫 두 경우를 불일치로 셌다.
+def test_agree_treats_our_zero_as_absent_too():
+    ours = pd.Series([0.0, 0.0, None, 0.0, 250.0])
+    theirs = pd.Series([0.0, None, 0.0, 250.0, 0.0])
+    assert parity.agree(ours, theirs, 1.0).tolist() == [True, True, True, False, False]
+
+
+# 분석 전체에서도 같아야 한다: 1초 MMP가 양쪽 모두 3000 W 가드로 0인 라이딩은 H2의 일치 쌍으로 센다.
+def test_both_sides_guarded_mmp_counts_as_agreement(tmp_path: Path):
+    line = _line("a", 0, 1.0, 201.0, 201.0, tss_gc=64.6416)
+    line["ours"]["mmp"]["1s_critical_power"] = 0.0
+    line["gc"]["mmp"]["1s_critical_power"] = 0.0
+    jsonl = tmp_path / "t.jsonl"
+    jsonl.write_text(json.dumps(line), encoding="utf-8")
+    r = parity.analyse(parity.load(jsonl))
+    assert r["H2_mmp_1s"]["pair_rate"] == 1.0
+    assert r["mmp_rate_by_window"]["1s_critical_power"] == 1.0
+
+
 # 전체 판정 흐름: 1초 라이딩 300개가 모두 일치하면 H1·H2·H3 지지, 5초 라이딩 100개 중 40%가 3 W 어긋나면 그 외
 # 그룹 일치율 0.6이고 1초와의 차이 40%p로 H4 지지여야 한다. Markdown 보고서에 결과가 들어가는지도 본다.
 def test_analysis_verdicts_on_synthetic_data(tmp_path: Path):

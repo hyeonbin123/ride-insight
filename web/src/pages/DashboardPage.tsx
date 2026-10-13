@@ -66,8 +66,8 @@ export function DashboardPage() {
     enabled: !!athleteId,
   });
   // FTP 추정: 서버는 규칙 R1(20분 최대 × 0.95)을 돌려주고 R2·R3 값과 측정 오차를 note로 함께 준다(3단계에서
-  // 모델 채택 기준을 확정하지 못해 규칙을 쓴다). 업로드 화면의 무효화 목록에 'ftp-estimate'는 없어, 업로드
-  // 직후에는 이 카드가 staleTime(30초) 동안 이전 값을 보일 수 있다.
+  // 모델 채택 기준을 확정하지 못해 규칙을 쓴다). 업로드 화면이 업로드 뒤 ['ftp-estimate', 선수 id] 캐시를
+  // 무효화하므로 새 라이딩이 바로 반영된다.
   const estimate = useQuery({
     queryKey: ["ftp-estimate", athleteId, weeks, asOf],
     queryFn: () => api.getFtpEstimate(athleteId!, weeks, asOf),
@@ -178,9 +178,10 @@ export function DashboardPage() {
           </Stack>
           {curve.isLoading && <LinearProgress />}
           {curve.isError && <Alert severity="error">{String(curve.error)}</Alert>}
-          {/* 커브 점이 있으면 곡선과 16구간 값 목록을, 없으면 '파워 라이딩 없음' 안내를 보여 준다. 요청이 */}
-          {/* 실패한 경우에는 위의 오류 상자와 이 안내가 함께 보인다. */}
-          {curve.data && curve.data.points.length > 0 ? (
+          {/* 커브 점이 있으면 곡선과 16구간 값 목록을, 응답은 왔는데 점이 없으면 '파워 라이딩 없음' 안내를 */}
+          {/* 보여 준다. 요청이 실패하면 위의 오류 상자만 보인다(처음 구현은 오류 상자와 이 안내를 함께 */}
+          {/* 보였다, 2026-10-13 수정). */}
+          {curve.data && curve.data.points.length > 0 && (
             <>
               <PowerCurveChart points={curve.data.points} labels={[`${weeks}주 최고`, ""]} />
               <Typography variant="body2" color="text.secondary">
@@ -190,8 +191,9 @@ export function DashboardPage() {
                   .join(" · ")}
               </Typography>
             </>
-          ) : (
-            !curve.isLoading && <Typography color="text.secondary">이 기간에 파워 데이터가 있는 라이딩이 없습니다.</Typography>
+          )}
+          {curve.data && curve.data.points.length === 0 && (
+            <Typography color="text.secondary">이 기간에 파워 데이터가 있는 라이딩이 없습니다.</Typography>
           )}
         </CardContent>
       </Card>

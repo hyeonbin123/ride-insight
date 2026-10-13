@@ -15,8 +15,9 @@ Usage: ``python -m ride_insight_ml.parity_sets --sample ../manifests/opendata_sa
 # 누가 언제 돌려도 같은 목록이 나와야 하므로 무작위 대신 표본 매니페스트의 순서(SHA-256 순서)를 그대로
 # 따라가며 조건을 만족하는 선수를 앞에서부터 채운다. 지표 정확성 검증은 학습이 아니라 구현 확인이라 train
 # 선수만 쓰고 dev·test 선수는 FTP 실험을 위해 남겨 둔다(docs/plan.md).
-# [조건] 짝지어진 파워 라이딩 수 ≥ --min-power-rides. 기본값은 100이지만 규칙 변경 1(표본 수율 37%라 200명을
-# 못 채울 것으로 추정)로 실제 목록은 50으로 뽑았다.
+# [조건] 짝지어진 파워 라이딩 수 ≥ --min-power-rides. 기본값은 규칙 변경 1(표본 수율 37%라 200명을 못 채울
+# 것으로 추정)대로 50이다. 커밋된 목록도 50으로 뽑았다. 처음에는 기본값이 규칙 변경 전 값 100으로 남아 있어,
+# 인자 없이 다시 돌리면 커밋된 목록과 다른 목록이 나왔다(2026-10-13 수정).
 
 from __future__ import annotations
 
@@ -93,7 +94,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--sample", type=Path, required=True)
     p.add_argument("--index", type=Path, required=True)
     p.add_argument("--out-dir", type=Path, required=True)
-    p.add_argument("--min-power-rides", type=int, default=100)
+    # 규칙 변경 1(docs/experiments.md): 100 -> 50.
+    p.add_argument("--min-power-rides", type=int, default=50)
     p.add_argument("--allow-partial", action="store_true")
     p.add_argument(
         "--unavailable", type=Path, default=None, help="file with ids whose zip could not be downloaded"

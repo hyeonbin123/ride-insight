@@ -22,6 +22,7 @@ from __future__ import annotations
 # 표준 라이브러리: 스레드 풀(concurrent.futures)로 동시 요청을 만들고, urllib로 HTTP를 보낸다. uuid는
 # multipart 경계 문자열, time.perf_counter는 지연 시간 측정에 쓴다.
 import argparse
+import http.client
 import json
 import time
 import uuid
@@ -33,10 +34,15 @@ from urllib.error import HTTPError
 # numpy: 지연 시간 배열의 백분위수(p50, p95) 계산.
 import numpy as np
 
+# 응답을 받지 못한 요청(연결 거부·끊김·타임아웃)의 상태 코드. HTTP 상태가 아니므로 0으로 둔다.
+CONNECTION_ERROR = 0
+
 
 # HTTP 요청 하나를 보내고 (상태 코드, 걸린 초, 응답 본문)을 돌려준다. urllib은 4xx·5xx를 HTTPError 예외로
 # 던지므로 잡아서 일반 응답처럼 돌려줘, 실패 응답도 상태 코드와 지연 시간을 함께 집계한다. 연결
-# 끊김·타임아웃(URLError)은 잡지 않으므로 그때는 스크립트가 멈춘다.
+# 거부·끊김·타임아웃(URLError 등 OSError, 본문 도중 끊긴 IncompleteRead 등 HTTPException)은 상태
+# CONNECTION_ERROR(0)와 예외 설명으로 돌려줘 2xx가 아닌 응답으로 센다. 처음 구현은 이것을 잡지 않아 요청
+# 하나가 끊기면 스레드 풀이 예외를 다시 던져 스크립트 전체가 멈췄다(2026-10-13 수정).
 # 시간은 요청을 열기 직전부터 본문을 다 읽을 때까지를 잰다(perf_counter는 단조 증가하는 고해상도 시계).
 def _req(
     method: str, url: str, body: bytes | None = None, content_type: str | None = None
@@ -51,6 +57,8 @@ def _req(
             return res.status, time.perf_counter() - t0, data
     except HTTPError as e:
         return e.code, time.perf_counter() - t0, e.read()
+    except (OSError, http.client.HTTPException) as e:
+        return CONNECTION_ERROR, time.perf_counter() - t0, repr(e).encode()
 
 
 # 파일 하나짜리 multipart/form-data 본문을 직접 만든다. urllib에는 multipart 인코더가 없어서다. 필드 이름
@@ -83,8 +91,8 @@ def create_athletes(target: str, n: int) -> list[str]:
 
 
 # 한 측정 단계: calls(인자 없는 함수 목록)를 workers개 스레드로 동시에 실행하고 지연 시간 p50·p95·최대(ms),
-# 2xx가 아닌 응답 수, 상태 코드별 개수를 낸다. results(원시 결과)는 호출한 쪽이 활동 id를 꺼낸 뒤 보고서에서
-# 뺀다.
+# 2xx가 아닌 응답 수(연결 오류 포함), 연결 오류 수, 상태 코드별 개수를 낸다. results(원시 결과)는 호출한 쪽이
+# 활동 id를 꺼낸 뒤 보고서에서 뺀다.
 # 스레드를 쓰는 이유: 요청은 대부분 서버 응답을 기다리는 I/O라 GIL이 있어도 스레드로 동시성을 충분히 만들 수
 # 있다. workers를 요청 수와 같게 두어 모든 요청이 한꺼번에 나가게 한다.
 def phase(name: str, calls: list, workers: int) -> dict:
@@ -100,6 +108,7 @@ def phase(name: str, calls: list, workers: int) -> dict:
         "p95_ms": float(np.percentile(lat, 95) * 1000),
         "max_ms": float(lat.max() * 1000),
         "non_2xx": int(sum(1 for s in statuses if s // 100 != 2)),
+        "connection_errors": int(sum(1 for s in statuses if s == CONNECTION_ERROR)),
         "status_counts": {str(s): statuses.count(s) for s in sorted(set(statuses))},
         "results": results,
     }
@@ -138,27 +147,38 @@ def main(argv: list[str] | None = None) -> None:
         phases.append(ph)
 
     # 읽기 단계: 짝수 번째는 전체 해상도 시계열(samples?every=1, 응답이 가장 큰 조회), 홀수 번째는 파워 커브를
-    # 부른다. 업로드된 활동을 돌아가며 쓴다. 업로드가 하나도 성공하지 못했으면 activity_ids가 비어 나눗셈
-    # 오류가 난다.
-    read_calls = []
-    for i in range(a.reads):
-        act = activity_ids[i % len(activity_ids)]
-        path = (
-            f"/api/activities/{act}/samples?every=1" if i % 2 == 0 else f"/api/activities/{act}/power-curve"
-        )
-        read_calls.append(lambda path=path: _req("GET", f"{a.target}{path}"))
-    ph = phase("reads", read_calls, a.reads)
-    ph.pop("results")
-    phases.append(ph)
+    # 부른다. 업로드된 활동을 돌아가며 쓴다. 업로드가 하나도 성공하지 못했으면 읽을 활동이 없으므로 읽기
+    # 단계를 건너뛰고 그 사실을 보고서에 남긴다. 처음 구현은 여기서 0으로 나누기 오류로 끝나 업로드 결과도
+    # 남기지 못했다(2026-10-13 수정).
+    reads_skipped = None
+    if activity_ids:
+        read_calls = []
+        for i in range(a.reads):
+            act = activity_ids[i % len(activity_ids)]
+            path = (
+                f"/api/activities/{act}/samples?every=1"
+                if i % 2 == 0
+                else f"/api/activities/{act}/power-curve"
+            )
+            read_calls.append(lambda path=path: _req("GET", f"{a.target}{path}"))
+        ph = phase("reads", read_calls, a.reads)
+        ph.pop("results")
+        phases.append(ph)
+    else:
+        reads_skipped = "no upload succeeded"
 
-    # 보고서: 대상 주소, 파일 이름·크기, 단계별 결과, 5xx 존재 여부(H10 판정에 쓰는 값).
+    # 보고서: 대상 주소, 파일 이름·크기, 단계별 결과, 5xx 존재 여부(H10 판정에 쓰는 값), 연결 오류 여부, 읽기
+    # 단계를 건너뛴 이유(건너뛰었을 때만).
     report = {
         "target": a.target,
         "fit": a.fit.name,
         "fit_bytes": len(payload),
         "phases": phases,
         "any_5xx": any(int(s) >= 500 for ph in phases for s in ph["status_counts"]),
+        "any_connection_error": any(ph["connection_errors"] > 0 for ph in phases),
     }
+    if reads_skipped:
+        report["reads_skipped"] = reads_skipped
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text(json.dumps(report, indent=1), encoding="utf-8")
     for ph in phases:
@@ -166,6 +186,8 @@ def main(argv: list[str] | None = None) -> None:
             f"{ph['phase']}: n={ph['n']} p50={ph['p50_ms']:.0f}ms p95={ph['p95_ms']:.0f}ms "
             f"max={ph['max_ms']:.0f}ms statuses={ph['status_counts']}"
         )
+    if reads_skipped:
+        print("reads skipped:", reads_skipped)
     print("any_5xx", report["any_5xx"])
 
 

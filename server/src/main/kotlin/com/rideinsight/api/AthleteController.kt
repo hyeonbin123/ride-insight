@@ -38,12 +38,13 @@ class AthleteController(
     private val activities: ActivityService,
     private val ftp: FtpEstimateService,
 ) {
-    // POST /api/athletes: 선수 생성. 본문 검사(이름 1~100자, 성별 M/F, 출생 연도 1900~2100, FTP 50~1000 W)는
-    // CreateAthleteRequest의 애너테이션이 하고 실패하면 400이다. 이름 앞뒤 공백은 잘라 저장하고, 201
-    // Created와 Location 헤더(/api/athletes/{id})를 돌려준다.
+    // POST /api/athletes: 선수 생성. 본문 검사(이름 1~100자, 성별 M/F, 출생 연도 1900~2100, 체중 20 kg 초과
+    // 300 kg 미만, FTP 50~1000 W)는 CreateAthleteRequest의 애너테이션이 하고 실패하면 400이다. 이름 앞뒤 공백은
+    // 잘라 저장하고, 201 Created와 Location 헤더(/api/athletes/{id})를 돌려준다. 체중은 real 컬럼과 같은 Float으로
+    // 받아 검사했으므로 Double로 바꿔도 값이 그대로다.
     @PostMapping
     fun create(@Valid @RequestBody req: CreateAthleteRequest): ResponseEntity<AthleteResponse> {
-        val (athlete, threshold) = athletes.create(req.name.trim(), req.gender, req.birthYear, req.weightKg, req.ftp)
+        val (athlete, threshold) = athletes.create(req.name.trim(), req.gender, req.birthYear, req.weightKg?.toDouble(), req.ftp)
         return ResponseEntity.created(URI.create("/api/athletes/${athlete.id}")).body(AthleteResponse.from(athlete, threshold))
     }
 

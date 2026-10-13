@@ -19,8 +19,9 @@ import tools.jackson.databind.json.JsonMapper
  * against this class in the tests (docs/experiments.md, 3단계 서비스 반영).
  *
  * Decision rule per node: numerical split `feature <= threshold` goes left. A missing value
- * (NaN) follows `default_left` when the node's `missing_type` is "NaN"; otherwise LightGBM treats
- * a missing value as zero.
+ * (NaN) follows `default_left` when the node's `missing_type` is "NaN"; with "None" LightGBM treats
+ * a missing value as zero. Models with `missing_type` "Zero" (trained with `zero_as_missing`) send
+ * zeros and NaN along `default_left`; that rule is not implemented, so [fromJson] rejects them.
  */
 // 생성자는 private이고 fromJson으로만 만든다. featureNames의 순서가 입력 배열의 열 순서다.
 class LightGbmModel private constructor(
@@ -52,8 +53,9 @@ class LightGbmModel private constructor(
             val threshold = node.path("threshold").asDouble()
             val value = x[feature]
             // 결측(NaN): 노드의 missing_type이 "NaN"이면 학습 때 정해진 기본 방향(default_left)으로 보내고,
-            // 그 밖이면 결측을 0으로 보고 비교한다(클래스 설명의 규칙). 값이 있으면 숫자 분할("<=")만
-            // 지원하고, 다른 decision_type(범주 분할 등)이 나오면 require로 거절한다.
+            // "None"이면 결측을 0으로 보고 비교한다(클래스 설명의 규칙). "Zero" 노드는 fromJson이 미리
+            // 거절하므로 여기까지 오지 않는다. 값이 있으면 숫자 분할("<=")만 지원하고, 다른 decision_type(범주
+            // 분할 등)이 나오면 require로 거절한다.
             val goLeft = if (value.isNaN()) {
                 if ((node.path("missing_type").asString(null) ?: "None") == "NaN") node.path("default_left").asBoolean(true) else 0.0 <= threshold
             } else {
@@ -68,8 +70,8 @@ class LightGbmModel private constructor(
 
     companion object {
         // dump_model() JSON을 읽어 objective가 regression으로 시작하는지 확인하고, feature_names와
-        // tree_info(트리 목록)를 꺼낸다. 트리가 없으면 거절한다. 트리는 JSON 노드 그대로 들고 있다가 예측 때
-        // 순회한다.
+        // tree_info(트리 목록)를 꺼낸다. 트리가 없거나 missing_type "Zero" 노드가 있으면 거절한다. 트리는 JSON
+        // 노드 그대로 들고 있다가 예측 때 순회한다.
         fun fromJson(json: String): LightGbmModel {
             val root = JsonMapper.builder().build().readTree(json)
             val objective = root.path("objective").asString(null) ?: ""
@@ -79,7 +81,26 @@ class LightGbmModel private constructor(
             val trees = ArrayList<JsonNode>()
             for (t in root.path("tree_info")) trees.add(t)
             require(trees.isNotEmpty()) { "model has no trees" }
+            for (t in trees) rejectZeroMissingType(t.path("tree_structure"))
             return LightGbmModel(names, trees)
+        }
+
+        // missing_type "Zero"(zero_as_missing으로 학습한 모델)에서 LightGBM은 값 0(절댓값 1e-35 이하)과 결측을
+        // 모두 default_left 방향으로 보낸다. leafValue는 이 규칙을 구현하지 않아 그런 모델에서는 틀린 예측을
+        // 조용히 낸다. 지금 이 클래스를 쓰는 서비스는 없고 ftp_export.py가 만드는 모델에도 이 값은 나오지
+        // 않지만, 나중에 그런 모델을 넣으면 읽는 단계에서 바로 실패하도록 모든 노드를 확인한다(2026-10-13).
+        private fun rejectZeroMissingType(start: JsonNode) {
+            val stack = ArrayDeque<JsonNode>()
+            stack.addLast(start)
+            while (stack.isNotEmpty()) {
+                val node = stack.removeLast()
+                if (node.has("leaf_value")) continue
+                require(node.path("missing_type").asString(null) != "Zero") {
+                    "missing_type Zero (zero_as_missing) is not supported"
+                }
+                stack.addLast(node.path("left_child"))
+                stack.addLast(node.path("right_child"))
+            }
         }
     }
 }

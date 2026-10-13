@@ -167,7 +167,7 @@ class ActivityRepository(private val jdbc: JdbcClient) {
         ).params(listOf(athleteId, before, before, limit)).query(::mapActivity).list()
 
     // FTP 변경 뒤 재계산 대상: 시작 시각이 from 이후인 활동, 오래된 순.
-    /** Activities whose start date (UTC) is on or after [fromDate], oldest first; used to recompute TSS. */
+    /** Activities that started at or after [from], oldest first; used to recompute TSS. */
     fun listFrom(athleteId: UUID, from: OffsetDateTime): List<ActivityRow> =
         jdbc.sql("select * from activity where athlete_id = ? and started_at >= ? order by started_at")
             .params(athleteId, from).query(::mapActivity).list()

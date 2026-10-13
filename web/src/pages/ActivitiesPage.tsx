@@ -73,12 +73,14 @@ export function ActivitiesPage() {
       return results;
     },
     onSuccess: (results) => {
-      // 새 결과를 위에 붙이고 최근 20줄만 남긴다. 그다음 이 선수의 목록, 훈련 부하, 기간 파워 커브 캐시를
-      // 무효화해 새 라이딩이 반영되게 한다.
+      // 새 결과를 위에 붙이고 최근 20줄만 남긴다. 그다음 이 선수의 목록, 훈련 부하, 기간 파워 커브, FTP 추정
+      // 캐시를 무효화해 새 라이딩이 반영되게 한다. FTP 추정은 처음에 이 목록에서 빠져 있어, 업로드 직후
+      // 대시보드의 추정 카드가 staleTime(30초) 동안 이전 값을 보였다(2026-10-13 수정).
       setUploadLog((prev) => [...results, ...prev].slice(0, 20));
       qc.invalidateQueries({ queryKey: ["activities", athleteId] });
       qc.invalidateQueries({ queryKey: ["training-load", athleteId] });
       qc.invalidateQueries({ queryKey: ["athlete-curve", athleteId] });
+      qc.invalidateQueries({ queryKey: ["ftp-estimate", athleteId] });
     },
   });
 

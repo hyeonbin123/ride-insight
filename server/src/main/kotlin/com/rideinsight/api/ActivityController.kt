@@ -43,11 +43,13 @@ class ActivityController(private val activities: ActivityService) {
         require(every >= 1) { "'every' must be at least 1" }
         val series = activities.samples(id)
         // Never return more than MAX_POINTS: widen the bucket (seconds) if the caller asked for too much.
-        // 라이딩 길이(마지막 − 첫 경과 시간, 초)를 MAX_POINTS로 나눠 올림하면 상한을 지키는 최소 구간 폭이
-        // 된다. 요청한 every와 이 값 중 큰 쪽을 쓰고, 실제로 쓴 값은 응답의 every로 알려 준다. 샘플이 없으면
-        // 길이를 0으로 본다.
+        // 구간 번호는 floor(t / every)라, 길이(마지막 − 첫 경과 시간, 초)가 span이면 구간은 최대
+        // ceil(span / every) + 1개다(양 끝이 모두 구간의 시작에 걸리는 경우). 그래서 span을 MAX_POINTS − 1로 나눠
+        // 올림한 값이 상한을 지키는 최소 구간 폭이다. 처음에는 MAX_POINTS로 나눠, 1초 기록 20,000초짜리
+        // 라이딩(샘플 20,001개)에 every=1을 그대로 써서 20,001점을 돌려줬다(2026-10-13 수정). 요청한 every와 이
+        // 값 중 큰 쪽을 쓰고, 실제로 쓴 값은 응답의 every로 알려 준다. 샘플이 없으면 길이를 0으로 본다.
         val spanSecs = (series.secs.lastOrNull() ?: 0.0) - (series.secs.firstOrNull() ?: 0.0)
-        val minEvery = Math.ceil(spanSecs / MAX_POINTS).toInt()
+        val minEvery = Math.ceil(spanSecs / (MAX_POINTS - 1)).toInt()
         return SamplesResponse.from(series, maxOf(every, minEvery, 1))
     }
 

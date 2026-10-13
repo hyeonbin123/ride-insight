@@ -15,6 +15,8 @@ import com.rideinsight.storage.SampleSeries
 import com.rideinsight.storage.Threshold
 // Bean Validation 애너테이션: 컨트롤러에서 @Valid가 붙은 요청 본문을 메서드 실행 전에 검사한다. 실패하면
 // ApiExceptionHandler가 400 validation으로 바꾼다.
+import jakarta.validation.constraints.DecimalMax
+import jakarta.validation.constraints.DecimalMin
 import jakarta.validation.constraints.Max
 import jakarta.validation.constraints.Min
 import jakarta.validation.constraints.NotBlank
@@ -27,12 +29,16 @@ import java.util.UUID
 // POST /api/athletes 본문. 제약은 docs/api.md 완료 기준(이름 1~100자, FTP 50~1000 W)과 DB의 check
 // 제약(V1__init.sql: 성별 M/F, 출생 연도 1900~2100)에 맞췄다. gender·birthYear·weightKg·ftp는 선택 항목이라
 // 기본값 null이다.
-// 체중(weightKg)에는 검증 애너테이션이 없다. DB에는 check(20 < weight_kg < 300) 제약만 있다.
+// 체중(weightKg)은 DB check(20 < weight_kg < 300)와 같은 열린 구간으로 검사한다. 처음에는 검증이 없어 범위
+// 밖 체중이 DB check 위반 예외로 500이 됐다(2026-10-13 수정). 컬럼이 real(4바이트 부동소수)이라 요청 값도
+// Float으로 받는다: Double로 검사하면 20.0000001처럼 범위 안이지만 real로 저장할 때 20.0으로 반올림돼 check에
+// 걸리는 값이 검사를 통과하기 때문이다. Float으로 받으면 검사하는 값과 저장되는 값이 같다(Float 범위를 넘는
+// 수는 무한대가 되어 역시 거절된다).
 data class CreateAthleteRequest(
     @NotBlank @Size(max = 100) val name: String,
     @Pattern(regexp = "M|F") val gender: String? = null,
     @Min(1900) @Max(2100) val birthYear: Int? = null,
-    val weightKg: Double? = null,
+    @DecimalMin(value = "20", inclusive = false) @DecimalMax(value = "300", inclusive = false) val weightKg: Float? = null,
     @Min(50) @Max(1000) val ftp: Int? = null,
 )
 

@@ -111,10 +111,19 @@ class ApiExceptionHandler {
     fun method(e: HttpRequestMethodNotSupportedException) =
         respond(HttpStatus.METHOD_NOT_ALLOWED, "method_not_allowed", "method ${e.method} is not supported here")
 
-    // 지원하지 않는 Content-Type(예: 업로드 엔드포인트에 JSON을 보냄)과 Accept 불일치 → 둘 다 415
-    // unsupported_media_type으로 돌려준다.
-    @ExceptionHandler(HttpMediaTypeNotSupportedException::class, HttpMediaTypeNotAcceptableException::class)
-    fun mediaType(e: Exception) = respond(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "unsupported_media_type", "unsupported content type")
+    // 지원하지 않는 Content-Type(예: 업로드 엔드포인트에 JSON을 보냄) → 415 unsupported_media_type.
+    @ExceptionHandler(HttpMediaTypeNotSupportedException::class)
+    fun mediaType(e: HttpMediaTypeNotSupportedException) =
+        respond(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "unsupported_media_type", "unsupported content type")
+
+    // 클라이언트의 Accept로는 응답을 만들 수 없음(예: Accept: text/plain, 이 API는 JSON만 돌려준다) → 406 Not
+    // Acceptable. 같은 이유로 JSON 오류 본문도 받아 줄 수 없으므로 본문 없이 상태만 돌려준다. 처음에는 415와 한
+    // 처리기에 묶여 415 + JSON 본문을 쓰려 했는데, 본문을 쓰지 못해 'Failure in @ExceptionHandler' 경고와 스택을
+    // 로그에 남긴 뒤 Spring 기본 처리기가 406을 돌려줬다. 응답 코드는 처음부터 406이었고, 처리기가 직접 406을
+    // 돌려주게 정리했다(2026-10-13).
+    @ExceptionHandler(HttpMediaTypeNotAcceptableException::class)
+    fun notAcceptable(e: HttpMediaTypeNotAcceptableException): ResponseEntity<Void> =
+        ResponseEntity.status(HttpStatus.NOT_ACCEPTABLE).build()
 
     // 필수 쿼리 파라미터 누락과 multipart 해석 오류 → 400 bad_request.
     @ExceptionHandler(MissingServletRequestParameterException::class, MultipartException::class)

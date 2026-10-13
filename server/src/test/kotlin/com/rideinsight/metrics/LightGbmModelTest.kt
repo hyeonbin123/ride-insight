@@ -9,6 +9,7 @@ import java.io.File
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import tools.jackson.databind.json.JsonMapper
 
@@ -43,6 +44,25 @@ class LightGbmModelTest {
     // 결측값이 섞인 작은 합성 모델(tiny_model.json)의 Python 예측과 비교.
     @Test
     fun `synthetic model with missing values matches python`() = check("tiny_model.json", "tiny_cases.json")
+
+    // missing_type "Zero"(zero_as_missing으로 학습한 모델) 노드는 LightGBM이 값 0과 결측을 default_left 쪽으로
+    // 보내는데, 이 추론기는 그 규칙을 구현하지 않았다. 틀린 예측을 조용히 내지 않도록 읽는 단계에서 거절하는지
+    // 확인한다. 뿌리 아래 노드에만 있어도 잡아야 한다.
+    @Test
+    fun `models with missing_type Zero are rejected instead of mispredicted`() {
+        fun node(missingType: String, left: String, right: String) =
+            """{"split_index":0,"split_feature":0,"threshold":1.5,"decision_type":"<=","default_left":true,""" +
+                """"missing_type":"$missingType","left_child":$left,"right_child":$right}"""
+        fun model(root: String) =
+            """{"objective":"regression","feature_names":["a"],"tree_info":[{"tree_index":0,"tree_structure":$root}]}"""
+        val leaf = """{"leaf_index":0,"leaf_value":1.0}"""
+        // The same tree with "None" loads and predicts.
+        assertEquals(1.0, LightGbmModel.fromJson(model(node("None", leaf, leaf))).predict(doubleArrayOf(0.0)))
+        val e = assertFailsWith<IllegalArgumentException> {
+            LightGbmModel.fromJson(model(node("None", node("Zero", leaf, leaf), leaf)))
+        }
+        assertTrue(e.message!!.contains("Zero"), e.message)
+    }
 
     // 실제 FTP 모델 대조. 3단계에서 모델이 채택되지 않아 ftp_model.json이 없으므로, 지금은 아무것도 검사하지
     // 않고 통과한다.

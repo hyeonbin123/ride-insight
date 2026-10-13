@@ -1,14 +1,15 @@
 <!doctype html>
 <!-- [파일 역할] Vite가 개발 서버와 빌드의 입구로 쓰는 단일 HTML 페이지(SPA 껍데기)다. 화면은 모두 React가 -->
 <!-- #root 안에 그린다. -->
-<!-- [참고] lang="en"과 title "web"은 Vite 템플릿 기본값 그대로이고, 실제 화면 문구는 한국어다. -->
-<html lang="en">
+<!-- [참고] 화면 문구가 한국어라 lang="ko", 탭 제목은 앱 이름이다. 처음에는 Vite 템플릿 기본값(lang="en", -->
+<!-- title "web")이 그대로 남아 있었다(2026-10-13 수정). -->
+<html lang="ko">
   <head>
     <meta charset="UTF-8" />
     <!-- 파비콘은 web/public/favicon.svg(정적 파일, 빌드 때 그대로 복사). -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>web</title>
+    <title>ride-insight</title>
   </head>
   <body>
     <!-- React가 화면을 붙이는 자리. src/main.tsx의 createRoot(document.getElementById('root'))가 이 -->

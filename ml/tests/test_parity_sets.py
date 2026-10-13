@@ -35,6 +35,23 @@ def test_build_keeps_sample_order_and_threshold(tmp_path: Path):
     assert info["complete"]
 
 
+# 명령행 기본값은 규칙 변경 1의 50이다. 파워 라이딩이 60개인 선수 200명이면 인자 없이도 개발·봉인 100명씩이
+# 나와야 한다. 기본값이 규칙 변경 전 100으로 남아 있던 때는 두 목록이 모두 비었다.
+def test_cli_default_threshold_is_rule_change_1(tmp_path: Path):
+    index = tmp_path / "index"
+    index.mkdir()
+    sample = [{"id": f"a{i:03d}", "split": "train"} for i in range(200)]
+    for row in sample:
+        _index(index, row["id"], 60)
+    (tmp_path / "sample.json").write_text(json.dumps(sample), encoding="utf-8")
+    out = tmp_path / "out"
+    parity_sets.main(
+        ["--sample", str(tmp_path / "sample.json"), "--index", str(index), "--out-dir", str(out)]
+    )
+    assert len((out / "parity_dev.txt").read_text(encoding="utf-8").split()) == 100
+    assert len((out / "parity_sealed.txt").read_text(encoding="utf-8").split()) == 100
+
+
 # 인덱스가 4명분만 있을 때 allow_partial이면 처음 빠진 선수에서 멈추고 그때까지의 4명만 개발 세트로 돌려주며
 # complete가 False인지 확인한다. 빠진 선수를 건너뛰지 않아야 나중에 다운로드가 끝났을 때 목록이 바뀌지 않는다.
 def test_partial_stops_at_first_missing_index(tmp_path: Path):

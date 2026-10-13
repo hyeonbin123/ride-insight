@@ -1,8 +1,9 @@
 """Download sample FIT files used by the server's parser tests.
 
 Source: python-fitparse test suite (MIT licence), https://github.com/dtcooper/python-fitparse.
-The files are not redistributed in this repository; run
-``python -m ride_insight_ml.fit_samples --dest ../data/samples/fit``.
+Copies of the same files, with the MIT licence text, are committed under
+``server/src/test/resources/fit/`` for the server tests. This script fetches them again into a data
+folder: ``python -m ride_insight_ml.fit_samples --dest ../data/samples/fit``.
 """
 
 # [파일 역할] FIT 디코더 테스트와 5번 질문(FIT 수용성)에 쓰는 샘플 FIT 9개를 python-fitparse 저장소에서
@@ -10,8 +11,9 @@ The files are not redistributed in this repository; run
 # [왜 이 파일들인가] 서로 다른 기기(Garmin Edge 500/810/820, Wahoo ELEMNT, Coros)와 실내 트레이너, 러닝 활동,
 # 손상 파일(잘린 파일, 헤더 손상)을 고루 넣어 '받아야 할 것은 받고 거절해야 할 것은 깨끗하게 거절하는지'를
 # 확인하려는 구성이다(docs/plan.md 샘플 FIT 절, docs/api.md 완료 기준 2).
-# [참고] 서버 테스트는 같은 이름의 파일을 server/src/test/resources/fit/에서 읽는다(README에 python-fitparse
-# 테스트 파일, MIT로 적혀 있고 라이선스 파일이 함께 있다).
+# [참고] 서버 테스트는 같은 이름의 파일을 server/src/test/resources/fit/에서 읽는다. 그 파일들은 MIT 라이선스
+# 문서(LICENSE-python-fitparse.txt)와 함께 커밋돼 있다(README 실행 절). 예전 docstring은 '재배포하지 않는다'고
+# 적어 실제와 달랐다.
 
 from __future__ import annotations
 

@@ -74,6 +74,10 @@ CP_FIT_KEYS = {"3m": 180, "5m": 300, "8m": 480, "10m": 600, "20m": 1200}
 # numpy Generator로만 만든다.
 BOOTSTRAP_N = 2000
 SEED = 0
+# H7_MIN_UNITS: H7(신선/묵은 라벨 MAE 차이)에서 한 집단의 단위가 이보다 적으면 구간을 내지 않고 판정 불가로
+# 둔다. 처음부터 코드에 있던 하한인데 등록한 규칙에는 빠져 있어 측정 뒤 규칙에 적었다(docs/experiments.md 규칙
+# 변경 10). 봉인 test는 신선 315·묵은 1,271단위라 이 하한에 걸리지 않았다.
+H7_MIN_UNITS = 20
 # LGBM_PARAMS: M1·M1b LightGBM의 하이퍼파라미터. 측정 전에 규칙에 고정해 두었고 튜닝하지 않는다(미리 정해 두면
 # dev를 보며 값을 고르는 과정에서 생기는 낙관적 치우침이 없다). subsample_freq=1은 subsample(행 표집)이 실제로
 # 켜지게 하는 LightGBM 설정이다(0이면 행 표집을 하지 않는다). ftp_export.py도 같은 값을 가져다 써서 Kotlin
@@ -587,9 +591,9 @@ def _h7(target: pd.DataFrame, p: pd.Series, n=BOOTSTRAP_N, seed=SEED) -> dict:
     err = (p - target["label_ftp"]).abs()
     fresh = err[target["fresh"] & err.notna()]
     stale = err[~target["fresh"] & err.notna()]
-    # 어느 집단이든 단위가 20개 미만이면 구간이 의미가 없어 판정 불가로 둔다(코드에서 정한 하한이며 문서
-    # 규칙에는 없는 값이다).
-    if len(fresh) < 20 or len(stale) < 20:
+    # 어느 집단이든 단위가 H7_MIN_UNITS(20)개 미만이면 구간이 의미가 없어 판정 불가로 둔다(규칙 변경 10으로
+    # 규칙에 적은 하한).
+    if len(fresh) < H7_MIN_UNITS or len(stale) < H7_MIN_UNITS:
         return {"diff_stale_minus_fresh": None, "verdict": "판정 불가"}
     rng = np.random.default_rng(seed)
     fa = target.loc[fresh.index, "athlete"]
