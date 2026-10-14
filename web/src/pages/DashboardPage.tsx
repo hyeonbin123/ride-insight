@@ -26,17 +26,16 @@ import { NeedAthlete } from "../components/NeedAthlete";
 import { formatNumber, formatWatts, isoDate, windowLabel } from "../format";
 import { useAthleteStore } from "../state/athleteStore";
 
-/** Training load (PMC) and the recent best power curve. */
+/** 훈련 부하(PMC)와 최근 기간 최고 파워 커브. */
 export function DashboardPage() {
   const athleteId = useAthleteStore((s) => s.athleteId);
   // 화면 상태: PMC 기간(days, 기본 90일), 파워 커브·FTP 추정 기간(weeks, 기본 6주, 3단계 규칙의 창 크기와
   // 같다), 기준일(asOf).
   const [days, setDays] = useState(90);
   const [weeks, setWeeks] = useState(6);
-  // Reference date ("as of"). Defaults to today; "마지막 라이딩" jumps to the newest activity so
-  // imported or old data still shows a chart.
-  // 오늘 날짜는 처음 렌더 때 한 번만 계산해 고정한다(UTC 날짜, 서버도 날짜를 UTC로 센다). '마지막 라이딩
-  // 기준' 버튼은 OpenData에서 가져온 예전 데이터처럼 최근 라이딩이 없을 때도 그래프가 비지 않게 하려고
+  // 기준일("as of")은 기본이 오늘이고, '마지막 라이딩 기준' 버튼은 가장 최근 활동 날짜로 옮긴다. 오늘
+  // 날짜는 처음 렌더 때 한 번만 계산해 고정한다(UTC 날짜, 서버도 날짜를 UTC로 센다). '마지막 라이딩 기준'
+  // 버튼은 OpenData에서 가져온 예전 데이터처럼 최근 라이딩이 없을 때도 그래프가 비지 않게 하려고
   // 넣었다(커밋 c3546ab).
   const [today] = useState(() => isoDate(new Date()));
   const [asOf, setAsOf] = useState(today);

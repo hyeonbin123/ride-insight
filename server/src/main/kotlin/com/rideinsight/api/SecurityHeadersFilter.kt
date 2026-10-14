@@ -15,8 +15,8 @@ import org.springframework.web.filter.OncePerRequestFilter
 // OncePerRequestFilter를 상속해 한 요청에 한 번만 실행되게 한다(내부 forward·오류 디스패치 때 중복 실행
 // 방지).
 /**
- * Response headers for an API that only ever returns JSON (OWASP ZAP scan 1, 2026-10-10:
- * "X-Content-Type-Options Header Missing"). The page itself is served by nginx or Vite, not here.
+ * JSON만 돌려주는 API에 맞춘 응답 보안 헤더를 붙인다(2026-10-10 OWASP ZAP 1차 스캔 경보
+ * "X-Content-Type-Options Header Missing"). 화면 페이지는 이 서버가 아니라 nginx나 Vite가 내보낸다.
  */
 @Component
 class SecurityHeadersFilter : OncePerRequestFilter() {

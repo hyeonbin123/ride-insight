@@ -1,9 +1,9 @@
-"""Download sample FIT files used by the server's parser tests.
+"""서버의 FIT 파서 테스트에 쓰는 샘플 FIT 파일을 내려받는다.
 
-Source: python-fitparse test suite (MIT licence), https://github.com/dtcooper/python-fitparse.
-Copies of the same files, with the MIT licence text, are committed under
-``server/src/test/resources/fit/`` for the server tests. This script fetches them again into a data
-folder: ``python -m ride_insight_ml.fit_samples --dest ../data/samples/fit``.
+출처: python-fitparse 테스트 모음(MIT 라이선스), https://github.com/dtcooper/python-fitparse.
+같은 파일의 사본이 MIT 라이선스 전문과 함께 서버 테스트용으로 ``server/src/test/resources/fit/``에
+커밋돼 있다. 이 스크립트는 그 파일들을 데이터 폴더로 다시 받는다:
+``python -m ride_insight_ml.fit_samples --dest ../data/samples/fit``.
 """
 
 # [파일 역할] FIT 디코더 테스트와 5번 질문(FIT 수용성)에 쓰는 샘플 FIT 9개를 python-fitparse 저장소에서
@@ -26,9 +26,8 @@ from pathlib import Path
 # BASE: python-fitparse 저장소 master 브랜치의 테스트 파일 폴더(raw 파일 주소). 파일 이름을 뒤에 붙여 받는다.
 BASE = "https://raw.githubusercontent.com/dtcooper/python-fitparse/master/tests/files/"
 
-# SAMPLES: 파일 이름 → 넣은 이유. 이유 문자열은 코드에서 쓰지 않고 사람이 읽는 설명이다. 마지막 세 줄(러닝,
-# 잘린 파일, 헤더 손상)은 서버가 422 또는 400으로 거절해야 하는 입력이다.
-# name -> why it is in the set
+# SAMPLES: 파일 이름 → 이 묶음에 넣은 이유. 이유 문자열은 코드에서 쓰지 않고 사람이 읽는 설명이다. 마지막
+# 세 줄(러닝, 잘린 파일, 헤더 손상)은 서버가 422 또는 400으로 거절해야 하는 입력이다.
 SAMPLES: dict[str, str] = {
     "garmin-edge-500-activity.fit": "Garmin Edge 500 outdoor ride",
     "Edge810-Vector-2013-08-16-15-35-10.fit": "Garmin Edge 810 with Vector power meter",

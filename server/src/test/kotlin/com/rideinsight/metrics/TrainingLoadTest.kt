@@ -24,16 +24,16 @@ class TrainingLoadTest {
         val s = TrainingLoad.series(d1, d1.plusDays(2), tss)
         val kC = 1 - exp(-1.0 / 42)
         val kA = 1 - exp(-1.0 / 7)
-        // Day 1: from zero, TSB 0.
+        // 1일째: 0에서 시작, TSB 0.
         close(100 * kC, s[0].ctl)
         close(100 * kA, s[0].atl)
         close(0.0, s[0].tsb)
-        // Day 2: no activity, loads decay, TSB is day-1 CTL minus day-1 ATL (negative after a hard day).
+        // 2일째: 활동 없음, 부하가 감쇠하고 TSB는 1일째 CTL − 1일째 ATL(힘든 날 다음이라 음수).
         close(s[0].ctl * (1 - kC), s[1].ctl)
         close(s[0].atl * (1 - kA), s[1].atl)
         close(s[0].ctl - s[0].atl, s[1].tsb)
         assertTrue(s[1].tsb < 0)
-        // Day 3: 50 TSS.
+        // 3일째: 50 TSS.
         close(s[1].ctl + (50 - s[1].ctl) * kC, s[2].ctl)
         close(s[1].atl + (50 - s[1].atl) * kA, s[2].atl)
         assertEquals(3, s.size)

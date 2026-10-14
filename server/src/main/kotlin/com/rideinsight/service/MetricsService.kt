@@ -22,7 +22,7 @@ import java.util.UUID
 import org.springframework.stereotype.Service
 import tools.jackson.databind.json.JsonMapper
 
-/** Computes and stores per-activity metrics (NP, IF, TSS, MMP, averages) from stored samples. */
+/** 저장된 샘플로 활동별 지표(NP, IF, TSS, MMP, 평균값)를 계산해 저장한다. */
 @Service
 class MetricsService(
     private val athletes: AthleteRepository,
@@ -30,9 +30,10 @@ class MetricsService(
     private val mapper: JsonMapper,
 ) {
     companion object {
-        // 지표 코드가 바뀌면 올리는 버전. 저장된 행마다 함께 기록해 어떤 코드로 계산한 값인지 알 수 있게
-        // 한다(docs/api.md: 지표 코드가 바뀌면 다시 계산해 덮어쓴다).
-        /** Bump when the metric code changes so stored rows can be recomputed. */
+        /**
+         * 지표 코드가 바뀌면 올리는 버전. 저장된 행마다 함께 기록해 어떤 코드로 계산한 값인지 알 수 있게 하고,
+         * 저장된 행을 다시 계산할 수 있게 한다(docs/api.md: 지표 코드가 바뀌면 다시 계산해 덮어쓴다).
+         */
         const val METRICS_VERSION = 1
     }
 
@@ -47,7 +48,7 @@ class MetricsService(
 
     // 파워가 없는 활동은 계산하지 않고 null(지표 행 없음)을 돌려준다. 있으면 계산한 뒤 mmp를 JSON 문자열로
     // 바꿔 upsert한다(이미 있으면 덮어씀).
-    /** Computes metrics for one activity and writes them; returns the row (null when no power). */
+    /** 활동 하나의 지표를 계산해 저장하고 그 행을 돌려준다(파워가 없으면 null). */
     fun computeAndStore(activityId: UUID, athleteId: UUID, startedAt: OffsetDateTime, series: SampleSeries, hasPower: Boolean): MetricsRow? {
         if (!hasPower) return null
         val row = compute(athleteId, startedAt, series)
@@ -93,7 +94,7 @@ class MetricsService(
 
     // from 이후 시작한 활동을 오래된 순으로 다시 계산한다. 파워가 없거나 샘플이 없는 활동은 건너뛰고, 다시
     // 계산한 수를 돌려준다. 호출하는 AthleteService.setThreshold의 트랜잭션(선수 행 잠금) 안에서 돈다.
-    /** Recomputes every activity of the athlete that started on or after [from] (after an FTP change). */
+    /** [from] 이후에 시작한 선수의 모든 활동을 다시 계산한다(FTP 변경 뒤). */
     fun recomputeFrom(athleteId: UUID, from: OffsetDateTime): Int {
         var n = 0
         for (a in activities.listFrom(athleteId, from)) {

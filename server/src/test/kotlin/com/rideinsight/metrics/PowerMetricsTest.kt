@@ -22,7 +22,7 @@ class PowerMetricsTest {
     // 기대값도 같은 방식으로 손 계산한다.
     @Test
     fun `constant power gives NP below the constant because the window starts empty`() {
-        // 60 samples of 200 W at 1 s: the first 29 rolling averages ramp up from 200/30.
+        // 1초 간격 200 W 샘플 60개: 처음 29개 이동 평균은 200/30부터 차오른다.
         val power = DoubleArray(60) { 200.0 }
         val np = PowerMetrics.normalizedPower(power, 1.0)
         var total = 0.0
@@ -44,7 +44,7 @@ class PowerMetricsTest {
     // 5초 기록은 창이 6샘플(30 / 5).
     @Test
     fun `window length follows the recording interval`() {
-        // 5 s recording: 6-sample window. 12 samples of 100 W -> averages 100/6 .. 100 (6 ramp + 6 full).
+        // 5초 기록: 창은 6샘플. 100 W 샘플 12개 -> 평균 100/6 .. 100(차오르는 6개 + 꽉 찬 6개).
         val power = DoubleArray(12) { 100.0 }
         var total = 0.0
         for (i in 0 until 12) total += (100.0 * minOf(i + 1, 6) / 6.0).pow(4)
@@ -54,9 +54,9 @@ class PowerMetricsTest {
     // 샘플 하나: 30칸 창의 평균은 300 / 30 = 10 W라 NP도 10 W. 1.26초 기록이면 창이 23칸.
     @Test
     fun `single sample NP is the sample divided by the window length`() {
-        // One 300 W sample in a 30-sample window: rolling average 10 W, so NP = 10 W (GC gives the same).
+        // 30샘플 창 안의 300 W 샘플 하나: 이동 평균 10 W라 NP = 10 W(GC도 같은 값을 낸다).
         close(10.0, PowerMetrics.normalizedPower(doubleArrayOf(300.0), 1.0))
-        // 1.26 s recording: window = (30 / 1.26).toInt() = 23 samples.
+        // 1.26초 기록: 창 = (30 / 1.26).toInt() = 23샘플.
         close(300.0 / 23.0, PowerMetrics.normalizedPower(doubleArrayOf(300.0), 1.26))
     }
 
@@ -76,8 +76,8 @@ class PowerMetricsTest {
         val constant = DoubleArray(3600) { 150.0 }
         val npZeros = PowerMetrics.normalizedPower(withZeros, 1.0)!!
         val npConst = PowerMetrics.normalizedPower(constant, 1.0)!!
-        // Alternating 300/0 averages to 150 inside every full 30 s window, so NP is close to the
-        // constant ride (the first 29 partial windows differ slightly). Skipping zeros would give ~300.
+        // 300/0이 번갈아 나오면 꽉 찬 30초 창마다 평균이 150이라 NP가 일정한 라이딩과 가깝다(처음 29개의
+        // 덜 찬 창만 조금 다르다). 0을 빼고 계산했다면 약 300이 나왔을 것이다.
         close(npConst, npZeros, 0.01)
         assertTrue(npZeros < 160.0)
     }
@@ -89,9 +89,9 @@ class PowerMetricsTest {
         close(0.8, PowerMetrics.intensityFactor(200.0, 250.0))
         assertNull(PowerMetrics.intensityFactor(200.0, null))
         assertNull(PowerMetrics.intensityFactor(200.0, 0.0))
-        // One hour at IF 1.0 is 100 TSS.
+        // IF 1.0으로 1시간이면 100 TSS.
         close(100.0, PowerMetrics.trainingStressScore(250.0, 3600, 1.0, 250.0))
-        // 5 s recording, 720 samples = 1 h at IF 0.8 -> 64 TSS.
+        // 5초 기록 720샘플 = 1시간, IF 0.8 -> 64 TSS.
         close(64.0, PowerMetrics.trainingStressScore(200.0, 720, 5.0, 250.0))
         assertNull(PowerMetrics.trainingStressScore(200.0, 720, 5.0, null))
     }
@@ -113,7 +113,7 @@ class PowerMetricsTest {
     fun `mode share reports how regular the timestamps are`() {
         val regular = RecordingInterval.analyse(doubleArrayOf(0.0, 1.0, 2.0, 3.0, 4.0))!!
         assertEquals(1.0, regular.modeShare)
-        // Jittered file like 2007_11_19 in OpenData: deltas 1.00, 1.03, 1.00, 1.02 -> mode 1.00 with share 0.5.
+        // OpenData의 2007_11_19처럼 흔들리는 파일: 간격 1.00, 1.03, 1.00, 1.02 -> 최빈값 1.00, 비율 0.5.
         val jitter = RecordingInterval.analyse(doubleArrayOf(0.0, 1.0, 2.03, 3.03, 4.05))!!
         assertEquals(1.0, jitter.intervalSecs)
         assertEquals(0.5, jitter.modeShare)

@@ -80,7 +80,7 @@ dependencies {
 // 고정한다. tools 패키지의 ParityTool·ImportOpenData에도 main 함수가 있어, 지정하지 않으면 bootRun이 어느
 // main을 쓸지 정하지 못했다(docs/ai-verification.md 2단계 실제 실행).
 springBoot {
-	// The tools package has its own main functions; bootRun must start the server.
+	// tools 패키지에도 main 함수가 따로 있으므로, bootRun은 반드시 서버를 띄우도록 지정한다.
 	mainClass.set("com.rideinsight.ServerApplicationKt")
 }
 
@@ -105,8 +105,7 @@ tasks.withType<Test> {
 // 값과 나란히 JSONL로 쓴다. 분석은 ml/의 parity.py가 하고, 3단계 FTP 실험의 라이딩
 // 특징(data/features/all.jsonl)도 이 태스크로 내보냈다(docs/experiments.md 3단계 데이터).
 // JavaExec는 런타임 클래스패스로 지정한 main 클래스만 실행하므로 웹 서버나 DB 없이 돈다.
-// Offline parity tool: computes metrics from OpenData zips and writes JSONL for ml/ to analyse.
-// Usage: ./gradlew -q parity --args="--zips ../data/opendata --index ../data/opendata_index --athletes ../manifests/parity_dev.txt --out ../reports/parity/dev.jsonl"
+// 사용법: ./gradlew -q parity --args="--zips ../data/opendata --index ../data/opendata_index --athletes ../manifests/parity_dev.txt --out ../reports/parity/dev.jsonl"
 tasks.register<JavaExec>("parity") {
 	group = "tools"
 	description = "Compute metrics for OpenData athletes and compare with GoldenCheetah metadata"
@@ -116,9 +115,8 @@ tasks.register<JavaExec>("parity") {
 
 // importOpenData 태스크: OpenData 선수 1명을 DB에 활동과 FTP 이력으로 넣는 tools/ImportOpenData.kt를
 // 실행한다(docs/api.md OpenData 가져오기, 화면 데모용). 이 도구는 Spring 컨텍스트를 웹 서버 없이 띄워
-// 저장소·지표 서비스 빈을 재사용하므로 PostgreSQL이 떠 있어야 한다.
-// Import one OpenData athlete into the database (needs the PostgreSQL from compose.yaml running).
-// Usage: ./gradlew -q importOpenData --args="--zip ../data/opendata/<id>.zip --index ../data/opendata_index/<id>.json --name Demo"
+// 저장소·지표 서비스 빈을 재사용하므로 PostgreSQL(compose.yaml로 띄운 것)이 떠 있어야 한다.
+// 사용법: ./gradlew -q importOpenData --args="--zip ../data/opendata/<id>.zip --index ../data/opendata_index/<id>.json --name Demo"
 tasks.register<JavaExec>("importOpenData") {
 	group = "tools"
 	description = "Import a GoldenCheetah OpenData athlete as activities and thresholds"

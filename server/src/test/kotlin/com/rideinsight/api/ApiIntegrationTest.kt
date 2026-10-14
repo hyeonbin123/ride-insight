@@ -20,7 +20,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/** End-to-end checks for docs/api.md against a PostgreSQL container. */
+/** PostgreSQL 컨테이너를 상대로 docs/api.md의 내용을 처음부터 끝까지(end-to-end) 확인한다. */
 class ApiIntegrationTest : ApiTestBase() {
     // 선수 생성 검증: 빈 이름·FTP 20 W·성별 Q·JSON이 아닌 본문은 400, 정상 생성 후 조회하면 현재 FTP 315,
     // 없는 id는 404, UUID가 아닌 id는 500이 아니라 400.
@@ -49,7 +49,7 @@ class ApiIntegrationTest : ApiTestBase() {
             assertEquals(400, r.status, "weightKg=$w: ${r.body}")
             assertEquals("validation", r.body!!.path("error").asString(), "weightKg=$w")
         }
-        // A number too large for a 4-byte float is rejected as well (never a 500).
+        // 4바이트 float에 담기지 않을 만큼 큰 수도 거절돼야 한다(500이 되면 안 된다).
         assertEquals(400, post("/api/athletes", """{"name":"w","weightKg":1e40}""").status)
         for (w in listOf("20.5", "72.5", "299.5")) {
             val r = post("/api/athletes", """{"name":"w","weightKg":$w}""")
@@ -81,7 +81,7 @@ class ApiIntegrationTest : ApiTestBase() {
             assertEquals(400, r.status, name)
             assertEquals("invalid_fit", r.body!!.path("error").asString())
         }
-        // The Coros file is either stored or rejected as invalid FIT, never a 500.
+        // Coros 파일은 저장되거나 잘못된 FIT으로 거절되거나 둘 중 하나여야 하고, 500은 안 된다.
         val coros = upload(id, "coros-pace-2-cycling-misaligned-fields")
         assertTrue(coros.status == 201 || coros.status == 400, "coros: ${coros.status}")
         val dup = upload(id, "garmin-edge-820-bike")
@@ -101,16 +101,15 @@ class ApiIntegrationTest : ApiTestBase() {
     // 이어서 samples의 every 처리와 활동 파워 커브를 확인한다.
     @Test
     fun `metrics of an uploaded ride equal the pure computation and are reported against the device`() {
-        val id = createAthlete(ftp = 315) // the Edge810 session says threshold_power 315
+        val id = createAthlete(ftp = 315) // Edge810 파일의 세션 메시지에 threshold_power 315가 적혀 있다
         val name = "Edge810-Vector-2013-08-16-15-35-10"
         val r = upload(id, name)
         assertEquals(201, r.status, r.body.toString())
         val metrics = r.body!!.path("metrics")
         assertTrue(metrics.path("normalizedPower").isNumber)
 
-        // 서버를 거치지 않은 독립 계산: 디코더 결과로 경과 시간·파워 배열을 만들고 metrics 함수에 FTP 315를
-        // 넣는다. 서버의 저장·재조회 경로가 값을 바꾸지 않는지 보는 것이다.
-        // Independent computation straight from the decoder and the metric functions.
+        // 서버를 거치지 않고 디코더와 지표 함수만으로 하는 독립 계산: 디코더 결과로 경과 시간·파워 배열을
+        // 만들고 metrics 함수에 FTP 315를 넣는다. 서버의 저장·재조회 경로가 값을 바꾸지 않는지 보는 것이다.
         val fit = FitActivity.decode(File(fitDir, "$name.fit").readBytes())
         val t0 = fit.records.first().timestampUnix
         val secs = DoubleArray(fit.records.size) { (fit.records[it].timestampUnix - t0).toDouble() }
@@ -125,24 +124,23 @@ class ApiIntegrationTest : ApiTestBase() {
         val mmp20 = MeanMaximalPower.peakPower(samples, recInt, 1200.0)!!
         assertTrue(abs(mmp20 - metrics.path("mmp").path("20m_critical_power").asDouble()) < 1e-3)
 
-        // Device-reported values (session message): reported, not judged (api.md criterion 3).
+        // 기기가 보고한 값(session 메시지)은 출력만 하고 판정하지 않는다(api.md 완료 기준 3).
         val session = fit.sessions.first()
         println(
             "DEVICE_COMPARISON $name: NP ours=${"%.1f".format(np)} device=${session.normalizedPower} | " +
                 "TSS ours=${"%.1f".format(tss)} device=${session.trainingStressScore} | IF ours=${"%.3f".format(np / 315)} device=${session.intensityFactor}",
         )
 
-        // every=10이면 10초 구간마다 한 점이라 이 파일에서는 ceil(record 수 / 10)개를 기대한다(1초 간격 기록
-        // 기준). every=0은 400.
-        // Samples endpoint: stride and size cap.
+        // samples 엔드포인트의 간격(every)과 크기 처리. every=10이면 10초 구간마다 한 점이라 이 파일에서는
+        // ceil(record 수 / 10)개를 기대한다(1초 간격 기록 기준). every=0은 400.
         val s = get("/api/activities/${r.body!!.path("id").asString()}/samples?every=10")
         assertEquals(200, s.status)
         assertEquals(10, s.body!!.path("every").asInt())
         assertEquals((fit.records.size + 9) / 10, s.body!!.path("secs").size())
         assertEquals(400, get("/api/activities/${r.body!!.path("id").asString()}/samples?every=0").status)
 
-        // 활동 파워 커브: 로그 간격 점 수가 50~400 사이이고, 표준 20분 값이 위에서 계산한 20분 MMP와 같은지.
-        // Activity power curve: log-spaced points, standard windows included.
+        // 활동 파워 커브: 로그 간격 점 수가 50~400 사이이고, 함께 들어 있는 표준 구간 중 20분 값이 위에서
+        // 계산한 20분 MMP와 같은지.
         val curve = get("/api/activities/${r.body!!.path("id").asString()}/power-curve")
         assertEquals(200, curve.status)
         assertTrue(curve.body!!.path("points").size() in 50..400)
@@ -177,10 +175,9 @@ class ApiIntegrationTest : ApiTestBase() {
     @Test
     fun `threshold change recomputes TSS and training load follows daily TSS`() {
         val id = createAthlete(ftp = 300)
-        // 처음 이 테스트는 파워가 없는 Edge 500 파일을 써서 재계산이 0건이었다(AI의 테스트 가정 오류).
-        // fitparse 기대값으로 파워 유무를 확인하고 ELEMNT 파일로 바꿨다(docs/ai-verification.md 2단계).
-        // The Edge 500 sample has no power meter (first draft of this test used it and recomputed
-        // nothing); the ELEMNT ride has power on 13,346 of 13,471 samples.
+        // 처음 이 테스트는 파워미터가 없는 Edge 500 파일을 써서 재계산이 0건이었다(AI의 테스트 가정 오류).
+        // fitparse 기대값으로 파워 유무를 확인하고, 샘플 13,471개 중 13,346개에 파워가 있는 ELEMNT 파일로
+        // 바꿨다(docs/ai-verification.md 2단계).
         val r = upload(id, "2019-02-17-062644-ELEMNT-297E-195-0")
         assertEquals(201, r.status, r.body.toString())
         val activityId = r.body!!.path("id").asString()
@@ -192,7 +189,7 @@ class ApiIntegrationTest : ApiTestBase() {
         assertEquals(1, set.body!!.path("recomputedActivities").asInt())
         val after = get("/api/activities/$activityId").body!!.path("metrics")
         assertEquals(250, after.path("ftpUsed").asInt())
-        // TSS scales with 1 / FTP^2.
+        // TSS는 1 / FTP^2에 비례해 바뀐다.
         assertTrue(abs(after.path("tss").asDouble() - tssBefore * (300.0 / 250.0) * (300.0 / 250.0)) < 0.05)
 
         val load = get("/api/athletes/$id/training-load?from=$started&to=$started")
@@ -217,7 +214,7 @@ class ApiIntegrationTest : ApiTestBase() {
     // 헤더가 붙는지도 본다.
     @Test
     fun `unknown routes, wrong methods and bad content types are 4xx with security headers`() {
-        // ZAP scan 1 found 500s on every unknown path.
+        // ZAP 1차 스캔에서는 모르는 경로마다 500이 나왔다.
         assertEquals(404, get("/").status)
         assertEquals(404, get("/api").status)
         assertEquals(404, get("/api/nope").status)
@@ -257,7 +254,7 @@ class ApiIntegrationTest : ApiTestBase() {
     // assertNull(null)이 항상 통과해 아무것도 검사하지 않았다.
     @Test
     fun `file without power is stored without metrics`() {
-        // The Edge 820 commute has no power meter: stored, metrics null.
+        // Edge 820 출퇴근 라이딩에는 파워미터가 없다: 저장은 되고 지표는 null이어야 한다.
         val fit = FitActivity.decode(File(fitDir, "garmin-edge-820-bike.fit").readBytes())
         assertTrue(fit.records.none { it.power != null }, "precondition: the Edge 820 sample has no power")
         val id = createAthlete()

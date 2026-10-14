@@ -149,7 +149,7 @@ data class SamplesResponse(
         // 시리즈에서 같은 인덱스를 고른다. 샘플 개수가 아니라 시간 기준이라, 기록 간격이 1초가 아니거나
         // 중간에 멈춘 구간이 있어도 대략 every초에 한 점이 된다(Codex 2차 검토 지적 6). 시리즈들이 같은
         // 인덱스를 공유하므로 그래프에서 시각과 값이 어긋나지 않는다.
-        /** One point per [every] seconds of elapsed time: the first sample of each bucket. */
+        /** 경과 시간 [every]초마다 한 점, 곧 각 구간의 첫 샘플을 고른다. */
         fun from(s: SampleSeries, every: Int): SamplesResponse {
             val keep = ArrayList<Int>()
             var lastBucket = Long.MIN_VALUE

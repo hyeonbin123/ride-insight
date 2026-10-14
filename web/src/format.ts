@@ -1,4 +1,4 @@
-/** Small formatting helpers shared by the pages. */
+/** 페이지들이 함께 쓰는 작은 표시 형식 도우미. */
 
 // [파일 역할] 화면 여러 곳(라이딩 목록·상세, 대시보드, 차트 축)이 같이 쓰는 표시용 문자열 변환 함수 모음.
 // 값이 없거나(null/undefined) 유한하지 않으면 모두 '-'를 돌려줘, 지표가 없는 활동(파워 없음, FTP 없음)도
@@ -31,15 +31,15 @@ export function formatDate(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
 
-// MMP 키(GoldenCheetah 이름)에서 '_critical_power'를 떼어 짧은 구간 이름만 남긴다.
-/** Window key like "20m_critical_power" -> "20m". */
+/** MMP 키(GoldenCheetah 이름)에서 '_critical_power'를 떼어 짧은 구간 이름만 남긴다. 예: "20m_critical_power" -> "20m". */
 export function windowLabel(key: string): string {
   return key.replace("_critical_power", "");
 }
 
-// 파워 커브 x축(로그 축) 눈금과 마우스 위치 표시에 쓰는 짧은 시간 이름. 60초 미만은 초, 1시간 미만은
-// 분(반올림), 그 이상은 시간과 남은 분(예: 5400초 → 1h30m).
-/** Seconds -> compact label for curve axes: 1s, 30s, 5m, 1h. */
+/**
+ * 초 → 파워 커브 x축(로그 축) 눈금과 마우스 위치 표시에 쓰는 짧은 시간 이름(1s, 30s, 5m, 1h). 60초 미만은
+ * 초, 1시간 미만은 분(반올림), 그 이상은 시간과 남은 분(예: 5400초 → 1h30m).
+ */
 export function secsLabel(secs: number): string {
   if (secs < 60) return `${secs}s`;
   if (secs < 3600) return `${Math.round(secs / 60)}m`;

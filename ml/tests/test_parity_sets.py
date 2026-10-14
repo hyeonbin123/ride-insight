@@ -29,7 +29,7 @@ def test_build_keeps_sample_order_and_threshold(tmp_path: Path):
     dev, sealed, info = parity_sets.build(sample, tmp_path, 100, allow_partial=False)
     assert len(dev) == 100 and len(sealed) == 100
     assert not set(dev) & set(sealed)
-    assert dev[0] == "a001"  # a000 is a dev-split athlete, so it is not eligible
+    assert dev[0] == "a001"  # a000은 dev 분할 선수라 대상이 아니다
     assert all(int(x[1:]) % 10 != 0 and int(x[1:]) % 3 != 0 for x in dev + sealed)
     assert dev == sorted(dev)
     assert info["complete"]

@@ -24,9 +24,11 @@ import { api, ApiRequestError } from "../api/client";
 import { isoDate } from "../format";
 import { useAthleteStore } from "../state/athleteStore";
 
-/** Create or switch the working athlete and manage the FTP history. */
-// 선택된 선수 id와 바꾸는 함수는 Zustand에서, 선수 정보는 React Query(['athlete', id], 메뉴바와 같은
-// 캐시)에서 가져온다.
+/**
+ * 작업할 선수를 만들거나 바꾸고 FTP 이력을 관리한다.
+ * 선택된 선수 id와 바꾸는 함수는 Zustand에서, 선수 정보는 React Query(['athlete', id], 메뉴바와 같은
+ * 캐시)에서 가져온다.
+ */
 export function AthletePage() {
   const { athleteId, setAthleteId } = useAthleteStore();
   const qc = useQueryClient();

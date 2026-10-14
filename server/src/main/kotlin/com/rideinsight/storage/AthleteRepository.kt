@@ -41,13 +41,13 @@ class AthleteRepository(private val jdbc: JdbcClient) {
     fun find(id: UUID): Athlete? =
         jdbc.sql("select * from athlete where id = ?").param(id).query(::mapAthlete).optional().orElse(null)
 
-    // 잠금은 트랜잭션이 끝날 때 풀리므로 트랜잭션 안에서만 의미가 있다. @Transactional인
-    // ActivityService.ingestFit과 AthleteService.setThreshold가 맨 처음에 부른다. 행이 없으면 아무것도 잠그지
-    // 않고 false.
     /**
-     * Locks the athlete row for the current transaction so uploads and FTP changes of one athlete
-     * run one at a time (Codex review 2026-10-10: an upload overlapping a threshold change could keep
-     * metrics computed with the old FTP). Returns false when the athlete does not exist.
+     * 현재 트랜잭션 동안 선수 행을 잠가, 한 선수의 업로드와 FTP 변경이 한 번에 하나씩 실행되게 한다
+     * (2026-10-10 Codex 검토: FTP 변경과 겹친 업로드가 옛 FTP로 계산한 지표를 그대로 남길 수 있었다).
+     * 선수가 없으면 아무것도 잠그지 않고 false를 돌려준다.
+     *
+     * 잠금은 트랜잭션이 끝날 때 풀리므로 트랜잭션 안에서만 의미가 있다. @Transactional인
+     * ActivityService.ingestFit과 AthleteService.setThreshold가 맨 처음에 부른다.
      */
     fun lock(id: UUID): Boolean =
         jdbc.sql("select id from athlete where id = ? for update").param(id).query(UUID::class.java).optional().isPresent
@@ -67,8 +67,10 @@ class AthleteRepository(private val jdbc: JdbcClient) {
         ).params(athleteId, effectiveFrom, ftpWatts, source).update()
     }
 
-    // effective_from ≤ 날짜 중 가장 최근 행 하나. 없으면 null이고, 그러면 그 활동의 IF·TSS는 계산되지 않는다.
-    /** FTP in force on [date]: the most recent threshold whose effective_from is not after it. */
+    /**
+     * [date]에 유효한 FTP: effective_from이 그 날짜보다 늦지 않은 이력 중 가장 최근 행 하나. 없으면 null이고,
+     * 그러면 그 활동의 IF·TSS는 계산되지 않는다.
+     */
     fun thresholdOn(athleteId: UUID, date: LocalDate): Threshold? =
         jdbc.sql(
             """

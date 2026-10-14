@@ -8,9 +8,10 @@ package com.rideinsight.fit
 // python-fitparse 결과와 record·세션 값을 대조하고, ApiIntegrationTest가 기기가 세션에 적은 NP·TSS·IF와 우리
 // 계산을 나란히 출력한다.
 
-// record 메시지 하나(한 시점의 측정값): 시각(Unix 초), 파워(W), 심박(bpm), 케이던스(rpm), 누적 거리(m),
-// 속도(m/s), 고도(m). 센서가 없거나 무효 값이면 null이다.
-/** One `record` message reduced to the series this project uses. Nulls mean absent or invalid. */
+/**
+ * `record` 메시지 하나(한 시점의 측정값)를 이 프로젝트가 쓰는 값으로 줄인 것: 시각(Unix 초), 파워(W),
+ * 심박(bpm), 케이던스(rpm), 누적 거리(m), 속도(m/s), 고도(m). null은 센서가 없거나 무효 값이라는 뜻이다.
+ */
 class FitRecordSample(
     val timestampUnix: Long,
     val power: Int?,
@@ -50,9 +51,11 @@ class FitFileId(
     val timeCreatedUnix: Long?,
 )
 
-// crcValid: 파일 CRC가 맞는지(틀려도 거절하지 않고 표시만 한다, 5단계 H8). developerFieldDefinitions: 개발자
-// 필드를 가진 정의 메시지 수(보고용). sports: sport 메시지들의 종목 코드.
-/** An activity file: file id, sessions and the record series in file order. */
+/**
+ * 활동 파일 하나: 파일 id, 세션들, 파일 순서 그대로의 record 시계열.
+ * crcValid: 파일 CRC가 맞는지(틀려도 거절하지 않고 표시만 한다, 5단계 H8). developerFieldDefinitions: 개발자
+ * 필드를 가진 정의 메시지 수(보고용). sports: sport 메시지들의 종목 코드.
+ */
 class FitActivity(
     val fileId: FitFileId?,
     val sessions: List<FitSessionSummary>,
@@ -61,9 +64,10 @@ class FitActivity(
     val crcValid: Boolean,
     val developerFieldDefinitions: Int,
 ) {
-    // 종목 판단: 첫 세션의 sport가 우선이고, 세션이 없으면 sport 메시지를 본다. ActivityService가 이 값으로
-    // 러닝·수영 등을 거절한다.
-    /** Sport of the first session, else the first `sport` message. */
+    /**
+     * 종목: 첫 세션의 sport가 우선이고, 세션이 없으면 첫 `sport` 메시지를 본다. ActivityService가 이 값으로
+     * 러닝·수영 등을 거절한다.
+     */
     val sport: Long? get() = sessions.firstOrNull()?.sport ?: sports.firstOrNull()
 
     companion object {
@@ -104,7 +108,7 @@ class FitActivity(
             // record 메시지마다 샘플 하나. 파일 순서 그대로 두고 정렬하지 않는다(시각이 거꾸로 가는 파일은
             // ActivityService가 400으로 거절한다). timestamp가 없는 record는 시간축에 놓을 수 없어 건너뛴다.
             for (r in file.messages(FitProfile.MSG_RECORD)) {
-                val ts = r.timestampUnix ?: continue // a record without a timestamp cannot be placed
+                val ts = r.timestampUnix ?: continue // timestamp가 없으면 시간축에 놓을 수 없다
                 records.add(
                     FitRecordSample(
                         timestampUnix = ts,

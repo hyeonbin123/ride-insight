@@ -24,7 +24,7 @@ import org.springframework.web.client.RestClient
 import tools.jackson.databind.JsonNode
 import tools.jackson.databind.json.JsonMapper
 
-/** Shared HTTP helpers for the end-to-end tests against the PostgreSQL container. */
+/** PostgreSQL 컨테이너를 상대로 하는 end-to-end 테스트들이 함께 쓰는 HTTP 도우미. */
 // @SpringBootTest(RANDOM_PORT): 실제 내장 톰캣을 빈 포트에 띄운다. PER_CLASS: 테스트 인스턴스를 클래스당
 // 하나만 만들어, @BeforeAll을 static이 아닌 인스턴스 메서드로 쓰고 주입된 env를 읽을 수 있게 한다.
 @Import(TestcontainersConfiguration::class)
@@ -64,9 +64,8 @@ abstract class ApiTestBase {
         if (json != null) spec.contentType(MediaType.APPLICATION_JSON).body(json)
         if (multipartName != null) {
             // multipart 업로드: 파일 이름과 octet-stream 형식을 단 file 파트 하나를 만든다.
-            // MultipartBodyBuilder는 reactive-streams를 요구해 NoClassDefFoundError가 났기 때문에
-            // MultiValueMap + HttpEntity로 만든다(docs/ai-verification.md 2단계).
-            // Plain MultiValueMap parts: MultipartBodyBuilder needs reactive-streams on the classpath.
+            // MultipartBodyBuilder는 클래스패스에 reactive-streams를 요구해 NoClassDefFoundError가 났기 때문에
+            // 평범한 MultiValueMap + HttpEntity 파트로 만든다(docs/ai-verification.md 2단계).
             val parts = LinkedMultiValueMap<String, Any>()
             val partHeaders = HttpHeaders()
             partHeaders.setContentDispositionFormData("file", multipartName)

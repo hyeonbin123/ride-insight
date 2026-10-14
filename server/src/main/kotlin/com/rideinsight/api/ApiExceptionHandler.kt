@@ -98,11 +98,11 @@ class ApiExceptionHandler {
     )
     fun badRequest(e: Exception) = respond(HttpStatus.BAD_REQUEST, "bad_request", e.message?.lineSequence()?.first() ?: "bad request")
 
-    // 존재하지 않는 경로(/, /api, /robots.txt 등) → 404 not_found. ZAP 1차에서는 이 처리기가 없어 응답의
-    // 12%가 5xx였고, 추가한 뒤 2차 스캔에서 5xx가 0%가 되었다. ApiIntegrationTest의 unknown routes 테스트가
-    // 회귀를 막는다.
-    // Routing and protocol errors are 4xx, not "unexpected" (OWASP ZAP scan 1, 2026-10-10: every
-    // unknown path answered 500 because the catch-all below swallowed NoResourceFoundException).
+    // 존재하지 않는 경로(/, /api, /robots.txt 등) → 404 not_found. 라우팅·프로토콜 오류는 '예상하지 못한
+    // 오류'가 아니라 4xx다. 2026-10-10 OWASP ZAP 1차 스캔에서는 이 처리기가 없어, 맨 아래
+    // catch-all(Exception) 처리기가 NoResourceFoundException까지 받아 모르는 경로마다 500을 돌려줬다(응답의
+    // 12%가 5xx). 추가한 뒤 2차 스캔에서 5xx가 0%가 되었다. ApiIntegrationTest의 unknown routes 테스트가 회귀를
+    // 막는다.
     @ExceptionHandler(NoResourceFoundException::class, NoHandlerFoundException::class)
     fun noRoute(e: Exception) = respond(HttpStatus.NOT_FOUND, "not_found", "no such endpoint")
 

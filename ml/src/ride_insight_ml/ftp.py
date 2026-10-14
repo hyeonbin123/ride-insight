@@ -1,13 +1,14 @@
-"""Stage 3: FTP estimation from six weeks of riding (docs/experiments.md, 3단계).
+"""3단계: 최근 6주 라이딩으로 FTP를 추정한다(docs/experiments.md, 3단계).
 
-Sub-commands:
+하위 명령:
 
-* ``build``     prediction units (athlete, reference date) with window features and labels
-* ``evaluate``  fit the candidates on train, report MAE etc. on one split with athlete bootstrap
+* ``build``     창 특징과 라벨을 붙인 예측 단위(선수, 기준일)를 만든다
+* ``evaluate``  후보를 train으로 맞추고, 한 분할에서 MAE 등을 선수 단위 부트스트랩
+                구간과 함께 보고한다
 
-Inputs: the per-ride JSONL written by the Kotlin ``parity`` task for every sampled athlete
-(our NP and 16 mean-maximal powers per ride plus GoldenCheetah's cp_setting / NP / IF), the ride
-index directory (gender, year of birth) and the sample manifest (split per athlete).
+입력: Kotlin ``parity`` 태스크가 표본 선수마다 쓴 라이딩별 JSONL(라이딩마다 우리 구현의 NP와
+최대 평균 파워 16구간, 그리고 GoldenCheetah의 cp_setting / NP / IF), 라이딩 인덱스 폴더(성별,
+출생 연도), 표본 매니페스트(선수별 분할).
 """
 
 # [파일 역할] 3단계 FTP 추정 실험의 본체다. 라이딩별 특징(JSONL)을 '예측 단위'(선수, 기준일)로 묶어
@@ -95,7 +96,7 @@ LGBM_PARAMS = dict(
 )
 
 
-# ----------------------------------------------------------------------------- build
+# ----------------------------------------------------------------------------- build: 예측 단위 만들기
 
 
 # JSONL 한 줄(라이딩 하나)을 평평한 dict로 바꿔 하나씩 내보내는 생성기. load_rides()가 이것으로 DataFrame을
@@ -144,7 +145,7 @@ def load_rides(jsonl: Path) -> pd.DataFrame:
     for k in MMP_KEYS:
         col = f"mmp_{k}"
         df[col] = pd.to_numeric(df[col], errors="coerce")
-        df.loc[df[col] <= 0, col] = np.nan  # GoldenCheetah's "no value"
+        df.loc[df[col] <= 0, col] = np.nan  # GoldenCheetah의 '값 없음'(0)을 NaN으로
     return df.sort_values(["athlete", "date"]).reset_index(drop=True)
 
 
@@ -152,7 +153,7 @@ def load_rides(jsonl: Path) -> pd.DataFrame:
 # 기준일 + 28일 이후의 첫 라이딩 날짜를 다음 기준일로 고른다. 기준일을 실제 라이딩 날짜로 잡아 창의 마지막
 # 날에 항상 라이딩(=라벨을 읽을 라이딩)이 있게 한다. 호출 위치: build_units, tests/test_ftp.py.
 def reference_dates(dates: pd.Series) -> list[pd.Timestamp]:
-    """First ride date, then the first ride at least STEP_DAYS after the previous reference."""
+    """첫 라이딩 날짜, 그다음은 직전 기준일에서 STEP_DAYS 이상 지난 첫 라이딩 날짜를 기준일로 고른다."""
     refs: list[pd.Timestamp] = []
     nxt = None
     for d in dates:
@@ -183,13 +184,11 @@ def build_units(rides: pd.DataFrame, athletes: dict[str, dict], splits: dict[str
             label = last["thr"] if pd.notna(last["thr"]) else (last["cp"] if pd.notna(last["cp"]) else None)
             if label is None or not (LABEL_MIN <= label <= LABEL_MAX):
                 continue
-            # 신선도(H7용): 기준일 ±28일 안의 라이딩 중 라벨이 지금 라벨과 다른 것이 하나라도 있으면 '최근에
-            # FTP를 갱신한 선수'로 보고 fresh=True. 이 판정에는 기준일 뒤 라이딩도 쓰지만, 특징이 아니라
-            # 결과를 나눠 보는 집단 구분에만 쓰므로 예측에 정보가 새지 않는다. 처음 구현이 등록한 정의와 달라
-            # Codex 3차 검토 뒤 고쳤다(규칙 변경 5).
-            # Fresh = the athlete's FTP label changed within +-FRESH_DAYS of the reference date, i.e.
-            # some ride in that span carries a different label (rule as registered; the first draft
-            # compared the values at -28 d and after +28 d instead, Codex review 3, 2026-10-10).
+            # 신선도(H7용): 기준일 ±FRESH_DAYS(28일) 안에 선수의 FTP 라벨이 바뀌었으면, 즉 그 구간의 라이딩
+            # 중 라벨이 지금 라벨과 다른 것이 하나라도 있으면 '최근에 FTP를 갱신한 선수'로 보고 fresh=True
+            # (등록한 규칙 그대로). 이 판정에는 기준일 뒤 라이딩도 쓰지만, 특징이 아니라 결과를 나눠 보는 집단
+            # 구분에만 쓰므로 예측에 정보가 새지 않는다. 처음 구현은 등록한 정의와 달리 −28일 시점의 값과
+            # +28일 뒤의 값을 비교했고, 2026-10-10 Codex 3차 검토 뒤 고쳤다(규칙 변경 5).
             near = g[
                 (g["date"] >= ref - pd.Timedelta(days=FRESH_DAYS))
                 & (g["date"] <= ref + pd.Timedelta(days=FRESH_DAYS))
@@ -264,7 +263,7 @@ def cmd_build(features: Path, index_dir: Path, sample: Path, out: Path) -> None:
     )
 
 
-# ----------------------------------------------------------------------------- candidates
+# ----------------------------------------------------------------------------- 후보 방법
 
 # FEATURES: 모델 M1·M2가 쓰는 기본 특징 23개(MMP 16 + 훈련량·최근성 5 + 성별·나이 2). 체중은 들어 있지 않다.
 # 규칙에는 체중을 기본 특징으로 적었지만 구현은 M1b에만 넣었고, 측정 뒤에 발견해 다시 돌리지 않고 기록만
@@ -296,7 +295,7 @@ def rule_r2(u: pd.DataFrame) -> pd.Series:
 # 다섯 점에 최소제곱 직선을 맞춰 기울기를 CP로 쓴다(절편이 W'). 선형 회귀라 자유 매개변수 없이 닫힌 해가
 # 나온다.
 def rule_r3(u: pd.DataFrame) -> pd.Series:
-    """Critical power from the 2-parameter model: work = CP × t + W' over the 3–20 min bests."""
+    """3~20분 최대 평균 파워에 2변수 모델 work = CP × t + W'를 맞춰 임계 파워(CP)를 구한다."""
     out = np.full(len(u), np.nan)
     t = np.array(list(CP_FIT_KEYS.values()), dtype=float)
     p = u[[f"mmp_{k}" for k in CP_FIT_KEYS]].to_numpy(dtype=float)
@@ -317,7 +316,7 @@ def rule_r3(u: pd.DataFrame) -> pd.Series:
 # - min_train: 학습에 필요한 최소 train 단위 수. 모델은 50, 규칙은 0. 규칙에도 50을 적용했다가 작은 합성
 #   데이터에서 R1이 빠져 KeyError가 난 실수를 고친 흔적이다(docs/ai-verification.md 3단계).
 class Candidate:
-    """A rule (no fitting) or a model (fitted on train). ``min_train`` is 0 for rules."""
+    """규칙(학습 없음) 또는 모델(train으로 학습)을 나타낸다. 규칙은 ``min_train``이 0이다."""
 
     def __init__(self, name: str, needs_weight: bool = False, min_train: int = 50):
         self.name = name
@@ -325,7 +324,7 @@ class Candidate:
         self.min_train = min_train
 
     # 규칙은 학습할 것이 없으므로 기본 fit은 아무것도 하지 않는다.
-    def fit(self, train: pd.DataFrame) -> None:  # noqa: B027 - rules have nothing to fit
+    def fit(self, train: pd.DataFrame) -> None:  # noqa: B027 - 규칙은 학습할 것이 없다
         pass
 
     def predict(self, u: pd.DataFrame) -> pd.Series:
@@ -439,7 +438,7 @@ def candidates() -> list[Candidate]:
     ]
 
 
-# ----------------------------------------------------------------------------- evaluation
+# ----------------------------------------------------------------------------- 평가
 
 
 # 선수 단위 부트스트랩. 선수를 복원 추출로 다시 뽑고, 뽑힌 선수들의 오차를 모두 이어 붙여 stat(평균·중앙값
@@ -449,7 +448,7 @@ def candidates() -> list[Candidate]:
 # 닿는지 확인한다).
 # 출력: point(전체 데이터의 값), ci, n_units, n_athletes. 선수가 없으면 None을 채운 dict.
 def athlete_bootstrap(errors: pd.Series, athletes: pd.Series, stat, n=BOOTSTRAP_N, seed=SEED) -> dict:
-    """Resample athletes with replacement, then compute ``stat`` over their pooled errors."""
+    """선수를 복원 추출로 다시 뽑고, 뽑힌 선수들의 오차를 합쳐 ``stat``을 계산한다."""
     groups = {a: e.to_numpy() for a, e in errors.groupby(athletes)}
     keys = list(groups)
     if not keys:
@@ -488,7 +487,7 @@ def summarize(pred: pd.Series, u: pd.DataFrame, label: str = "label_ftp") -> dic
 # 오차|를 구한 뒤 선수 단위로 재표집해 평균을 낸다. 짝을 지으면 두 방법에 공통인 '어려운 선수' 효과가 상쇄돼
 # 차이를 더 정밀하게 잴 수 있다(규칙: 두 방법 비교는 짝지은 부트스트랩). H5(채택 후보 − R1)에 쓴다.
 def paired_mae_difference(a: pd.Series, b: pd.Series, u: pd.DataFrame, n=BOOTSTRAP_N, seed=SEED) -> dict:
-    """MAE(a) − MAE(b) on the units where both predict, athlete-paired bootstrap."""
+    """둘 다 예측한 단위에서 MAE(a) − MAE(b)를 선수 단위로 짝지은 부트스트랩으로 잰다."""
     ok = a.notna() & b.notna()
     d = (a[ok] - u.loc[ok, "label_ftp"]).abs() - (b[ok] - u.loc[ok, "label_ftp"]).abs()
     return athlete_bootstrap(d, u.loc[ok, "athlete"], np.mean, n, seed)
@@ -573,7 +572,7 @@ def evaluate(units: pd.DataFrame, split: str, adopt: str | None) -> dict:
 # '차이가 threshold 이하인가'를 구간으로 판정한다. 상한 ≤ threshold면 지지, 하한 > threshold면 기각, 구간이
 # 기준을 걸치면 판정 불가(공통 규칙의 세 가지 판정). H5에서 threshold = −5.0으로 부른다.
 def _verdict_le(diff: dict | None, threshold: float) -> str:
-    """Supported when the CI upper bound is at most ``threshold`` (difference clearly below it)."""
+    """구간 상한이 ``threshold`` 이하이면(차이가 기준보다 확실히 낮으면) 지지로 판정한다."""
     if not diff or diff["ci"][0] is None:
         return "판정 불가"
     lo, hi = diff["ci"]
@@ -587,7 +586,7 @@ def _verdict_le(diff: dict | None, threshold: float) -> str:
 # H7: 묵은 라벨 MAE − 신선 라벨 MAE의 구간. 두 집단은 서로 다른 단위라 짝지을 수 없으므로 각 집단을 독립으로
 # 선수 단위 재표집한다(규칙의 '독립 부트스트랩 차이'). 하한 ≥ 5 W면 지지, 상한 < 5 W면 기각.
 def _h7(target: pd.DataFrame, p: pd.Series, n=BOOTSTRAP_N, seed=SEED) -> dict:
-    """Stale minus fresh MAE with independent athlete resampling; returns the interval and verdict."""
+    """묵은 라벨 MAE − 신선 라벨 MAE를 집단별 독립 선수 재표집으로 재고 구간과 판정을 돌려준다."""
     err = (p - target["label_ftp"]).abs()
     fresh = err[target["fresh"] & err.notna()]
     stale = err[~target["fresh"] & err.notna()]
@@ -618,7 +617,7 @@ def _h7(target: pd.DataFrame, p: pd.Series, n=BOOTSTRAP_N, seed=SEED) -> dict:
 # MIN_RIDES가 8이라 첫 구간이 8부터). Codex 3차 검토에서 집단별 보고 누락을 지적받아 추가했다. 출생 연도가
 # 엉뚱한 선수가 있어 나이 구간은 그대로 믿을 수 없다(docs/experiments.md).
 def breakdown(pred: pd.Series, u: pd.DataFrame) -> dict:
-    """MAE by gender, by decade of age and by rides in the window (reporting only)."""
+    """성별, 나이 10년 단위, 창 안 라이딩 수별 MAE를 낸다(보고용, 판정 없음)."""
     ok = pred.notna() & u["label_ftp"].notna()
     err = (pred[ok] - u.loc[ok, "label_ftp"]).abs()
     t = u.loc[ok].assign(err=err)
@@ -698,8 +697,10 @@ def main(argv: list[str] | None = None) -> None:
     s = sub.add_parser("evaluate")
     s.add_argument("--units", type=Path, required=True)
     s.add_argument("--split", choices=["dev", "test"], required=True)
-    s.add_argument("--adopt", default=None, help="candidate chosen on dev (required for the test run)")
-    s.add_argument("--out", type=Path, required=True, help="output path without extension")
+    s.add_argument(
+        "--adopt", default=None, help="dev에서 고른 채택 후보 이름(봉인 test를 돌릴 때는 반드시 필요)"
+    )
+    s.add_argument("--out", type=Path, required=True, help="확장자를 뺀 출력 경로(.json과 .md를 쓴다)")
     a = p.parse_args(argv)
     if a.cmd == "build":
         cmd_build(a.features, a.index, a.sample, a.out)

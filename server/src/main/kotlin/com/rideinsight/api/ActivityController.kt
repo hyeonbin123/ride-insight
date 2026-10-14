@@ -42,7 +42,7 @@ class ActivityController(private val activities: ActivityService) {
         // 거절한다(ApiIntegrationTest가 every=0을 확인).
         require(every >= 1) { "'every' must be at least 1" }
         val series = activities.samples(id)
-        // Never return more than MAX_POINTS: widen the bucket (seconds) if the caller asked for too much.
+        // MAX_POINTS보다 많은 점은 절대 돌려주지 않는다: 호출자가 너무 많은 점을 요청하면 구간 폭(초)을 넓힌다.
         // 구간 번호는 floor(t / every)라, 길이(마지막 − 첫 경과 시간, 초)가 span이면 구간은 최대
         // ceil(span / every) + 1개다(양 끝이 모두 구간의 시작에 걸리는 경우). 그래서 span을 MAX_POINTS − 1로 나눠
         // 올림한 값이 상한을 지키는 최소 구간 폭이다. 처음에는 MAX_POINTS로 나눠, 1초 기록 20,000초짜리

@@ -10,11 +10,10 @@ package com.rideinsight.metrics
 // RecordingInterval은 MetricsService, ActivityService, ParityTool, ImportOpenData가 쓴다.
 
 /**
- * Time series of one ride. [secs] is ascending elapsed time; [power] is watts with missing values
- * stored as 0.0 (GoldenCheetah stores absent series as zero). [powerMissing] counts samples whose
- * power was absent in the source so callers can report the missing ratio.
+ * 라이딩 하나의 시계열. [secs]는 오름차순 경과 시간, [power]는 W 단위이며 결측값은 0.0으로 담는다
+ * (GoldenCheetah도 없는 시리즈를 0으로 저장한다). [powerMissing]은 원본에서 파워가 없던 샘플 수로, 호출하는
+ * 쪽이 결측 비율을 보고할 수 있게 한다. 기본형 배열(DoubleArray)이라 수만 개 샘플도 박싱 없이 담는다.
  */
-// 기본형 배열(DoubleArray)이라 수만 개 샘플도 박싱 없이 담는다.
 class RideSamples(
     val secs: DoubleArray,
     val power: DoubleArray,
@@ -34,19 +33,19 @@ class RideSamples(
     val isEmpty: Boolean get() = secs.isEmpty()
 }
 
-// 기록 간격 추정. 규칙: 0보다 큰 간격만 소수 둘째 자리로 반올림해 센 최빈값, 동률이면 짧은 간격.
-/** Recording interval of a ride, in seconds. */
+/** 라이딩의 기록 간격(초) 추정. 규칙: 0보다 큰 간격만 소수 둘째 자리로 반올림해 센 최빈값, 동률이면 짧은 간격. */
 object RecordingInterval {
     /**
-     * Mode of consecutive time deltas rounded to two decimals. Returns null for fewer than two
-     * samples or when every delta is zero. GoldenCheetah stores one interval per file; the
-     * OpenData CSV does not carry it, so this estimate stands in for it.
+     * 연속한 시각 차이를 소수 둘째 자리로 반올림한 값의 최빈값. 샘플이 2개 미만이거나 모든 차이가 0이면
+     * null. GoldenCheetah는 파일마다 기록 간격 하나를 저장하지만 OpenData CSV에는 그 값이 없어서, 이 추정값으로
+     * 대신한다.
      */
     fun estimate(secs: DoubleArray): Double? = analyse(secs)?.intervalSecs
 
-    // modeShare(최빈 간격이 양수 간격 중 차지하는 비율)가 0.9 미만이면 흔들리는 타임스탬프로 보고한다(1단계
-    // 규칙). 활동 테이블에는 interval_share로 저장된다.
-    /** The estimated interval and the share of positive deltas equal to it (1.0 = perfectly regular). */
+    /**
+     * 추정한 간격과, 양수 간격 중 그 간격과 같은 것의 비율 modeShare(1.0이면 완전히 규칙적). modeShare가
+     * 0.9 미만이면 흔들리는 타임스탬프로 보고한다(1단계 규칙). 활동 테이블에는 interval_share로 저장된다.
+     */
     class Estimate(val intervalSecs: Double, val modeShare: Double)
 
     // 간격을 0.01초 단위 정수(Math.round(delta × 100))로 바꿔 세면 부동소수 오차 없이 같은 간격끼리 모인다. 0

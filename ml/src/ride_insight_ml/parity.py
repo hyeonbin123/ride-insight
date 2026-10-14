@@ -1,7 +1,7 @@
-"""Analyse the stage-1 parity JSONL written by the Kotlin ``parity`` tool (docs/experiments.md).
+"""Kotlin ``parity`` 도구가 쓴 1단계 파리티 JSONL을 분석한다(docs/experiments.md).
 
-Usage: ``python -m ride_insight_ml.parity --jsonl ../reports/parity/dev.jsonl --out ../reports/parity/dev``
-writes ``<out>.json`` (all numbers) and ``<out>.md`` (summary table).
+사용법: ``python -m ride_insight_ml.parity --jsonl ../reports/parity/dev.jsonl --out ../reports/parity/dev``
+실행하면 ``<out>.json``(모든 수치)과 ``<out>.md``(요약 표)를 쓴다.
 """
 
 # [파일 역할] 1단계(지표 구현의 정확성) 판정 스크립트. Kotlin parity 도구(ParityTool.kt)가 라이딩마다 '우리
@@ -79,9 +79,7 @@ def load(jsonl: Path) -> pd.DataFrame:
     # 규칙 변경 2: GC가 IF에 실제로 쓴 임계값 = NP / IF로 역산한다(thr_gc). 이 값으로 우리 NP에서 TSS를 다시
     # 계산해(tss_ours_thr) GC TSS와 비교한다. TSS = 시간(h) × IF² × 100이고 IF = NP / 임계값이므로 100 × hours
     # × (NP / thr)²가 같은 식이다. 시간은 샘플 수 × 기록 간격(GC의 'NP × 샘플 수 × recIntSecs' 정의와 같은
-    # 기준).
-    # Threshold GoldenCheetah actually used for IF/TSS (rule change 2): NP / IF. It is the zone FTP,
-    # which can differ from cp_setting (the zone CP).
+    # 기준). 이 임계값은 존 설정의 FTP라서 cp_setting(존 설정의 CP)과 다를 수 있다.
     np_gc = pd.to_numeric(df["np_gc"], errors="coerce")
     if_gc = pd.to_numeric(df["if_gc"], errors="coerce")
     df["thr_gc"] = np.where(if_gc > 0, np_gc / if_gc, np.nan)
@@ -90,9 +88,8 @@ def load(jsonl: Path) -> pd.DataFrame:
     df["tss_ours_thr"] = np.where(df["thr_gc"] > 0, 100.0 * hours * (np_ours / df["thr_gc"]) ** 2, np.nan)
     # cp_setting과 GC 임계값이 1 W 넘게 다른 라이딩 표시(보고용, 3단계 라벨 정의의 근거가 됐다).
     df["cp_differs"] = (df["cp"] - df["thr_gc"]).abs() > 1.0
-    # 규칙 변경 3: GC TSS가 정확히 정수(1e-6 안)면 사용자가 직접 입력한 값으로 보고 H3에서 뺀다.
-    # Rule change 3: an exactly integer coggan_tss is almost always a manual override typed by the
-    # athlete (170 of 172 integer values in the development set disagreed with the computed TSS).
+    # 규칙 변경 3: GC TSS(coggan_tss)가 정확히 정수(1e-6 안)면 선수가 직접 입력해 덮어쓴 값으로 보고 H3에서
+    # 뺀다. 개발 세트에서 정수 값 172개 중 170개가 계산한 TSS와 어긋나, 정수 TSS는 거의 항상 수동 입력이었다.
     tss_gc = pd.to_numeric(df["tss_gc"], errors="coerce")
     df["tss_gc_integer"] = tss_gc.notna() & ((tss_gc - tss_gc.round()).abs() < 1e-6)
     # jitter: 최빈 간격이 전체 양수 간격의 90% 미만이면 '타임스탬프가 흔들리는 라이딩'(규칙의 보고 항목).
@@ -109,8 +106,8 @@ def load(jsonl: Path) -> pd.DataFrame:
 # 다 0인 쌍을 불일치로 셌다(2026-10-13 수정, docs/experiments.md 규칙 변경 9).
 # 호출 위치: analyse, tests/test_parity.py.
 def agree(ours: pd.Series, theirs: pd.Series, tol: float) -> pd.Series:
-    """Agreement per row: both absent (None/NaN or 0, on either side) counts as agreement; one side
-    absent as not. Both implementations write 0 for "no value" (e.g. the 3000 W PeakPower guard)."""
+    """행마다 일치 여부를 낸다. 양쪽 모두 값이 없으면(어느 쪽이든 None/NaN 또는 0) 일치, 한쪽만
+    없으면 불일치다. 두 구현 모두 '값 없음'에 0을 쓴다(예: PeakPower의 3000 W 가드)."""
     o = pd.to_numeric(ours, errors="coerce")
     t = pd.to_numeric(theirs, errors="coerce")
     t_absent = t.isna() | (t == 0.0)
@@ -173,9 +170,8 @@ def analyse(df: pd.DataFrame) -> dict:
     one_s = df[df["interval_group"] == "1s"]
     other = df[df["interval_group"] != "1s"]
     # 규칙 변경 4: GC에 IF는 있는데 TSS가 없거나 0인 라이딩은 H3에서 뺀다(계산 차이가 아니라 GC가 TSS를
-    # 저장하지 않은 것). with_cp는 이름과 달리 cp_setting이 아니라 GC 임계값(thr_gc)이 있는 라이딩을 뜻한다.
-    # Rule change 4: GC has IF but no TSS for some rides (745 of 31,703 in the development set, 13
-    # athletes); that is a GoldenCheetah storage artefact, not a computation difference.
+    # 저장하지 않은 것). 개발 세트에서는 라이딩 31,703개 중 745개(선수 13명)가 그랬다. with_cp는 이름과 달리
+    # cp_setting이 아니라 GC 임계값(thr_gc)이 있는 라이딩을 뜻한다.
     tss_gc_present = pd.to_numeric(one_s["tss_gc"], errors="coerce").fillna(0.0) != 0.0
     with_cp = one_s[one_s["thr_gc"].notna() & ~one_s["tss_gc_integer"] & tss_gc_present]
 
@@ -190,7 +186,7 @@ def analyse(df: pd.DataFrame) -> dict:
     mmp_pairs = pd.concat(
         [agree(one_s[f"mmp_ours_{k}"], one_s[f"mmp_gc_{k}"], TOL_WATTS) for k in mmp_keys], ignore_index=True
     )
-    # Ride-level resampling for MMP: resample rides, then count all 16 pairs of each ride.
+    # MMP는 라이딩 단위로 재표집한다: 라이딩을 다시 뽑고, 뽑힌 라이딩의 16쌍을 모두 센다.
     per_ride_mmp = pd.concat(
         [agree(one_s[f"mmp_ours_{k}"], one_s[f"mmp_gc_{k}"], TOL_WATTS) for k in mmp_keys], axis=1
     )
@@ -340,7 +336,7 @@ def to_markdown(r: dict, title: str) -> str:
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--jsonl", type=Path, required=True)
-    p.add_argument("--out", type=Path, required=True, help="output path without extension")
+    p.add_argument("--out", type=Path, required=True, help="확장자를 뺀 출력 경로(.json과 .md를 쓴다)")
     a = p.parse_args(argv)
     df = load(a.jsonl)
     result = analyse(df)

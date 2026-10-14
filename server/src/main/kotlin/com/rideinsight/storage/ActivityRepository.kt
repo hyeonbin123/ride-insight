@@ -166,8 +166,7 @@ class ActivityRepository(private val jdbc: JdbcClient) {
             """,
         ).params(listOf(athleteId, before, before, limit)).query(::mapActivity).list()
 
-    // FTP 변경 뒤 재계산 대상: 시작 시각이 from 이후인 활동, 오래된 순.
-    /** Activities that started at or after [from], oldest first; used to recompute TSS. */
+    /** 시작 시각이 [from] 이후(같은 시각 포함)인 활동을 오래된 순으로 돌려준다. FTP 변경 뒤 TSS 재계산 대상이다. */
     fun listFrom(athleteId: UUID, from: OffsetDateTime): List<ActivityRow> =
         jdbc.sql("select * from activity where athlete_id = ? and started_at >= ? order by started_at")
             .params(athleteId, from).query(::mapActivity).list()
@@ -205,7 +204,7 @@ class ActivityRepository(private val jdbc: JdbcClient) {
 
     // PMC 입력: 날짜(UTC)별 TSS 합. TSS가 없는 활동(FTP 미등록, 파워 없음)은 빠진다. 시작 시각을 at time zone
     // 'UTC'로 바꾼 뒤 날짜로 잘라 DB 세션 시간대와 상관없이 같은 날짜가 나온다.
-    /** Daily TSS totals (UTC dates) between two dates inclusive. */
+    /** 두 날짜 사이(양 끝 포함)의 날짜(UTC)별 TSS 합. */
     fun dailyTss(athleteId: UUID, from: java.time.LocalDate, to: java.time.LocalDate): Map<java.time.LocalDate, Double> =
         jdbc.sql(
             """
@@ -219,14 +218,12 @@ class ActivityRepository(private val jdbc: JdbcClient) {
             .query { rs, _ -> rs.getObject("day", java.time.LocalDate::class.java) to rs.getDouble("tss") }
             .list().toMap()
 
-    // 기간 [from, to) 안에 시작한 파워 활동 수(FTP 추정 근거의 라이딩 수).
-    /** Activities with power started in [from, to). */
+    /** 기간 [from, to) 안에 시작한 파워 활동 수(FTP 추정 근거의 라이딩 수). */
     fun countPowerActivities(athleteId: UUID, from: OffsetDateTime, to: OffsetDateTime): Int =
         jdbc.sql("select count(*) from activity where athlete_id = ? and has_power and started_at >= ? and started_at < ?")
             .params(athleteId, from, to).query(Long::class.java).single().toInt()
 
-    // 선수의 첫 활동 날짜(UTC). 훈련 부하 워밍업의 시작점이다.
-    /** UTC date of the athlete's earliest activity, or null. */
+    /** 선수의 첫 활동 날짜(UTC). 활동이 없으면 null. 훈련 부하 워밍업의 시작점이다. */
     fun firstActivityDate(athleteId: UUID): java.time.LocalDate? =
         jdbc.sql("select min((started_at at time zone 'UTC')::date) from activity where athlete_id = ?")
             .param(athleteId).query(java.time.LocalDate::class.java).optional().orElse(null)
@@ -234,7 +231,7 @@ class ActivityRepository(private val jdbc: JdbcClient) {
     // 기간 최대 파워 커브: 기간 [from, to) 안 활동들의 mmp jsonb를 jsonb_each로 (키, 값) 행으로 펼쳐 키별
     // 최댓값을 구한다. 값이 null인 구간은 jsonb_typeof = 'number' 조건으로 걸러진다. jsonb 숫자는 text를 거쳐
     // double precision으로 바꾼다.
-    /** Per-window maximum of the stored MMP values over activities started in [from, to). */
+    /** 기간 [from, to) 안에 시작한 활동들에 저장된 MMP 값의 구간별 최댓값. */
     fun maxMmp(athleteId: UUID, from: OffsetDateTime, to: OffsetDateTime): Map<String, Double> =
         jdbc.sql(
             """
@@ -279,6 +276,6 @@ class ActivityRepository(private val jdbc: JdbcClient) {
         averagePower = rs.doubleOrNull("average_power"),
         maxPower = rs.intOrNull("max_power"),
         workKj = rs.doubleOrNull("work_kj"),
-        mmp = emptyMap(), // parsed from the JSON text by the service layer
+        mmp = emptyMap(), // JSON 텍스트는 서비스 계층이 해석해 채운다
     )
 }

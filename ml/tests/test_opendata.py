@@ -18,7 +18,7 @@ def test_split_is_deterministic_and_covers_all_sets():
     splits = [opendata.split_of(i) for i in ids]
     assert splits == [opendata.split_of(i) for i in ids]
     counts = {s: splits.count(s) for s in ("train", "dev", "test")}
-    # 60/20/20 within a loose tolerance for 2000 ids
+    # id 2,000개에서 넉넉한 허용 범위 안의 60/20/20
     assert 1100 < counts["train"] < 1300
     assert 300 < counts["dev"] < 500
     assert 300 < counts["test"] < 500
@@ -42,7 +42,7 @@ def test_choose_sample_is_order_independent_and_respects_cap():
 # 해시 순서 앞쪽 300명을 뽑았을 때 train·dev·test가 모두 나와야 한다. 표본 순서와 분할이 같은 해시를 쓰면
 # 앞쪽이 전부 train이 되는 실제 버그의 회귀 테스트다.
 def test_sampled_athletes_spread_over_all_splits():
-    # Sampling order and split must not share a hash, otherwise a prefix sample is all 'train'.
+    # 표본 순서와 분할은 해시를 같이 쓰면 안 된다. 같이 쓰면 앞에서부터 뽑은 표본이 전부 'train'이 된다.
     files = [{"name": f"{i:032x}.zip", "size": 1, "kind": "file"} for i in range(3000)]
     picked = opendata.choose_sample(files, 300, None)
     splits = {opendata.split_of(opendata.athlete_id_from_name(f["name"])) for f in picked}
@@ -121,7 +121,7 @@ def test_cp_changes_are_counted_in_date_order(tmp_path: Path):
     def ride(date, cp):
         return {"date": date, "sport": "Bike", "METRICS": {"average_power": "150", "cp_setting": cp}}
 
-    # Stored out of order: Jan 1 (200), Jan 3 (210), Jan 2 (200) -> one change in time order.
+    # 저장 순서가 1월 1일(200), 1월 3일(210), 1월 2일(200)로 뒤섞여 있다 -> 날짜순으로는 변경 1회.
     rides = [
         ride("2020/01/01 10:00:00 UTC", "200.00000"),
         ride("2020/01/03 10:00:00 UTC", "210.00000"),

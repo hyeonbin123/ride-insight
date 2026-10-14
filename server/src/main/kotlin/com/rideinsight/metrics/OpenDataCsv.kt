@@ -11,32 +11,32 @@ package com.rideinsight.metrics
 import java.io.BufferedReader
 
 /**
- * Reader for GoldenCheetah OpenData ride CSV files (`secs,km,power,hr,cad,alt`).
+ * GoldenCheetah OpenData 라이딩 CSV 파일(`secs,km,power,hr,cad,alt`)을 읽는다.
  *
- * - blank or non-finite power cells become 0.0 and are counted in [RideSamples.powerMissing]
- * - rows whose `secs` is missing, non-finite or earlier than the previous row are skipped and
- *   counted in [Result.badRows]
- * - rows whose `secs` equals the previous row are kept (GoldenCheetah keeps them too) and counted
- *   in [Result.duplicateRows] so callers can report them
- * - more than [maxRows] rows is rejected to bound memory on hostile or corrupt input
- * - the other series (heart rate, cadence, distance, altitude) are kept as nullable lists in
- *   [Result.extras] for storage; they do not influence the power metrics
+ * - 비었거나 유한하지 않은 파워 칸은 0.0이 되고 [RideSamples.powerMissing]에 세어진다
+ * - `secs`가 없거나 유한하지 않거나 직전 행보다 작은 행은 건너뛰고 [Result.badRows]에 센다
+ * - `secs`가 직전 행과 같은 행은 그대로 둔다(GoldenCheetah도 남긴다). 호출하는 쪽이 보고할 수 있도록
+ *   [Result.duplicateRows]에 센다
+ * - 행이 [maxRows]개를 넘으면 거절해, 악의적이거나 손상된 입력에도 메모리 사용이 한정되게 한다
+ * - 나머지 시리즈(심박, 케이던스, 거리, 고도)는 저장용으로 [Result.extras]에 nullable 리스트로 남긴다.
+ *   파워 지표에는 영향을 주지 않는다
  */
 object OpenDataCsv {
     // 행 수 상한 100만. 1초 기록이면 약 278시간 분량이라 정상 라이딩은 넉넉히 들어가고, 손상되거나 조작된
     // 파일이 메모리를 끝없이 쓰지 못하게 한다(Codex 1차 검토 지적 8).
     const val DEFAULT_MAX_ROWS = 1_000_000
 
-    // DB smallint 컬럼(최대 32,767)에 넣을 값의 상한. 넘는 값은 센서 오류로 보고 저장할 때 null로 둔다(Codex
-    // 2차 검토 지적 3).
-    /** Values stored in smallint columns; larger readings are sensor garbage and become null. */
+    /**
+     * DB smallint 컬럼(최대 32,767)에 넣을 값의 상한. 넘는 값은 센서가 낸 쓰레기 값으로 보고 저장할 때 null로
+     * 둔다(Codex 2차 검토 지적 3).
+     */
     const val SMALLINT_MAX = 32_000
 
     // 저장용 시리즈. 지표 입력(RideSamples.power)은 결측을 0으로 채우지만, 저장할 파워(powerNullable)는
     // 결측을 null로 남긴다(Codex 2차 검토 지적 8: 처음에는 결측 파워를 0 W로 저장했다). 다른 시리즈는 값이
     // 하나도 없으면 null이다.
     class Extras(
-        /** Power with missing cells as null (the metric input in [RideSamples] uses 0 instead). */
+        /** 빈 칸을 null로 둔 파워(지표 입력인 [RideSamples]는 대신 0을 쓴다). */
         val powerNullable: List<Int?>,
         val heartRate: List<Int?>?,
         val cadence: List<Int?>?,

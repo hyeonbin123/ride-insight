@@ -18,8 +18,8 @@ import tools.jackson.databind.JsonNode
 import tools.jackson.databind.json.JsonMapper
 
 /**
- * Compares the Kotlin decoder with python-fitparse (MIT) on the sample files under
- * src/test/resources/fit. The reference JSON is produced by `python -m ride_insight_ml.fit_expected`.
+ * src/test/resources/fit의 샘플 파일로 Kotlin 디코더 결과를 python-fitparse(MIT)와 대조한다. 기준 JSON은
+ * `python -m ride_insight_ml.fit_expected`가 만든다.
  */
 class FitDecoderTest {
     private val mapper = JsonMapper.builder().build()
@@ -160,8 +160,8 @@ class FitDecoderTest {
     // 거절되면 된다. 다른 예외 형이면 실패다.
     @Test
     fun `misaligned developer fields are either decoded or rejected cleanly`() {
-        // python-fitparse raises FitParseError on this Coros file; we accept either outcome but no
-        // other exception type.
+        // python-fitparse는 이 Coros 파일에서 FitParseError를 낸다. 우리는 두 결과(디코딩 성공, FitDecodeException)
+        // 모두 받아들이지만 다른 예외 형은 받아들이지 않는다.
         try {
             val act = FitActivity.decode(bytes("coros-pace-2-cycling-misaligned-fields"))
             assertTrue(act.records.isNotEmpty())
@@ -178,11 +178,11 @@ class FitDecoderTest {
         assertTrue(FitActivity.decode(good).crcValid)
         val tampered = good.copyOf()
         tampered[tampered.size / 2] = (tampered[tampered.size / 2] + 1).toByte()
-        // Flipping a data byte either breaks the structure (exception) or only the CRC.
+        // 데이터 바이트 하나를 바꾸면 구조가 깨지거나(예외) CRC만 틀린다.
         try {
             assertTrue(!FitActivity.decode(tampered).crcValid)
         } catch (_: FitDecodeException) {
-            // acceptable
+            // 구조 오류 예외도 허용한다
         }
     }
 

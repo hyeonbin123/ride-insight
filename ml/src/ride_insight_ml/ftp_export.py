@@ -1,12 +1,12 @@
-"""Export a LightGBM FTP model as `dump_model()` JSON plus reference predictions for the Kotlin tests.
+"""LightGBM FTP 모델을 `dump_model()` JSON으로 내보내고 Kotlin 테스트용 기준 예측을 함께 쓴다.
 
-Usage:
+사용법:
   python -m ride_insight_ml.ftp_export --units <units.parquet> --variant M1
       --out-model <model.json> --out-cases <cases.json>
-  python -m ride_insight_ml.ftp_export --synthetic --out-model ... --out-cases ...   (unit-test fixture)
+  python -m ride_insight_ml.ftp_export --synthetic --out-model ... --out-cases ...   (단위 테스트 고정 자료)
 
-The cases file holds up to 100 feature rows (dev split when available) with the Python prediction, so
-`LightGbmModelTest` can check that the Kotlin tree walker reproduces them within 1e-6.
+사례 파일에는 특징 행 최대 100개(있으면 dev 분할)와 그 Python 예측이 들어 있다.
+`LightGbmModelTest`가 이것으로 Kotlin 트리 순회 추론기가 그 예측을 1e-6 안에서 재현하는지 확인한다.
 """
 
 # [파일 역할] 학습한 LightGBM FTP 모델을 dump_model() JSON으로 내보내고, 같은 입력에 대한 Python 예측을 '정답
@@ -80,7 +80,7 @@ def main(argv: list[str] | None = None) -> None:
         rng = np.random.default_rng(0)
         n = 400
         x = pd.DataFrame({"a": rng.normal(size=n), "b": rng.uniform(size=n), "c": rng.normal(size=n)})
-        x.loc[rng.random(n) < 0.1, "c"] = np.nan  # missing values exercise the NaN branch
+        x.loc[rng.random(n) < 0.1, "c"] = np.nan  # 결측값으로 NaN 분기를 시험한다
         y = 3 * x["a"] + 2 * x["b"] + x["c"].fillna(0) + rng.normal(scale=0.1, size=n)
         model = lgb.LGBMRegressor(
             n_estimators=30, num_leaves=7, learning_rate=0.2, min_child_samples=5, verbose=-1, random_state=0

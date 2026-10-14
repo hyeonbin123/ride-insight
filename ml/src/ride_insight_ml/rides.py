@@ -1,15 +1,14 @@
-"""Match OpenData ride metadata to the CSV files inside an athlete zip and write a ride index.
+"""선수 zip 안의 OpenData 라이딩 메타데이터를 CSV 파일과 짝짓고 라이딩 인덱스를 쓴다.
 
-The metadata ``date`` is UTC while CSV file names carry the device's local time, so names match
-directly for only a minority of rides (203 of 731 for the first athlete inspected). A ride is
-matched to the CSV whose timestamp differs by a multiple of 15 minutes within ±14 h **and**
-whose last ``secs`` agrees with the ride's ``workout_time`` (within 60 s or 2 %). Rides with
-several such candidates are left unmatched and counted as ambiguous.
+메타데이터의 ``date``는 UTC인데 CSV 파일 이름은 기기의 현지 시각이라, 이름이 그대로 맞는 라이딩은
+일부뿐이다(처음 살펴본 선수에서 731개 중 203개). 라이딩은 타임스탬프 차이가 ±14시간 안의 15분
+배수이고 **동시에** 마지막 ``secs``가 라이딩의 ``workout_time``과 맞는(60초 또는 2% 안) CSV와
+짝짓는다. 그런 후보가 여럿인 라이딩은 짝짓지 않고 '모호'로 센다.
 
-The ``data`` field of a ride is a flag string such as ``TDSPHC-AGL-----``; ``P`` at index 3 means
-the ride carries power samples.
+라이딩의 ``data`` 필드는 ``TDSPHC-AGL-----`` 같은 플래그 문자열이다. 인덱스 3의 글자가 ``P``이면
+그 라이딩에 파워 샘플이 있다는 뜻이다.
 
-Usage: ``python -m ride_insight_ml.rides --zips ../data/opendata --out ../data/opendata_index [--ids file]``
+사용법: ``python -m ride_insight_ml.rides --zips ../data/opendata --out ../data/opendata_index [--ids file]``
 """
 
 # [파일 역할] 선수 zip 안의 라이딩 메타데이터(JSON)와 초 단위 CSV를 짝지어 선수별 '라이딩 인덱스' JSON을
@@ -105,7 +104,7 @@ def has_power_flag(flags: str | None) -> bool:
 # 있거나(행 2개 미만) 숫자가 아니거나 유한하지 않으면 None. splitlines()가 모든 줄의 목록을 한 번 만든다(예전
 # docstring의 'without building a list'는 틀린 설명이라 고쳤다).
 def last_secs_of_csv(text: str) -> float | None:
-    """``secs`` of the last non-empty data row; None for a header-only file or a non-finite value."""
+    """비어 있지 않은 마지막 데이터 행의 ``secs``. 헤더만 있는 파일이나 유한하지 않은 값이면 None."""
     last = None
     rows = 0
     for line in text.splitlines():
@@ -125,7 +124,7 @@ def last_secs_of_csv(text: str) -> float | None:
 # 항목(date, sport, flags, power_flag, csv, offset_secs, match, gc 값)과 집계(matched, ambiguous, unmatched,
 # no_data). 호출 위치: index_zip, tests/test_rides.py.
 def match_rides(rides: list[dict], csv_last_secs: dict[str, float | None]) -> tuple[list[dict], dict]:
-    """Return (ride entries, counters). Each entry has ``csv`` (name or None) and ``match``."""
+    """(라이딩 항목, 집계)를 돌려준다. 항목마다 ``csv``(파일 이름 또는 None)와 ``match``가 있다."""
     csv_times = {n: t for n in csv_last_secs if (t := parse_csv_name(n)) is not None}
     entries: list[dict] = []
     counters = {"matched": 0, "ambiguous": 0, "unmatched": 0, "no_data": 0}
@@ -216,7 +215,7 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--zips", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True)
-    p.add_argument("--ids", type=Path, default=None, help="optional file with one athlete id per line")
+    p.add_argument("--ids", type=Path, default=None, help="처리할 선수 id를 한 줄에 하나씩 적은 파일(선택)")
     a = p.parse_args(argv)
     a.out.mkdir(parents=True, exist_ok=True)
     ids = None

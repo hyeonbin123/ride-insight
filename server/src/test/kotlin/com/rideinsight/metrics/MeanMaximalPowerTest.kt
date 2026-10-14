@@ -40,7 +40,7 @@ class MeanMaximalPowerTest {
     fun `ride shorter than the window has no value`() {
         val r = ride(100.0, 200.0, 300.0)
         assertNull(MeanMaximalPower.best(r, 1.0, 4.0))
-        // Total length is last.secs + recIntSecs = 3 s, so a 3 s window still fits.
+        // 전체 길이는 last.secs + recIntSecs = 3초라 3초 구간은 아직 들어간다.
         close(200.0, MeanMaximalPower.best(r, 1.0, 3.0))
         assertNull(MeanMaximalPower.best(RideSamples(DoubleArray(0), DoubleArray(0)), 1.0, 1.0))
     }
@@ -48,7 +48,7 @@ class MeanMaximalPowerTest {
     // 5초 기록: 샘플 하나가 5초를 대표하므로 10초 구간 = 샘플 2개, 25초는 라이딩(20초)보다 길어 null.
     @Test
     fun `five second recording weights each sample by the interval`() {
-        // 4 samples at 5 s = 20 s of riding. 10 s window = 2 samples.
+        // 5초 간격 샘플 4개 = 20초 라이딩. 10초 구간 = 샘플 2개.
         val r = ride(100.0, 300.0, 200.0, 100.0, interval = 5.0)
         close(250.0, MeanMaximalPower.best(r, 5.0, 10.0))
         close(200.0, MeanMaximalPower.best(r, 5.0, 15.0))
@@ -60,14 +60,14 @@ class MeanMaximalPowerTest {
     // 기대값은 처음에 '4개 샘플 모두가 한 창에 든다'고 잘못 적었던 부분이다.
     @Test
     fun `gaps make the window cover fewer samples and lower the average`() {
-        // A 10 s pause between the 2nd and 3rd sample: duration counts wall time, sum counts samples.
+        // 2번째와 3번째 샘플 사이에 10초 멈춤: 지속 시간은 벽시계 시간을, 합은 샘플을 센다.
         val r = RideSamples(doubleArrayOf(0.0, 1.0, 11.0, 12.0), doubleArrayOf(300.0, 300.0, 300.0, 300.0))
-        // 2 s window: consecutive pairs give 300; the pair (1, 11) has duration 11 and is evicted.
+        // 2초 구간: 연속한 쌍은 300이 된다. (1, 11) 쌍은 지속 시간이 11이라 밀려난다.
         close(300.0, MeanMaximalPower.best(r, 1.0, 2.0))
-        // 12 s window: windows must have duration in [12, 13), so {0, 1, 11} (duration 12) qualifies
-        // and {0, 1, 11, 12} (duration 13) is evicted down to {1, 11, 12}. Average = 3 × 300 / 12.
+        // 12초 구간: 창의 지속 시간이 [12, 13) 안이어야 하므로 {0, 1, 11}(지속 시간 12)은 후보가 되고,
+        // {0, 1, 11, 12}(지속 시간 13)는 앞이 밀려나 {1, 11, 12}가 된다. 평균 = 3 × 300 / 12.
         close(75.0, MeanMaximalPower.best(r, 1.0, 12.0))
-        // 13 s window: nothing shorter than 14 s spans 13 s here except the whole ride (duration 13).
+        // 13초 구간: 여기서 14초보다 짧으면서 13초를 덮는 창은 라이딩 전체(지속 시간 13)뿐이다.
         close(4 * 300.0 / 13.0, MeanMaximalPower.best(r, 1.0, 13.0))
     }
 
@@ -77,24 +77,23 @@ class MeanMaximalPowerTest {
         val r = ride(3500.0, 3500.0)
         assertEquals(0.0, MeanMaximalPower.peakPower(r, 1.0, 1.0))
         close(2999.0, MeanMaximalPower.peakPower(ride(2999.0, 2999.0), 1.0, 1.0))
-        // GoldenCheetah keeps only averages strictly below 3000 W.
+        // GoldenCheetah는 3000 W보다 엄격히 작은 평균만 남긴다.
         assertEquals(0.0, MeanMaximalPower.peakPower(ride(3000.0, 3000.0), 1.0, 1.0))
     }
 
     // Codex 1차 검토가 제안한 경계 입력: 첫 샘플이 최고, 샘플 하나, 중복 시각(GC처럼 합이 됨), 1.26초 간격.
     @Test
     fun `edge inputs from the Codex review`() {
-        // Best window at the very first sample.
+        // 최고 창이 맨 첫 샘플에 있다.
         close(400.0, MeanMaximalPower.best(ride(400.0, 100.0), 1.0, 1.0))
-        // A single sample covers exactly one recording interval.
+        // 샘플 하나는 정확히 기록 간격 하나만큼을 덮는다.
         close(200.0, MeanMaximalPower.best(ride(200.0), 1.0, 1.0))
         assertNull(MeanMaximalPower.best(ride(200.0), 1.0, 2.0))
-        // Duplicate timestamps: two samples at 0 s span one interval, so the 1 s "average" is their
-        // sum. This matches GoldenCheetah's window rule; the CSV reader counts such rows so they can
-        // be reported rather than silently trusted.
+        // 중복 시각: 0초에 있는 샘플 두 개가 간격 하나를 덮으므로 1초 "평균"은 두 값의 합이 된다.
+        // GoldenCheetah의 창 규칙과 같다. CSV 리더는 이런 행을 세어 두어, 조용히 믿지 않고 보고할 수 있게 한다.
         val dup = RideSamples(doubleArrayOf(0.0, 0.0, 1.0), doubleArrayOf(200.0, 200.0, 200.0))
         close(400.0, MeanMaximalPower.best(dup, 1.0, 1.0))
-        // Fractional recording interval: 4 samples at 1.26 s span 5.04 s; a 5 s window needs all four.
+        // 소수 기록 간격: 1.26초 간격 샘플 4개는 5.04초를 덮는다. 5초 구간에는 네 개가 모두 필요하다.
         val frac = ride(100.0, 200.0, 300.0, 400.0, interval = 1.26)
         close(1000.0 * 1.26 / 5.04, MeanMaximalPower.best(frac, 1.26, 5.0))
     }

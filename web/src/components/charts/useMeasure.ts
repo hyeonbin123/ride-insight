@@ -5,9 +5,11 @@
 
 import { useEffect, useRef, useState } from "react";
 
-// 반환값: [요소에 붙일 ref, 현재 폭(px)]. 첫 렌더에서는 아직 요소가 없어 폭이 0이므로, 차트 쪽은
-// Math.max(width, 320)으로 최소 폭을 보장한다.
-/** Width of a container element, updated on resize (for responsive SVG charts). */
+/**
+ * 감싸는 요소의 폭. 크기가 바뀌면 다시 잰다(반응형 SVG 차트용).
+ * 반환값: [요소에 붙일 ref, 현재 폭(px)]. 첫 렌더에서는 아직 요소가 없어 폭이 0이므로, 차트 쪽은
+ * Math.max(width, 320)으로 최소 폭을 보장한다.
+ */
 export function useMeasure<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
   const ref = useRef<T | null>(null);
   const [width, setWidth] = useState(0);

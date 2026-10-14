@@ -17,15 +17,17 @@ import { formatDate, formatDuration, formatNumber, formatWatts, windowLabel } fr
 // 이름이다.
 const WINDOWS = ["5s_critical_power", "1m_critical_power", "5m_critical_power", "20m_critical_power", "60m_critical_power"];
 
-/** One ride: metrics, power/heart-rate trace, and its power curve against the recent best. */
-// 주소의 :id로 활동을 찾는다. 시계열·커브 요청은 활동 요약과 동시에 나가고, 비교 커브만 활동 요약(소유 선수,
-// 날짜)이 온 뒤에 나간다(enabled 조건).
+/**
+ * 라이딩 하나: 지표, 파워·심박 그래프, 최근 최고 기록과 비교한 파워 커브.
+ * 주소의 :id로 활동을 찾는다. 시계열·커브 요청은 활동 요약과 동시에 나가고, 비교 커브만 활동 요약(소유 선수,
+ * 날짜)이 온 뒤에 나간다(enabled 조건).
+ */
 export function ActivityPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const activity = useQuery({ queryKey: ["activity", id], queryFn: () => api.getActivity(id) });
-  // The comparison curve belongs to the ride's owner, not to the athlete selected in the header.
+  // 비교 커브는 메뉴바에서 고른 선수가 아니라 이 라이딩의 주인 선수의 것이다.
   const athleteId = activity.data?.athleteId;
   // 시계열은 every=1(가능한 최고 해상도)로 요청한다. 긴 라이딩은 서버가 20,000점을 넘지 않도록 간격을 키워
   // 돌려준다.

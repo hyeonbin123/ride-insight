@@ -1,11 +1,11 @@
-"""Stage-5 load check (docs/experiments.md): concurrent FIT uploads and reads against a running server.
+"""5단계 부하 시험(docs/experiments.md): 실행 중인 서버에 FIT 업로드와 조회를 동시에 보낸다.
 
-Usage: ``python -m ride_insight_ml.load --target http://127.0.0.1:8080 --fit <file.fit> --out <report.json>``
+사용법: ``python -m ride_insight_ml.load --target http://127.0.0.1:8080 --fit <file.fit> --out <report.json>``
 
-Scenario (pre-registered): 10 athletes are created; the same FIT file is uploaded to all 10 at once,
-three rounds (every round a fresh set of athletes, because a repeat upload would be a 409); then 20
-concurrent reads of ``samples?every=1`` and ``power-curve`` on the uploaded activities. Reports p50
-and p95 latency per phase and the count of non-2xx responses. No verdict except "no 5xx".
+시나리오(미리 등록함): 선수 10명을 만들고 같은 FIT 파일을 10명 모두에게 한꺼번에 올리기를 3회 한다
+(같은 파일을 다시 올리면 409가 되므로 회차마다 새 선수를 만든다). 그다음 올라간 활동에
+``samples?every=1``과 ``power-curve`` 조회를 20개 동시에 보낸다. 단계별 p50·p95 지연 시간과
+2xx가 아닌 응답 수를 보고한다. 판정은 "5xx 없음" 하나뿐이다.
 """
 
 # [파일 역할] 5단계 부하 시험 스크립트. 실행 중인 서버에 같은 FIT 파일을 동시에 올리고(10개 × 3회), 올라간

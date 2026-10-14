@@ -1,15 +1,15 @@
-"""GoldenCheetah OpenData (OSF osf.io/6hfpz, CC0 1.0) sampling, download and inventory.
+"""GoldenCheetah OpenData(OSF osf.io/6hfpz, CC0 1.0)의 표본 추출, 다운로드, 요약을 맡는다.
 
-Sub-commands (run as ``python -m ride_insight_ml.opendata <cmd>``):
+하위 명령(``python -m ride_insight_ml.opendata <cmd>``로 실행):
 
-* ``manifest``  list every file of the OSF project into a JSON manifest (OSF API v2)
-* ``sample``    pick a deterministic athlete sample from the manifest (SHA-256 order of the id)
-* ``download``  fetch the sampled zips with SHA-256 verification (skips verified files)
-* ``inventory`` summarise each downloaded athlete (rides, power rides, intervals, cp_setting changes)
-* ``split``     assign train/dev/test per athlete from the SHA-256 of the id
+* ``manifest``  OSF 프로젝트의 모든 파일을 JSON 매니페스트로 정리한다(OSF API v2)
+* ``sample``    매니페스트에서 선수 표본을 결정적으로 고른다(id의 SHA-256 순서)
+* ``download``  표본 zip을 SHA-256으로 검증하며 받는다(이미 검증된 파일은 건너뜀)
+* ``inventory`` 받은 선수마다 요약한다(라이딩, 파워 라이딩, 기록 간격, cp_setting 변경 횟수)
+* ``split``     id의 SHA-256으로 선수마다 train/dev/test를 정한다
 
-Nothing here resamples or cleans ride data: ``rides`` maps rides to their CSV files and the Kotlin
-``parity`` tool (``OpenDataCsv``) reads and cleans the samples.
+여기서는 라이딩 데이터를 다시 샘플링하거나 정리하지 않는다. 라이딩과 CSV 파일의 짝짓기는
+``rides``가, 샘플 읽기와 정리는 Kotlin ``parity`` 도구(``OpenDataCsv``)가 한다.
 """
 
 # [파일 역할] GoldenCheetah OpenData(선수 6,613명, 115.6 GB)에서 이 프로젝트가 쓰는 표본 800명을 정하고,
@@ -53,18 +53,17 @@ ATHLETE_ZIP_SUFFIX = ".zip"
 # '용도:id'의 SHA-256 16진 문자열. 용도(domain)가 'sample'이면 표본 순서, 'split'이면 분할에 쓴다. 같은 id라도
 # 용도마다 서로 무관한 값이 나와 '표본 앞쪽 = 특정 분할' 같은 치우침이 없다.
 def _sha256_of_id(athlete_id: str, domain: str) -> str:
-    """SHA-256 of ``domain:id``.
+    """``domain:id``의 SHA-256을 돌려준다.
 
-    Sampling order and split assignment use different domains. With one shared hash, the first
-    ``n`` ids in hash order would all fall into the lowest split bucket (found on 2026-10-10:
-    800 sampled athletes were all 'train').
+    표본 순서와 분할 배정은 서로 다른 domain을 쓴다. 해시 하나를 같이 쓰면 해시 순서로 앞선
+    ``n``개 id가 모두 가장 낮은 분할 구간에 들어간다(2026-10-10 발견: 표본 800명이 전부 'train'이었다).
     """
     return hashlib.sha256(f"{domain}:{athlete_id}".encode()).hexdigest()
 
 
 # zip 파일 이름에서 선수 id를 얻는다(.zip 접미사 제거). rides.py도 같은 규칙을 쓴다.
 def athlete_id_from_name(name: str) -> str:
-    """'033874ce-....zip' -> '033874ce-...'."""
+    """zip 파일 이름에서 선수 id를 얻는다. 예: '033874ce-....zip' -> '033874ce-...'."""
     return name[: -len(ATHLETE_ZIP_SUFFIX)] if name.endswith(ATHLETE_ZIP_SUFFIX) else name
 
 
@@ -73,7 +72,7 @@ def athlete_id_from_name(name: str) -> str:
 # 선수 단위로 정하므로 같은 선수의 라이딩이 여러 분할에 섞이지 않는다. 결과가 id만으로 정해져 표본에 선수를
 # 더하거나 빼도 기존 선수의 분할은 변하지 않는다. 호출 위치: cmd_sample, cmd_split, tests/test_opendata.py.
 def split_of(athlete_id: str, train: float = 0.6, dev: float = 0.2) -> str:
-    """Deterministic split from the first 4 bytes of SHA-256('split:' + id) mapped to [0, 1)."""
+    """SHA-256('split:' + id)의 앞 4바이트를 [0, 1)로 옮긴 값으로 분할을 결정적으로 정한다."""
     u = int(_sha256_of_id(athlete_id, "split")[:8], 16) / 2**32
     if u < train:
         return "train"
@@ -82,7 +81,7 @@ def split_of(athlete_id: str, train: float = 0.6, dev: float = 0.2) -> str:
     return "test"
 
 
-# ----------------------------------------------------------------------------- manifest
+# ----------------------------------------------------------------------------- manifest: OSF 파일 목록
 
 
 # URL에서 JSON을 받는다. 네트워크 오류면 5초, 10초, 15초 … 로 기다리는 시간을 늘려 가며 최대 5번 시도하고,
@@ -94,7 +93,7 @@ def _get_json(url: str, retries: int = 5) -> dict:
         try:
             with urllib.request.urlopen(url, timeout=60) as r:
                 return json.load(r)
-        except Exception as e:  # noqa: BLE001 - retry any network error
+        except Exception as e:  # noqa: BLE001 - 어떤 네트워크 오류든 다시 시도한다
             last = e
             time.sleep(5 * (attempt + 1))
     raise RuntimeError(f"OSF request failed after {retries} attempts: {url}") from last
@@ -128,17 +127,17 @@ def cmd_manifest(out: Path) -> None:
     print(f"files={len(files)} total_gb={sum(r['size'] for r in files) / 1e9:.1f}")
 
 
-# ----------------------------------------------------------------------------- sample
+# ----------------------------------------------------------------------------- sample: 표본 고르기
 
 
 # 선수 zip만 골라 max_bytes(계획: 80 MB) 이하로 거른 뒤 SHA-256('sample:' + id) 순서로 정렬해 앞 n개를 고른다.
 # 입력 순서와 무관하게 같은 결과가 나오는지, 크기 상한을 지키는지를 tests/test_opendata.py가 확인한다. 이
 # 상한으로 전체 115.6 GB 중 받을 양이 표본 800명 12.4 GB가 됐다(docs/plan.md).
 def choose_sample(files: list[dict], n: int, max_bytes: int | None) -> list[dict]:
-    """Take the first ``n`` athlete zips in SHA-256(id) order, skipping files above ``max_bytes``.
+    """SHA-256(id) 순서로 선수 zip 앞 ``n``개를 고른다. ``max_bytes``보다 큰 파일은 건너뛴다.
 
-    The order is a fixed pseudo-random permutation, so the sample is reproducible and does not
-    depend on upload order or file size (apart from the explicit cap).
+    이 순서는 고정된 의사 난수 순열이라 표본이 재현되고, 올린 순서나 파일 크기에 좌우되지
+    않는다(명시한 크기 상한은 예외).
     """
     zips = [f for f in files if f["kind"] == "file" and f["name"].endswith(ATHLETE_ZIP_SUFFIX)]
     if max_bytes is not None:
@@ -170,7 +169,7 @@ def cmd_sample(manifest: Path, n: int, max_bytes: int | None, out: Path) -> None
     print(f"picked={len(rows)} bytes={sum(r['size'] for r in rows) / 1e9:.2f}GB splits={dict(by_split)}")
 
 
-# ----------------------------------------------------------------------------- download
+# ----------------------------------------------------------------------------- download: 내려받기와 검증
 
 
 # 파일의 SHA-256. 1 MB(1 << 20)씩 읽어 수십 MB zip도 메모리에 통째로 올리지 않는다.
@@ -200,10 +199,9 @@ def cmd_download(sample: Path, dest: Path, limit: int | None) -> None:
             if _file_sha256(target) == r["sha256"]:
                 skipped += 1
                 continue
-            # 해시가 다른 기존 파일은 .bad로 이름을 바꿔 치운다. 그대로 두면 inventory나 rides가 깨진 파일을
-            # 분석할 수 있다.
-            # A file that fails verification must never be analysed: move it aside first
-            # (Codex review 2026-10-10), then try to download a fresh copy.
+            # 해시가 다른 기존 파일은 검증에 실패한 것이라 절대 분석에 쓰이면 안 된다. 먼저 .bad로 이름을
+            # 바꿔 치운 뒤(2026-10-10 Codex 검토) 새 사본을 다시 받는다. 그대로 두면 inventory나 rides가 깨진
+            # 파일을 분석할 수 있다.
             stale = target.with_suffix(".bad")
             target.replace(stale)
             print(f"stale file moved to {stale.name}", file=sys.stderr)
@@ -227,7 +225,7 @@ def cmd_download(sample: Path, dest: Path, limit: int | None) -> None:
         raise SystemExit(2)
 
 
-# ----------------------------------------------------------------------------- inventory
+# ----------------------------------------------------------------------------- inventory: 선수별 요약
 
 
 # _SPORT_LINE: GC 내보내기 JSON에서 '"sport":"..."' 한 줄을 찾는 정규식. 값 안에 이스케이프되지 않은
@@ -242,14 +240,14 @@ _SPORT_LINE = re.compile(r'("sport":")(.*?)(",?\s*\n)')
 # 바꿔 한 번 더 읽는다. 데이터를 버리지 않고 최소한만 고쳐 그 선수의 라이딩을 계속 쓰기 위함이다. 바이트는
 # UTF-8로 풀되 깨진 바이트는 대체 문자로 바꾼다.
 def load_meta(raw: bytes) -> dict:
-    """Parse an athlete's metadata JSON, repairing GoldenCheetah's unescaped quotes.
+    """선수 메타데이터 JSON을 읽는다. GoldenCheetah가 이스케이프하지 않은 따옴표를 고쳐 읽는다.
 
-    One export (athlete 8fc5800d, 2026-10-10) contains ``"sport":""3.5-4.5 hours""``: the user-typed
-    sport string was written without escaping. If strict parsing fails, inner double quotes on
-    ``sport`` lines are replaced by single quotes and parsing is retried once.
+    한 내보내기 파일(선수 8fc5800d, 2026-10-10)에 ``"sport":""3.5-4.5 hours""``가 들어 있다. 사용자가
+    입력한 sport 문자열이 이스케이프 없이 기록된 것이다. 엄격한 파싱이 실패하면 ``sport`` 줄 안쪽의
+    큰따옴표를 작은따옴표로 바꾸고 한 번 더 파싱한다.
     """
     text = raw.decode("utf-8", "replace")
-    # strict=False: another export (athlete d0375ff2) has a raw control character inside a string.
+    # strict=False: 다른 내보내기 파일(선수 d0375ff2)에는 문자열 안에 날것의 제어 문자가 들어 있다.
     try:
         return json.loads(text, strict=False)
     except json.JSONDecodeError:
@@ -297,7 +295,7 @@ def _interval_of_csv(text: str) -> float | None:
 #   고쳤다(Codex 1차 검토 지적 9). FTP 라벨이 얼마나 자주 갱신되는지(3번 질문) 가늠하는 값이다
 # - intervals_probe: 앞 csv_probe(50)개 CSV만 표본으로 본 간격 분포의 상위 4개
 def inventory_of_zip(path: Path, csv_probe: int = 50) -> dict:
-    """Summarise one athlete zip without extracting it."""
+    """선수 zip 하나를 풀지 않고 요약한다."""
     with zipfile.ZipFile(path) as z:
         names = z.namelist()
         js = [n for n in names if n.endswith(".json")]
@@ -339,7 +337,7 @@ def inventory_of_zip(path: Path, csv_probe: int = 50) -> dict:
 # inventory 하위 명령. --sample을 주면 매니페스트에 있는 선수만 요약한다(표본 밖 zip이 폴더에 섞여 있어도
 # 집계에 들어가지 않게; Codex 1차 검토 지적 4). 깨진 zip이나 JSON은 error 행으로 남기고 계속 진행한다.
 def cmd_inventory(dest: Path, out: Path, sample: Path | None = None) -> None:
-    """Summarise the zips in ``dest``; with ``sample`` only athletes listed in that manifest."""
+    """``dest``의 zip을 요약한다. ``sample``을 주면 그 매니페스트에 있는 선수만 요약한다."""
     allowed = None
     if sample is not None:
         allowed = {r["id"] for r in json.loads(sample.read_text(encoding="utf-8"))}
@@ -361,7 +359,7 @@ def cmd_inventory(dest: Path, out: Path, sample: Path | None = None) -> None:
     )
 
 
-# ----------------------------------------------------------------------------- split
+# ----------------------------------------------------------------------------- split: 분할표
 
 
 # split 하위 명령. inventory에서 파워 라이딩이 min_power_rides(기본 100, docs/plan.md의 '파워 라이딩 100개
@@ -380,7 +378,7 @@ def cmd_split(inventory: Path, min_power_rides: int, out: Path) -> None:
     print(f"kept={len(kept)} {dict(collections.Counter(result['athletes'].values()))}")
 
 
-# ----------------------------------------------------------------------------- cli
+# ----------------------------------------------------------------------------- 명령행
 
 
 # 명령행 진입점. 하위 명령 다섯 개(manifest, sample, download, inventory, split)의 인자를 정의하고 해당 cmd_
@@ -389,26 +387,26 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    s = sub.add_parser("manifest", help="list OSF files into a JSON manifest")
+    s = sub.add_parser("manifest", help="OSF 파일 목록을 JSON 매니페스트로 쓴다")
     s.add_argument("--out", type=Path, required=True)
 
-    s = sub.add_parser("sample", help="pick a deterministic athlete sample")
+    s = sub.add_parser("sample", help="선수 표본을 결정적으로 고른다(id의 SHA-256 순서)")
     s.add_argument("--manifest", type=Path, required=True)
     s.add_argument("--n", type=int, required=True)
     s.add_argument("--max-bytes", type=int, default=None)
     s.add_argument("--out", type=Path, required=True)
 
-    s = sub.add_parser("download", help="download sampled zips with SHA-256 verification")
+    s = sub.add_parser("download", help="표본 zip을 SHA-256으로 검증하며 내려받는다")
     s.add_argument("--sample", type=Path, required=True)
     s.add_argument("--dest", type=Path, required=True)
     s.add_argument("--limit", type=int, default=None)
 
-    s = sub.add_parser("inventory", help="summarise downloaded athletes")
+    s = sub.add_parser("inventory", help="내려받은 선수를 요약한다")
     s.add_argument("--dest", type=Path, required=True)
     s.add_argument("--out", type=Path, required=True)
-    s.add_argument("--sample", type=Path, default=None, help="restrict to athletes in this sample manifest")
+    s.add_argument("--sample", type=Path, default=None, help="이 표본 매니페스트에 있는 선수만 요약한다")
 
-    s = sub.add_parser("split", help="assign train/dev/test per athlete")
+    s = sub.add_parser("split", help="선수마다 train/dev/test를 정한다")
     s.add_argument("--inventory", type=Path, required=True)
     s.add_argument("--min-power-rides", type=int, default=100)
     s.add_argument("--out", type=Path, required=True)

@@ -12,9 +12,8 @@ import java.time.LocalDate
 import kotlin.math.exp
 
 /**
- * Performance Management Chart quantities (Coggan): CTL is a 42-day and ATL a 7-day exponentially
- * weighted average of daily TSS; TSB is yesterday's CTL minus yesterday's ATL. Days without an
- * activity count as TSS 0, so both loads decay.
+ * Performance Management Chart 값(Coggan): CTL은 날짜별 TSS의 42일, ATL은 7일 지수 가중 평균이고, TSB는
+ * 어제 CTL − 어제 ATL이다. 활동이 없는 날은 TSS 0으로 세므로 두 부하가 줄어든다.
  */
 object TrainingLoad {
     // 시간 상수(일): CTL 42일, ATL 7일.
@@ -25,9 +24,9 @@ object TrainingLoad {
     class Day(val date: LocalDate, val tss: Double, val ctl: Double, val atl: Double, val tsb: Double)
 
     /**
-     * Daily series from [from] to [to] inclusive. [dailyTss] maps a date to the sum of that day's
-     * TSS; the loads start at [initialCtl]/[initialAtl] on the day before [from] (0 for a new athlete).
-     * Update rule: `load_today = load_yesterday + (tss_today - load_yesterday) × (1 - exp(-1 / days))`.
+     * [from]부터 [to]까지(양 끝 포함)의 날짜별 시계열. [dailyTss]는 날짜 → 그날 TSS 합이다. 부하는 [from]
+     * 전날에 [initialCtl]/[initialAtl]에서 시작한다(새 선수면 0).
+     * 갱신 규칙: `load_today = load_yesterday + (tss_today - load_yesterday) × (1 - exp(-1 / days))`.
      */
     fun series(
         from: LocalDate,
@@ -49,7 +48,7 @@ object TrainingLoad {
             // 그날 활동이 없으면 TSS 0이라 두 부하가 감쇠한다.
             val tss = dailyTss[date] ?: 0.0
             // TSB는 오늘 TSS를 반영하기 전(어제 끝) 값의 차다. 그래서 힘든 훈련 다음 날 음수가 된다.
-            val tsb = ctl - atl // yesterday's values
+            val tsb = ctl - atl // 어제(반영 전) 값
             ctl += (tss - ctl) * kCtl
             atl += (tss - atl) * kAtl
             out.add(Day(date, tss, ctl, atl, tsb))

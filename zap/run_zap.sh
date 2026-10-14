@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Run zap/automation.yaml with a ZAP release against the local server.
+# ZAP 배포판으로 로컬 서버를 대상으로 zap/automation.yaml을 실행한다.
 #
-#   ZAP_DIR=<folder with zap-2.17.0.jar> zap/run_zap.sh <name> <seed HAR>
+#   ZAP_DIR=<zap-2.17.0.jar가 있는 폴더> zap/run_zap.sh <이름> <씨앗 HAR>
 #
-# The server must be running on TARGET (default http://127.0.0.1:8080). Reports <name>.json/.md, the ZAP
-# log and a fresh ZAP home go to work/zap/<name>/. Output goes to files only, never to a pipe.
+# 서버가 TARGET(기본 http://127.0.0.1:8080)에서 실행 중이어야 한다. 보고서 <이름>.json/.md, ZAP 로그, 새로
+# 만든 ZAP 홈 폴더는 work/zap/<이름>/에 들어간다. 출력은 파일로만 보내고 파이프로는 절대 보내지 않는다.
 # [파일 역할] 5단계 DAST(H9)를 실행하는 스크립트. ZAP을 화면 없이(-cmd) 띄워 zap/automation.yaml 계획(HAR 씨앗
 # 가져오기 → spider → passive scan → active scan → JSON·Markdown 보고서)을 돌린다. 결과 요약은 reports/dast/에
 # 커밋돼 있다(1차 Low 3건 수정 → 2차 High·Medium 0건, docs/experiments.md 5단계 결과).
@@ -25,7 +25,7 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # native: 경로를 절대 경로로 바꾸고, Git Bash(Windows)에서는 cygpath -m으로 드라이브 문자로 시작하는 Windows
 # 형식(예: X:/...)으로 바꾼다. Windows용 Java는 '/x/...' 같은 MSYS 경로를 이해하지 못하기 때문이다. cygpath가
 # 없는 리눅스·macOS에서는 절대 경로를 그대로 쓴다.
-native() { # absolute path in the form Java understands (Windows form under Git Bash)
+native() { # Java가 이해하는 형태의 절대 경로(Git Bash에서는 Windows 형식)
   local abs
   abs=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
   if command -v cygpath > /dev/null; then cygpath -m "$abs"; else printf '%s\n' "$abs"; fi
@@ -55,7 +55,7 @@ REPORT_DIR=$(native "$out")
 # 설정·세션이 섞이지 않게 한다. 출력은 zap.log 파일로만 보낸다. set -e 상태에서도 ZAP이 실패하면 스크립트가
 # 바로 죽지 않도록 '|| status=$?'로 종료 코드를 받아 두고, 안내를 출력한 뒤 그 코드로 끝낸다.
 status=0
-# -port: ZAP's own proxy must not collide with the server on 8080.
+# -port: ZAP 자체 프록시 포트가 8080에서 도는 서버와 겹치면 안 된다(기본 8099, ZAP_PORT로 바꿀 수 있다).
 java -Xmx2g -jar "$(native "${jars[0]}")" -cmd -notel -port "${ZAP_PORT:-8099}" -dir "$(native "$out/home")" \
   -config start.checkForUpdates=false -autorun "$(native "$root/zap/automation.yaml")" \
   > "$out/zap.log" 2>&1 || status=$?

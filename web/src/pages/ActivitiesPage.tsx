@@ -31,7 +31,7 @@ import { NeedAthlete } from "../components/NeedAthlete";
 // 목록을 한 번에 30개씩 받는다(서버 기본 50, 최대 200).
 const PAGE = 30;
 
-/** FIT upload plus the paginated activity list. */
+/** FIT 업로드와 페이지 단위로 나눠 받는 활동 목록. */
 export function ActivitiesPage() {
   const athleteId = useAthleteStore((s) => s.athleteId);
   const qc = useQueryClient();

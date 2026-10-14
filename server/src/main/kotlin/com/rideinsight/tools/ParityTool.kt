@@ -21,12 +21,11 @@ import tools.jackson.databind.json.JsonMapper
 // 쓴다. 인덱스나 zip이 없는 선수는 표준 오류에 남기고 건너뛴다. 진행 상황은 표준 오류, 최종 요약은 표준
 // 출력으로 낸다.
 /**
- * Offline tool for docs/experiments.md stage 1: compute NP, IF, TSS and the 16 mean-maximal power
- * values for every matched power ride of the listed athletes and write them next to the
- * GoldenCheetah metadata values as JSON lines. The ride index comes from
- * `python -m ride_insight_ml.rides`; the analysis is `python -m ride_insight_ml.parity`.
+ * docs/experiments.md 1단계용 오프라인 도구: 목록에 있는 선수들의 짝지어진 파워 라이딩마다 NP, IF, TSS와
+ * 16구간 최대 평균 파워를 계산해, GoldenCheetah 메타데이터 값과 나란히 JSON 줄로 쓴다. 라이딩 인덱스는
+ * `python -m ride_insight_ml.rides`가 만들고, 분석은 `python -m ride_insight_ml.parity`가 한다.
  *
- * Usage: --zips <dir> --index <dir> --athletes <file: one id per line> --out <jsonl>
+ * 사용법: --zips <폴더> --index <폴더> --athletes <파일: 한 줄에 id 하나> --out <jsonl>
  */
 fun main(args: Array<String>) {
     val options = parseArgs(args)

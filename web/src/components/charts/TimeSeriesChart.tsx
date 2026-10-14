@@ -15,7 +15,7 @@ export interface Series {
   color: string;
   values: (number | null)[];
   unit: string;
-  /** Draw on the right axis (e.g. heart rate next to power). */
+  /** 오른쪽 축에 그린다(예: 파워 옆의 심박). */
   right?: boolean;
 }
 
@@ -23,13 +23,15 @@ interface Props {
   secs: number[];
   series: Series[];
   height?: number;
-  /** Optional horizontal reference line on the left axis (e.g. FTP). */
+  /** 선택 사항인 왼쪽 축의 가로 기준선(예: FTP). */
   reference?: { value: number; label: string };
 }
 
-/** Power / heart rate / cadence over elapsed time with a hover readout. */
-// props: secs(x값, 경과 초), series(시리즈 목록), height, reference(왼쪽 축 기준선, 예: FTP). 좌우 여백
-// 48px은 양쪽 축 숫자 자리다.
+/**
+ * 경과 시간에 따른 파워·심박·케이던스 그래프. 마우스를 올리면 그 시점 값을 보여 준다.
+ * props: secs(x값, 경과 초), series(시리즈 목록), height, reference(왼쪽 축 기준선, 예: FTP). 좌우 여백
+ * 48px은 양쪽 축 숫자 자리다.
+ */
 export function TimeSeriesChart({ secs, series, height = 260, reference }: Props) {
   const [ref, width] = useMeasure<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);

@@ -8,31 +8,31 @@ package com.rideinsight.metrics
 // ftp.py에 Python으로 구현해 쟀다.
 
 /**
- * Rule-based FTP estimates from a period's best powers (docs/experiments.md, 3단계 R1–R3). Inputs are
- * the per-window maxima in watts keyed by window seconds; null when a window has no value.
+ * 기간 최대 파워로 FTP를 추정하는 규칙들(docs/experiments.md, 3단계 R1–R3). 입력은 구간 길이(초)를 키로 한
+ * 구간별 최댓값(W)이다. 값이 없는 구간이 필요하면 결과는 null이다.
  */
 object FtpRules {
-    // R1: 20분(1200초) 최대 × 0.95. 흔히 쓰는 규칙이다. 봉인 test에서 선수 설정 FTP와 평균 29.2 W 차이였고
-    // 평균 17 W 낮게 추정했다(H6 기각). 20분 기록이 없으면 null.
-    /** R1: 95 % of the best 20-minute power. */
+    /**
+     * R1: 20분(1200초) 최대 파워의 95%. 흔히 쓰는 규칙이다. 봉인 test에서 선수 설정 FTP와 평균 29.2 W
+     * 차이였고 평균 17 W 낮게 추정했다(H6 기각). 20분 기록이 없으면 null.
+     */
     fun twentyMinute(best: Map<Int, Double>): Double? = best[1200]?.let { it * 0.95 }
 
-    // R2: 60분(3600초) 최대 그대로. FTP 정의(1시간 유지 가능 파워)를 그대로 잰 값이다. 봉인 test MAE는 47.3
-    // W로 후보 중 가장 컸다. 60분 기록이 없으면 null.
-    /** R2: the best 60-minute power. */
+    /**
+     * R2: 60분(3600초) 최대 파워 그대로. FTP 정의(1시간 유지 가능 파워)를 그대로 잰 값이다. 봉인 test MAE는
+     * 47.3 W로 후보 중 가장 컸다. 60분 기록이 없으면 null.
+     */
     fun sixtyMinute(best: Map<Int, Double>): Double? = best[3600]
 
-    // CP 적합에 쓰는 구간: 3·5·8·10·20분(규칙에 미리 적은 값).
-    /** Durations used by the critical-power fit: 3, 5, 8, 10 and 20 minutes. */
+    /** 임계 파워(CP) 적합에 쓰는 구간: 3·5·8·10·20분(규칙에 미리 적은 값). */
     val CP_DURATIONS: IntArray = intArrayOf(180, 300, 480, 600, 1200)
 
-    // R3: Critical Power 2변수 모델. 구간 t초 동안의 일(W×초) = 최대 평균 파워 × t가 직선 CP × t + W' 위에
-    // 있다고 보고, 값이 있는 구간들에 최소제곱 직선을 맞춰 기울기를 CP, 절편을 W'(J)로 쓴다. 선형 회귀라 닫힌
-    // 해가 나온다. 정확한 2변수 곡선(CP 250 W, W' 20 kJ)에서 CP를 1e-6 W, W'를 1e-3 J 안에서 복원하는지
-    // FtpRulesTest가 확인한다.
     /**
-     * R3: critical power from the two-parameter model work = CP × t + W', least squares over the
-     * available durations in [CP_DURATIONS] (at least three needed). Returns CP and W' (joules).
+     * R3: 2변수 모델 work = CP × t + W'로 구한 임계 파워(Critical Power). 구간 t초 동안의 일(W×초) = 최대 평균
+     * 파워 × t가 직선 CP × t + W' 위에 있다고 보고, [CP_DURATIONS] 중 값이 있는 구간들(3개 이상 필요)에
+     * 최소제곱 직선을 맞춰 기울기를 CP, 절편을 W'로 쓴다. CP와 W'(J)를 돌려준다. 선형 회귀라 닫힌 해가
+     * 나온다. 정확한 2변수 곡선(CP 250 W, W' 20 kJ)에서 CP를 1e-6 W, W'를 1e-3 J 안에서 복원하는지
+     * FtpRulesTest가 확인한다.
      */
     fun criticalPower(best: Map<Int, Double>): Pair<Double, Double>? {
         val t = ArrayList<Double>()

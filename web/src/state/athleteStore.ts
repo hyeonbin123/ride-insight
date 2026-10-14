@@ -7,8 +7,8 @@
 import { create } from "zustand";
 
 /**
- * The athlete the page is working with. The id lives in localStorage so a reload keeps the
- * selection; everything else comes from the API.
+ * 화면이 지금 작업 중인 선수. id는 localStorage에 두어 새로고침해도 선택이 유지되고, 나머지 정보는 모두
+ * API에서 가져온다.
  */
 interface AthleteState {
   athleteId: string | null;
@@ -37,7 +37,7 @@ export const useAthleteStore = create<AthleteState>((set) => ({
       if (id) window.localStorage.setItem(KEY, id);
       else window.localStorage.removeItem(KEY);
     } catch {
-      // storage unavailable: keep the selection in memory only
+      // 저장소를 쓸 수 없으면 선택은 메모리에만 둔다
     }
     set({ athleteId: id });
   },

@@ -1,11 +1,11 @@
-"""Build the stage-1 parity athlete lists (docs/experiments.md).
+"""1단계 파리티 측정에 쓸 선수 목록을 만든다(docs/experiments.md).
 
-Rule: walk ``manifests/opendata_sample.json`` in sample order, keep train athletes whose ride index
-has at least ``--min-power-rides`` matched power rides; the first 100 are the development set and
-the next 100 the sealed set. Athletes whose zip or index is missing stop the walk (``--allow-partial``
-writes what is available so far and reports how many are still needed).
+규칙: ``manifests/opendata_sample.json``을 표본 순서대로 훑으며, 라이딩 인덱스에서 CSV와 짝지어진
+파워 라이딩이 ``--min-power-rides``개 이상인 train 선수를 남긴다. 앞 100명이 개발 세트, 다음 100명이
+봉인 세트다. zip이나 인덱스가 없는 선수를 만나면 거기서 멈춘다(``--allow-partial``이면 그때까지
+모인 것을 쓰고 아직 몇 명이 더 필요한지 알려 준다).
 
-Usage: ``python -m ride_insight_ml.parity_sets --sample ../manifests/opendata_sample.json
+사용법: ``python -m ride_insight_ml.parity_sets --sample ../manifests/opendata_sample.json
 --index ../data/opendata_index --out-dir ../manifests``
 """
 
@@ -50,8 +50,8 @@ def build(
     allow_partial: bool,
     unavailable: set[str] | None = None,
 ) -> tuple[list, list, dict]:
-    """``unavailable``: athletes whose zip could not be downloaded after retries; they are skipped in
-    sample order (recorded in the result), which cannot change the picks before them."""
+    """``unavailable``: 재시도해도 zip을 받지 못한 선수들. 표본 순서 안에서 건너뛰고 결과에 기록한다.
+    건너뛰어도 그 앞에서 이미 고른 선수는 바뀌지 않는다."""
     qualifying: list[str] = []
     seen = skipped = 0
     skipped_unavailable: list[str] = []
@@ -98,7 +98,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--min-power-rides", type=int, default=50)
     p.add_argument("--allow-partial", action="store_true")
     p.add_argument(
-        "--unavailable", type=Path, default=None, help="file with ids whose zip could not be downloaded"
+        "--unavailable", type=Path, default=None, help="zip을 받지 못한 선수 id 파일(한 줄에 하나)"
     )
     a = p.parse_args(argv)
     sample = json.loads(a.sample.read_text(encoding="utf-8"))

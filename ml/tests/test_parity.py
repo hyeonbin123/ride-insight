@@ -54,7 +54,7 @@ def _line(
 # 다시 계산하면 일치해야 한다(규칙 변경 2). 역산 값 235, cp_differs 표시, 'CP ≠ 임계값' 집계도 함께 본다. 표본
 # 밖 선수의 TSS 불일치 92건 중 88건이 바로 이 경우였다.
 def test_tss_uses_gc_threshold_not_cp_setting(tmp_path: Path):
-    # GC used FTP 235 (if = np / 235) while cp_setting is 250: TSS must still agree.
+    # cp_setting은 250인데 GC는 FTP 235를 썼다(if = np / 235). 그래도 TSS는 일치해야 한다.
     line = _line("a", 0, 1.0, 200.0, 200.0, tss_ours=64.0, tss_gc=100.0 * (200.0 / 235.0) ** 2)
     line["gc"]["if"] = 200.0 / 235.0
     jsonl = tmp_path / "t.jsonl"
@@ -71,7 +71,7 @@ def test_tss_uses_gc_threshold_not_cp_setting(tmp_path: Path):
 # 세어지는지 확인한다(규칙 변경 3).
 def test_integer_gc_tss_is_excluded_from_h3(tmp_path: Path):
     lines = [_line("a", i, 1.0, 201.0, 201.0, tss_gc=64.6416) for i in range(5)]
-    lines.append(_line("a", 6, 1.0, 201.0, 201.0, tss_gc=50.0))  # manual override: computed is 64.64
+    lines.append(_line("a", 6, 1.0, 201.0, 201.0, tss_gc=50.0))  # 수동 입력 값: 계산값은 64.64
     jsonl = tmp_path / "t.jsonl"
     jsonl.write_text("\n".join(json.dumps(x) for x in lines), encoding="utf-8")
     r = parity.analyse(parity.load(jsonl))
@@ -112,10 +112,10 @@ def test_both_sides_guarded_mmp_counts_as_agreement(tmp_path: Path):
 # 그룹 일치율 0.6이고 1초와의 차이 40%p로 H4 지지여야 한다. Markdown 보고서에 결과가 들어가는지도 본다.
 def test_analysis_verdicts_on_synthetic_data(tmp_path: Path):
     lines = []
-    # 300 one-second rides agreeing exactly -> H1/H2/H3 supported.
+    # 정확히 일치하는 1초 라이딩 300개 -> H1/H2/H3 지지.
     for i in range(300):
         lines.append(_line(f"a{i % 10}", i % 28, 1.0, 201.0, 201.0, tss_ours=64.6416, tss_gc=64.6416))
-    # 100 five-second rides, 40 % disagreeing by 3 W -> H4 (1 s rate higher by >= 5 pp) supported.
+    # 5초 라이딩 100개 중 40%가 3 W 어긋남 -> H4(1초 일치율이 5%p 이상 높음) 지지.
     for i in range(100):
         off = 3.0 if i % 5 < 2 else 0.0
         lines.append(_line(f"b{i % 5}", i % 28, 5.0, 201.0 + off, 201.0, tss_ours=64.6416, tss_gc=64.6416))

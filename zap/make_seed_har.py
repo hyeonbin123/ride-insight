@@ -1,11 +1,11 @@
-"""Write a HAR seed for the OWASP ZAP scan (zap/automation.yaml).
+"""OWASP ZAP 스캔(zap/automation.yaml)에 쓸 HAR 씨앗 파일을 만든다.
 
-The seed carries the JSON requests ZAP cannot discover by spidering a JSON API: athlete creation,
-the FTP threshold update and every read endpoint for one athlete and one activity. The multipart
-FIT upload is not in the seed (HAR text bodies cannot carry the binary file); its robustness is
-covered by the integration tests and the tampered-file tests instead (docs/experiments.md, 5단계).
+씨앗에는 ZAP이 JSON API를 spider로 훑어서는 찾을 수 없는 JSON 요청이 들어 있다: 선수 생성, FTP 변경,
+그리고 선수 하나·활동 하나에 대한 모든 읽기 끝점. multipart FIT 업로드는 씨앗에 넣지 않는다(HAR의 텍스트
+본문에는 바이너리 파일을 담을 수 없다). 업로드의 견고성은 대신 통합 테스트와 변조 파일 테스트가
+다룬다(docs/experiments.md, 5단계).
 
-Usage: python zap/make_seed_har.py --target http://127.0.0.1:8080 --athlete <id> --activity <id> --out work/zap/seed.har
+사용법: python zap/make_seed_har.py --target http://127.0.0.1:8080 --athlete <id> --activity <id> --out work/zap/seed.har
 """
 
 # [파일 역할] 5단계 보안 점검(OWASP ZAP DAST)의 시작점이 될 요청 목록을 HAR 파일로 만든다.

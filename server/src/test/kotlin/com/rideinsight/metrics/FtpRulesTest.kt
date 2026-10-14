@@ -24,7 +24,7 @@ class FtpRulesTest {
     // 20 kJ를 그대로 돌려줘야 한다. 회귀 공식(기울기·절편)의 실수를 잡는다.
     @Test
     fun `critical power recovers an exact two-parameter curve`() {
-        // P(t) = CP + W'/t with CP 250 W, W' 20 kJ.
+        // P(t) = CP + W'/t, CP 250 W, W' 20 kJ.
         val best = FtpRules.CP_DURATIONS.associateWith { 250.0 + 20_000.0 / it }
         val (cp, wPrime) = assertNotNull(FtpRules.criticalPower(best))
         assertTrue(abs(cp - 250.0) < 1e-6, "cp $cp")

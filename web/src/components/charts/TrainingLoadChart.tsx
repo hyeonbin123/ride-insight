@@ -13,8 +13,10 @@ interface Props {
   height?: number;
 }
 
-/** Performance management chart: daily TSS bars, CTL/ATL lines, TSB on the right axis. */
-// props: days(서버가 준 날짜별 TSS·CTL·ATL·TSB), height. 오른쪽 여백은 TSB 축 숫자 자리다.
+/**
+ * 훈련 부하 차트(PMC): 날짜별 TSS 막대, CTL/ATL 선, 오른쪽 축의 TSB.
+ * props: days(서버가 준 날짜별 TSS·CTL·ATL·TSB), height. 오른쪽 여백은 TSB 축 숫자 자리다.
+ */
 export function TrainingLoadChart({ days, height = 300 }: Props) {
   const [ref, width] = useMeasure<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
@@ -25,7 +27,7 @@ export function TrainingLoadChart({ days, height = 300 }: Props) {
 
   // 날짜 문자열을 UTC 자정의 Date로 바꿔 둔다(아래 UTC 축과 맞추기 위해).
   const parsed = useMemo(() => days.map((d) => ({ ...d, t: new Date(d.date + "T00:00:00Z") })), [days]);
-  // Dates are UTC days from the API, so the axis must be UTC too (Codex review 2026-10-10).
+  // API의 날짜는 UTC 기준 날짜라 축도 UTC여야 한다(2026-10-10 Codex 검토).
   const x = useMemo(
     () => d3.scaleUtc().domain(d3.extent(parsed, (d) => d.t) as [Date, Date]).range([0, innerW]),
     [parsed, innerW],

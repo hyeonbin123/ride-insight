@@ -33,11 +33,11 @@ import tools.jackson.databind.json.JsonMapper
 // 명령줄 진입점: 옵션을 읽고(--zip, --index, --name 필수, --label 기본 cp, --limit 선택), 웹 서버 없는 Spring
 // 컨텍스트에서 빈을 꺼내 importAthlete를 부른 뒤 결과 수를 출력한다.
 /**
- * Imports one GoldenCheetah OpenData athlete into the database: matched power rides become
- * activities, and changes of the chosen FTP label become dated thresholds.
+ * GoldenCheetah OpenData 선수 1명을 DB로 가져온다. CSV와 짝지어진 파워 라이딩은 활동이 되고, 고른 FTP
+ * 라벨이 바뀌는 지점은 적용일이 붙은 FTP 이력이 된다.
  *
- * Usage: ./gradlew -q importOpenData --args="--zip <athlete.zip> --index <ride index json> --name <athlete name> [--label cp|ftp] [--limit N]"
- * The database settings come from application.properties / RIDE_INSIGHT_DB_* variables.
+ * 사용법: ./gradlew -q importOpenData --args="--zip <선수.zip> --index <라이딩 인덱스 json> --name <선수 이름> [--label cp|ftp] [--limit N]"
+ * DB 설정은 application.properties / RIDE_INSIGHT_DB_* 환경 변수에서 온다.
  */
 fun main(args: Array<String>) {
     val options = parseOptions(args, required = listOf("--zip", "--index", "--name"))
@@ -107,7 +107,6 @@ fun importAthlete(
 
     // FTP 이력을 활동보다 먼저 넣어야 각 라이딩의 TSS를 그 날짜에 유효한 FTP로 계산할 수 있다. 라벨 값이
     // 직전과 달라질 때만 그 라이딩 날짜를 적용일로 한 줄 넣는다(출처 import).
-    // Thresholds first, so TSS can use the FTP in force on each ride's date.
     var thresholds = 0
     var last: Int? = null
     for (ride in rides) {
@@ -140,7 +139,7 @@ fun importAthlete(
             // 결측을 0 W로 저장했다).
             val series = SampleSeries(
                 secs = samples.secs.toList(),
-                power = parsed.extras.powerNullable, // missing cells stay NULL in storage
+                power = parsed.extras.powerNullable, // 비어 있는 칸은 저장소에서도 NULL로 남는다
                 heartRate = parsed.extras.heartRate,
                 cadence = parsed.extras.cadence,
                 distanceM = parsed.extras.distanceM,
@@ -178,10 +177,11 @@ fun importAthlete(
     return ImportResult(athlete.id, stored, skipped, thresholds)
 }
 
-// 라벨 정의는 3단계 규칙과 같다: cp = 그 라이딩의 cp_setting, ftp = GC가 IF 계산에 실제로 쓴 임계값(coggan_np
-// / coggan_if, 반올림). 1단계에서 둘이 다른 라이딩이 10~13% 있었다(docs/experiments.md). 값이 없거나 0 이하면
-// null.
-/** CP label = cp_setting; FTP label = the threshold GoldenCheetah used for IF (NP / IF), rounded. */
+/**
+ * CP 라벨 = cp_setting, FTP 라벨 = GoldenCheetah가 IF 계산에 실제로 쓴 임계값(NP / IF, 즉 coggan_np /
+ * coggan_if를 반올림). 라벨 정의는 3단계 규칙과 같다. 1단계에서 둘이 다른 라이딩이 10~13% 있었다
+ * (docs/experiments.md). 값이 없거나 0 이하면 null.
+ */
 internal fun labelOf(ride: JsonNode, label: String): Int? {
     val gc = ride.path("gc")
     return if (label == "cp") {

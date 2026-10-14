@@ -16,7 +16,7 @@ def _ride(date, workout_time, flags="TDSPHC-AGL-----"):
 # UTC 08:00 라이딩이 현지 10:00 이름의 CSV(+2시간)와 짝지어지고 오프셋 7,200초가 기록되는지 확인한다.
 def test_matches_by_offset_and_duration():
     r = [_ride("2020/06/01 08:00:00 UTC", 3600)]
-    csvs = {"2020_06_01_10_00_00.csv": 3599.0}  # local time = UTC + 2 h
+    csvs = {"2020_06_01_10_00_00.csv": 3599.0}  # 현지 시각 = UTC + 2시간
     entries, counters = rides.match_rides(r, csvs)
     assert entries[0]["csv"] == "2020_06_01_10_00_00.csv"
     assert entries[0]["offset_secs"] == 7200

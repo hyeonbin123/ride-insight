@@ -69,12 +69,10 @@ class TamperedFitTest : ApiTestBase() {
             // (3)은 저장되되 crcValid가 false로 표시돼야 한다.
             if (name == "3-broken-crc" && r.status == 201) assertFalse(r.body!!.path("crcValid").asBoolean(), "crcValid must be false")
         }
-        // (7) 업로드 한도를 1바이트 넘는 파일. 처음 테스트는 413 대신 연결 끊김도 거절로 인정했는데, 그러면
-        // 413과 서버 오류를 구분할 수 없다는 Codex 3차 검토 지적으로 server.tomcat.max-swallow-size를 두고
-        // 실제 413만 인정하게 고쳤다.
-        // 7: one byte over the 10 MB multipart limit. server.tomcat.max-swallow-size lets Tomcat read
-        // the rest of the body, so the client sees the real 413 (a first draft accepted a dropped
-        // connection here, which could not tell a 413 from a crash).
+        // (7) 10 MB multipart 업로드 한도를 1바이트 넘는 파일. 처음 테스트는 413 대신 연결 끊김도 거절로
+        // 인정했는데, 그러면 413과 서버 오류(비정상 종료)를 구분할 수 없다는 Codex 3차 검토 지적으로
+        // server.tomcat.max-swallow-size를 두고 실제 413만 인정하게 고쳤다. 이 설정이 있으면 Tomcat이 본문의
+        // 나머지를 끝까지 읽어 주므로 클라이언트가 실제 413 응답을 받는다.
         val big = ByteArray(10 * 1024 * 1024 + 1)
         results["7-over-10mb"] = code(uploadBytes(id, "big.fit", big))
         // 결과 전체를 한 줄로 출력해 실행 기록에 남긴 뒤 하나씩 판정한다.

@@ -4,11 +4,11 @@
 // 빼므로(Jackson non_null 설정) 값이 없을 수 있는 필드는 ?(선택)로 둔다. 날짜·시각은 JSON에서 문자열(ISO
 // 형식)로 온다.
 
-// Mirrors server/src/main/kotlin/com/rideinsight/api/Dtos.kt
+// server/src/main/kotlin/com/rideinsight/api/Dtos.kt를 그대로 옮겨 적은 것이다.
 
 // FTP 이력 한 줄: 적용 시작일, FTP(W), 출처(manual 직접 입력, import OpenData 가져오기, estimate 추정).
 export interface Threshold {
-  effectiveFrom: string; // ISO date
+  effectiveFrom: string; // ISO 형식 날짜
   ftpWatts: number;
   source: string;
 }

@@ -36,7 +36,7 @@ class ActivityService(
     companion object {
         // 거절할 종목 코드: 1 running, 5 swimming, 11 walking, 17 hiking. 그 밖의 종목과 종목 미상은
         // 저장한다(블랙리스트 방식, docs/api.md; Codex 2차 검토 지적 15로 문서를 이 정책에 맞춤).
-        /** Sports we refuse: the metrics here are defined for cycling power only. */
+        /** 거절하는 종목. 여기의 지표는 사이클링 파워에 대해서만 정의돼 있다. */
         val REJECTED_SPORTS: Map<Long, String> = mapOf(
             FitProfile.Sport.RUNNING to "running",
             5L to "swimming",
@@ -44,7 +44,7 @@ class ActivityService(
             17L to "hiking",
         )
         // DB smallint 컬럼에 맞춘 파워 상한(W).
-        const val MAX_POWER_STORED = 32_000 // smallint column; anything above is treated as missing
+        const val MAX_POWER_STORED = 32_000 // smallint 컬럼이라 이보다 큰 값은 결측으로 다룬다
         // 활동 파워 커브의 최대 점 수(docs/api.md: 곡선은 로그 간격으로 300점 이하).
         const val MAX_CURVE_POINTS = 300
     }
@@ -57,7 +57,7 @@ class ActivityService(
         // 선수 행을 select ... for update로 잠가 같은 선수의 업로드·FTP 변경을 한 번에 하나씩 처리한다.
         // 선수가 없으면 404.
         if (!athletes.lock(athleteId)) throw NotFoundException("athlete $athleteId not found")
-        val fit = FitActivity.decode(bytes) // FitDecodeException -> 400
+        val fit = FitActivity.decode(bytes) // 디코딩 실패(FitDecodeException)는 400
         val sport = fit.sport
         REJECTED_SPORTS[sport]?.let { throw UnsupportedSportException("sport '$it' is not supported; upload a cycling activity") }
         if (fit.records.isEmpty()) throw InvalidActivityException("the file has no record messages")
@@ -139,7 +139,7 @@ class ActivityService(
 
     // 활동 전 구간 파워 커브: 저장된 샘플로 로그 간격 지속 시간마다 MMP를 다시 계산한다(3000 W 가드 없는
     // best). 파워가 없거나 기록 간격을 추정할 수 없으면 빈 곡선과 저장된 16구간 값만 돌려준다.
-    /** Full mean-maximal curve of one activity on a log-spaced grid of durations (at most ~300 points). */
+    /** 활동 하나의 전 구간 최대 평균 파워 곡선. 지속 시간은 로그 간격 격자다(최대 약 300점). */
     fun powerCurve(id: UUID): Pair<List<Pair<Int, Double>>, Map<String, Double?>> {
         val a = activities.find(id) ?: throw NotFoundException("activity $id not found")
         val series = activities.samples(id) ?: throw NotFoundException("activity $id has no samples")
@@ -175,7 +175,7 @@ class ActivityService(
     // 1초부터 시작해 다음 값 = max(d + 1, d × growth)로 늘리는 로그 간격 격자에, 16개 표준 구간과 최대 길이를
     // 더한다(정렬된 집합이라 중복은 한 번만). 점이 300개를 넘으면 growth를 1.5배씩 키워 다시 만든다. 처음에는
     // 300점을 넘을 수 있었다(Codex 2차 검토 지적 11).
-    /** Log-spaced durations up to [maxSecs], never more than [MAX_CURVE_POINTS] of them. */
+    /** [maxSecs]까지의 로그 간격 지속 시간 목록. 개수는 [MAX_CURVE_POINTS]를 넘지 않는다. */
     internal fun curveDurations(maxSecs: Int): List<Int> {
         var growth = 1.04
         while (true) {
@@ -188,7 +188,7 @@ class ActivityService(
             for (w in MeanMaximalPower.STANDARD_WINDOWS_SECS) if (w <= maxSecs) out.add(w)
             if (maxSecs >= 1) out.add(maxSecs)
             if (out.size <= MAX_CURVE_POINTS) return out.toList()
-            growth *= 1.5 // degenerate rides (e.g. two samples a week apart) need a coarser grid
+            growth *= 1.5 // 비정상 라이딩(예: 일주일 떨어진 샘플 두 개)은 더 성긴 격자가 필요하다
         }
     }
 }

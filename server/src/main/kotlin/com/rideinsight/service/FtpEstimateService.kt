@@ -14,18 +14,18 @@ import java.util.UUID
 import org.springframework.stereotype.Service
 
 /**
- * FTP estimate for an athlete from the last [weeks] weeks. The served estimator is chosen by the
- * stage-3 measurement (docs/experiments.md): until a model is adopted, the estimate is R1
- * (95 % of the best 20-minute power) and the other rules are returned as context.
+ * 최근 [weeks]주 기록으로 선수의 FTP를 추정한다. 서비스할 추정 방법은 3단계 측정(docs/experiments.md)으로
+ * 정한다. 모델이 채택되기 전까지는 R1(20분 최대 파워의 95%)을 추정값으로 쓰고, 나머지 규칙은 참고용으로 함께
+ * 돌려준다.
  */
 @Service
 class FtpEstimateService(private val athletes: AthleteService) {
     companion object {
-        // 3단계에서 잰 R1의 오차(reports/ftp/dev.md, test.md): dev MAE 31 W, 봉인 test MAE 29 W, 편향 약 −17
-        // W(과소 추정). 등록한 서비스 규칙은 dev MAE를 보여 주라고 했고 test 값은
-        // 덧붙였다(docs/experiments.md 규칙 변경 7). note 문장에 들어간다.
-        /** Stage-3 numbers for rule R1 (reports/ftp/dev.md and test.md, 2026-10-10). The registered
-         * serving rule asks for the dev MAE; the sealed test figure is given as well. */
+        /**
+         * 3단계(2026-10-10)에서 잰 규칙 R1의 오차(reports/ftp/dev.md, test.md): dev MAE 31 W, 봉인 test MAE
+         * 29 W, 편향 약 −17 W(과소 추정). 등록한 서비스 규칙은 dev MAE를 보여 주라고 했고, 봉인 test 값도
+         * 덧붙였다(docs/experiments.md 규칙 변경 7). note 문장에 들어간다.
+         */
         const val DEV_MAE_WATTS = 31
         const val SEALED_TEST_MAE_WATTS = 29
         const val SEALED_TEST_BIAS_WATTS = 17

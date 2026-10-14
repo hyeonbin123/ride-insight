@@ -1,12 +1,12 @@
-"""Decode sample FIT files with python-fitparse and write reference JSON for the Kotlin decoder tests.
+"""샘플 FIT 파일을 python-fitparse로 디코딩해 Kotlin 디코더 테스트가 쓸 기준 JSON을 만든다.
 
-Usage: ``python -m ride_insight_ml.fit_expected --fit <dir with .fit> --out <dir for .json>``
-(the repository uses ``server/src/test/resources/fit`` and its ``expected/`` sub-folder).
+사용법: ``python -m ride_insight_ml.fit_expected --fit <.fit이 든 폴더> --out <.json을 쓸 폴더>``
+(저장소에서는 ``server/src/test/resources/fit``과 그 아래 ``expected/`` 폴더를 쓴다).
 
-For each ``*.fit``: ``file_id`` fields, ``sport``/``session`` summaries, every ``record`` message as
-parallel arrays (timestamp as Unix seconds, power, heart_rate, cadence, distance m, altitude m,
-speed m/s; ``null`` where the field is absent or invalid) and, for files fitparse rejects, the
-exception type. Only fields the Kotlin decoder is expected to produce are written.
+``*.fit``마다 쓰는 내용: ``file_id`` 필드, ``sport``/``session`` 요약, 모든 ``record`` 메시지를
+평행 배열로 정리한 것(timestamp는 Unix 초, power, heart_rate, cadence, distance m, altitude m,
+speed m/s. 필드가 없거나 무효이면 ``null``), 그리고 fitparse가 거절하는 파일이면 그 예외 종류.
+Kotlin 디코더가 만들어 낼 것으로 기대하는 필드만 쓴다.
 """
 
 # [파일 역할] 샘플 FIT 파일을 python-fitparse로 디코딩해 Kotlin FIT 디코더 테스트가 비교할 기대값 JSON을
@@ -96,7 +96,7 @@ def decode(path: Path) -> dict:
     try:
         fit = fitparse.FitFile(str(path), check_crc=False)
         fit.parse()
-    except Exception as e:  # noqa: BLE001 - we record the failure kind
+    except Exception as e:  # noqa: BLE001 - 실패 종류를 기록하려고 모든 예외를 받는다
         # 손상 파일(잘린 파일, 헤더 손상)은 '이 파일은 거절돼야 한다'는 기대값 자체가 의미가 있으므로 예외
         # 종류와 메시지 일부만 남기고 끝낸다.
         out["error"] = type(e).__name__

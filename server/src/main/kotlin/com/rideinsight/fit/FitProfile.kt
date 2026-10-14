@@ -9,9 +9,9 @@ package com.rideinsight.fit
 // 때 쓴다. 지금 읽지 않는 메시지·필드(lap, event, activity, 위치, 온도 등)도 번호만 적어 두었다.
 
 /**
- * The part of the FIT global profile this project needs: message numbers, field numbers and the
- * scale/offset of the fields used for cycling activities. Numbers follow the public FIT profile
- * (also carried by python-fitparse, MIT); nothing from the Garmin SDK is included.
+ * FIT 전역 프로필 중 이 프로젝트에 필요한 부분: 메시지 번호, 필드 번호, 사이클링 활동에 쓰는 필드의
+ * 배율·오프셋. 번호는 공개된 FIT 프로필(python-fitparse(MIT)에도 들어 있다)을 따랐고, Garmin SDK의 내용은
+ * 하나도 넣지 않았다.
  */
 object FitProfile {
     // 어느 메시지에서나 timestamp를 뜻하는 공통 필드 번호. 압축 타임스탬프 헤더의 기준 시각도 이 필드에서
@@ -70,7 +70,7 @@ object FitProfile {
         const val NORMALIZED_POWER = 34
         const val TRAINING_STRESS_SCORE = 35 // uint16, raw / 10
         const val INTENSITY_FACTOR = 36 // uint16, raw / 1000
-        const val THRESHOLD_POWER = 45 // first draft said 112; python-fitparse's profile says 45
+        const val THRESHOLD_POWER = 45 // 처음에는 112로 적었다. python-fitparse의 프로필은 45다
     }
 
     // sport 메시지 필드와 종목 열거값 일부: 0 generic, 1 running, 2 cycling, 4 fitness_equipment.
@@ -91,9 +91,10 @@ object FitProfile {
         const val DATA = 3
     }
 
-    // 종목 코드 → 저장·응답에 쓰는 이름. 모르는 코드는 sport_<번호>로 남겨 정보를 잃지 않는다.
-    // 3(transition)과 5(swimming)는 상수 없이 숫자로 적었다.
-    /** Names for the sport enum values we care about; others are reported by number. */
+    /**
+     * 종목 코드 → 저장·응답에 쓰는 이름. 이 프로젝트가 신경 쓰는 종목 열거값만 이름을 붙이고, 모르는 코드는
+     * sport_<번호>로 번호를 그대로 남겨 정보를 잃지 않는다. 3(transition)과 5(swimming)는 상수 없이 숫자로 적었다.
+     */
     fun sportName(code: Long?): String? = when (code) {
         null -> null
         Sport.GENERIC -> "generic"

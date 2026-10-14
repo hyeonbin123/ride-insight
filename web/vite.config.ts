@@ -13,7 +13,7 @@ export default defineConfig({
   // nginx가 같은 역할을 한다(web/nginx.conf의 /api/ 프록시).
   server: {
     port: 5173,
-    // The Spring Boot server (./gradlew bootRun) listens on 8080; the page talks to /api only.
+    // Spring Boot 서버(./gradlew bootRun)는 8080에서 듣고, 화면은 /api로만 요청한다.
     proxy: { '/api': 'http://localhost:8080' },
   },
   // Vitest 설정: jsdom(브라우저 DOM 흉내)에서 컴포넌트를 그려 보고, describe/it 같은 전역 함수를 import 없이

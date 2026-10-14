@@ -11,8 +11,8 @@ package com.rideinsight.storage
 import java.sql.ResultSet
 
 /**
- * PostgreSQL array literals for binding (`'{1,2,NULL}'::smallint[]`) and reading back. Literal
- * binding avoids driver-specific boxed-array support and keeps NULL elements.
+ * 바인딩용 PostgreSQL 배열 리터럴(`'{1,2,NULL}'::smallint[]`)을 만들고 배열 컬럼을 다시 읽는다. 리터럴로
+ * 바인딩하면 드라이버마다 다른 박싱 배열 지원에 기대지 않고 NULL 원소도 지킬 수 있다.
  */
 object PgArrays {
     // 숫자 목록 → '{v1,v2,...}'. null과 NaN·Infinity는 NULL 원소로 바꿔 DB에 숫자가 아닌 값이 들어가지 않게
@@ -41,11 +41,9 @@ object PgArrays {
     }
 }
 
-// nullable 숫자 읽기 확장 함수. PgJDBC는 float4 컬럼을 getObject(컬럼, java.lang.Double)로 읽지 못해, 처음
-// 구현에서 선수 조회가 전부 500이었다(통합 테스트가 잡음, docs/ai-verification.md 2단계). 그래서 기본형으로
-// 읽은 뒤 wasNull()로 SQL NULL인지 확인한다.
-// Nullable primitive readers. PgJDBC refuses getObject(column, java.lang.Double::class.java) on a
-// float4 column ("float4 cannot be converted to Double"), so read primitives and check wasNull.
+// nullable 숫자 읽기 확장 함수. PgJDBC는 float4 컬럼을 getObject(컬럼, java.lang.Double::class.java)로 읽지
+// 못하고 "float4 cannot be converted to Double" 오류를 내서, 처음 구현에서 선수 조회가 전부 500이었다(통합
+// 테스트가 잡음, docs/ai-verification.md 2단계). 그래서 기본형으로 읽은 뒤 wasNull()로 SQL NULL인지 확인한다.
 fun ResultSet.doubleOrNull(column: String): Double? {
     val v = getDouble(column)
     return if (wasNull()) null else v

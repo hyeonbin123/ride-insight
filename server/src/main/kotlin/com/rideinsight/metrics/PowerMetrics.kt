@@ -12,21 +12,18 @@ package com.rideinsight.metrics
 import kotlin.math.pow
 
 /**
- * Coggan power metrics, implemented to match GoldenCheetah (src/Metrics/Coggan.cpp) so that the
- * results can be checked against the OpenData metadata. See docs/experiments.md, stage 1.
+ * Coggan 파워 지표. 결과를 OpenData 메타데이터와 대조할 수 있도록 GoldenCheetah(src/Metrics/Coggan.cpp)와
+ * 같게 구현했다. docs/experiments.md 1단계 참고.
  */
 object PowerMetrics {
-    // NP의 이동 평균 창 길이 30초(Coggan 정의).
-    /** Rolling-average window length used by Normalized Power, in seconds. */
+    /** Normalized Power가 쓰는 이동 평균 창 길이(초). Coggan 정의대로 30초다. */
     const val NP_WINDOW_SECS = 30.0
 
-    // 계산: 30초 이동 평균을 4제곱해 모든 샘플에서 평균한 뒤 4제곱근을 취한다. 창 크기는 샘플 수 = (30 / 기록
-    // 간격)의 정수 부분(1초면 30, 5초면 6, 1.26초면 23)이다. 0 W 샘플도 빼지 않는다.
     /**
-     * Normalized Power. The rolling window holds `(30 / recIntSecs)` samples (truncated), starts
-     * filled with zeros and is never trimmed at the start, exactly like GoldenCheetah. Returns null
-     * when the window would hold at most one sample (GoldenCheetah reports 0 in that case) or when
-     * there are no samples.
+     * Normalized Power. 30초 이동 평균을 4제곱해 모든 샘플에서 평균한 뒤 4제곱근을 취한다. 이동 평균 창은
+     * `(30 / recIntSecs)`의 정수 부분만큼의 샘플을 담고(1초면 30, 5초면 6, 1.26초면 23), 0으로 채워진 채
+     * 시작하며, GoldenCheetah와 똑같이 시작 부분을 잘라 내지 않는다. 0 W 샘플도 빼지 않는다. 창에 샘플이
+     * 하나 이하만 들어가는 경우(GoldenCheetah는 이때 0을 낸다)나 샘플이 없으면 null을 돌려준다.
      */
     fun normalizedPower(power: DoubleArray, recIntSecs: Double): Double? {
         if (power.isEmpty() || recIntSecs <= 0.0) return null
@@ -49,20 +46,18 @@ object PowerMetrics {
         return (total / power.size).pow(0.25)
     }
 
-    // IF = NP / FTP. FTP가 없거나 0 이하면 null이고, 그러면 TSS도 계산하지 않는다.
-    /** Intensity Factor = NP / threshold power. Null when the threshold is missing or not positive. */
+    /** Intensity Factor = NP / 임계 파워(FTP). FTP가 없거나 0 이하면 null이고, 그러면 TSS도 계산하지 않는다. */
     fun intensityFactor(normalizedPower: Double, thresholdWatts: Double?): Double? {
         if (thresholdWatts == null || thresholdWatts <= 0.0) return null
         return normalizedPower / thresholdWatts
     }
 
-    // TSS = 시간(초) × NP × IF / (FTP × 3600) × 100. FTP와 같은 파워로 1시간을 타면 100이다. 시간은 '샘플 수
-    // × 기록 간격'이라 기록이 멈춘 시간은 들어가지 않는다. FTP가 TSS에 제곱으로 들어가므로(IF에 한 번, 분모에
-    // 한 번) FTP를 바꾸면 TSS는 1/FTP² 비율로 바뀐다(ApiIntegrationTest가 확인).
     /**
-     * Training Stress Score = (NP × duration × IF) / (threshold × 3600) × 100, where duration is
-     * `sampleCount × recIntSecs` seconds. GoldenCheetah stores that duration as the NP metric's
-     * `count` (already in seconds) and multiplies it with NP and IF in the same way.
+     * Training Stress Score = (NP × duration × IF) / (FTP × 3600) × 100. duration은 `sampleCount × recIntSecs`
+     * 초다. GoldenCheetah는 이 시간을 NP 메트릭의 `count`(이미 초 단위)로 저장해 두고 같은 방식으로 NP·IF와
+     * 곱한다. FTP와 같은 파워로 1시간을 타면 100이다. 시간이 '샘플 수 × 기록 간격'이라 기록이 멈춘 시간은
+     * 들어가지 않는다. FTP가 TSS에 제곱으로 들어가므로(IF에 한 번, 분모에 한 번) FTP를 바꾸면 TSS는 1/FTP²
+     * 비율로 바뀐다(ApiIntegrationTest가 확인).
      */
     fun trainingStressScore(
         normalizedPower: Double,

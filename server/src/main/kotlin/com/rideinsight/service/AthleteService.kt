@@ -33,7 +33,7 @@ class AthleteService(
             // 적용일을 충분히 이른 날짜로 두어 과거 날짜의 활동을 올려도 이 FTP가 적용되게 한다. 나중에
             // 날짜를 지정한 FTP가 등록되면 그 날짜부터는 그 값이 우선한다(thresholdOn은 가장 최근 적용일을
             // 고른다).
-            val from = LocalDate.of(1990, 1, 1) // applies to every activity until a dated threshold is set
+            val from = LocalDate.of(1990, 1, 1) // 날짜를 지정한 FTP가 생기기 전까지 모든 활동에 적용된다
             athletes.setThreshold(athlete.id, from, ftp, "manual")
             threshold = Threshold(from, ftp, "manual")
         }
@@ -55,7 +55,7 @@ class AthleteService(
     // FTP 변경: 선수 행을 잠근 뒤(같은 선수의 업로드와 겹치지 않게) 이력을 넣거나 같은 날짜 값을 덮어쓰고, 그
     // 날짜 0시(UTC) 이후 시작한 활동의 지표를 다시 계산한다. 재계산은 활동 날짜마다 유효한 FTP를 다시
     // 찾으므로, 더 뒤 날짜의 FTP가 있는 활동은 그 값이 그대로 쓰인다. 다시 계산한 활동 수를 돌려준다.
-    /** Sets the FTP from a date and recomputes the TSS of activities from that date on. */
+    /** 어떤 날짜부터의 FTP를 정하고, 그 날짜 이후 활동의 TSS를 다시 계산한다. */
     @Transactional
     fun setThreshold(id: UUID, effectiveFrom: LocalDate, ftpWatts: Int): Int {
         if (!athletes.lock(id)) throw NotFoundException("athlete $id not found")
@@ -68,11 +68,10 @@ class AthleteService(
         if (!athletes.exists(id)) throw NotFoundException("athlete $id not found")
         require(!to.isBefore(from)) { "'to' must not be before 'from'" }
         require(java.time.temporal.ChronoUnit.DAYS.between(from, to) <= 3 * 366) { "range must be at most three years" }
-        // 부하는 지수 가중 평균이라 조회 시작일 전의 훈련이 남아 있어야 한다. 선수의 첫 활동부터 조회
-        // 전날까지 먼저 계산(워밍업)해 그 마지막 값을 초기값으로 넘긴다. 처음에는 120일만 워밍업해 조회
-        // 시작일에 따라 CTL이 최대 6% 달라졌다(Codex 2차 검토 지적 4).
-        // Warm up the loads from the athlete's first activity so CTL does not depend on the query
-        // start (Codex review 2026-10-10: a 120-day warm-up left about 6 % of CTL missing).
+        // 부하는 지수 가중 평균이라 조회 시작일 전의 훈련이 남아 있어야 한다. CTL이 조회 시작일에 좌우되지
+        // 않도록 선수의 첫 활동부터 조회 전날까지 먼저 계산(워밍업)해 그 마지막 값을 초기값으로 넘긴다.
+        // 처음에는 120일만 워밍업해 CTL의 약 6%가 빠졌고, 조회 시작일에 따라 CTL이 최대 6% 달라졌다
+        // (2026-10-10 Codex 2차 검토 지적 4).
         val firstDay = activities.firstActivityDate(id)
         val warmFrom = if (firstDay != null && firstDay.isBefore(from)) firstDay else from
         // 날짜별 TSS 합은 워밍업 시작일부터 to까지 한 번에 읽는다.
@@ -83,7 +82,7 @@ class AthleteService(
 
     // FTP 추정 근거인 '창 안 파워 라이딩 수'. 기간은 [asOf 다음 날 0시 − weeks주, asOf 다음 날 0시)라 asOf
     // 당일을 포함한다(docs/experiments.md 규칙 변경 7).
-    /** Number of rides with power in the last [weeks] weeks before [asOf] (inclusive). */
+    /** [asOf]까지(당일 포함) 최근 [weeks]주 동안의 파워 라이딩 수. */
     fun powerRideCount(id: UUID, weeks: Int, asOf: LocalDate): Int {
         val to = asOf.plusDays(1).atStartOfDay().atOffset(ZoneOffset.UTC)
         return activities.countPowerActivities(id, to.minusWeeks(weeks.toLong()), to)
@@ -92,7 +91,7 @@ class AthleteService(
     // 기간 최대 파워 커브: 기간 안 활동들에 저장된 16구간 MMP의 구간별 최댓값. 기간은 반열린 구간 [from,
     // to)라 다음 날 0시는 포함하지 않는다(Codex 2차 검토 지적 7: 처음에는 between이 다음 날 자정을 포함했다).
     // weeks는 1~104주만 받는다.
-    /** Best power per standard window over the last [weeks] weeks before [asOf] (inclusive). */
+    /** [asOf]까지(당일 포함) 최근 [weeks]주 동안 표준 구간마다의 최대 파워. */
     fun powerCurve(id: UUID, weeks: Int, asOf: LocalDate): List<Pair<Int, Double>> {
         if (!athletes.exists(id)) throw NotFoundException("athlete $id not found")
         require(weeks in 1..104) { "weeks must be between 1 and 104" }

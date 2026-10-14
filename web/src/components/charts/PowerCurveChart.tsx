@@ -11,9 +11,9 @@ import { formatWatts, secsLabel } from "../../format";
 import { useMeasure } from "./useMeasure";
 
 interface Props {
-  /** Primary curve (an activity or the athlete's recent best). */
+  /** 주 곡선(활동 하나 또는 선수의 최근 최고 기록). */
   points: CurvePoint[];
-  /** Optional comparison curve drawn behind (e.g. the 6-week best behind one ride). */
+  /** 선택 사항인 비교 곡선. 주 곡선 뒤에 그린다(예: 라이딩 하나 뒤에 6주 최고 기록). */
   comparison?: CurvePoint[];
   labels?: [string, string];
   height?: number;
@@ -23,10 +23,12 @@ interface Props {
 // 사람이 읽기 쉬운 값을 직접 정한다. 데이터의 최대 구간보다 긴 눈금은 그리지 않는다.
 const TICKS = [1, 5, 15, 60, 300, 1200, 3600, 10800];
 
-/** Mean-maximal power against duration on a log axis. */
-// props: points(주 곡선), comparison(선택, 뒤에 점선으로 그릴 비교 곡선), labels(범례 문구 두 개),
-// height(px). 폭은 useMeasure로 잰 부모 폭(최소 320px)이고, 여백(margin)을 뺀 안쪽 영역에 그린다. hover는
-// 마우스의 안쪽 영역 기준 x 좌표(px)다.
+/**
+ * 지속 시간(로그 축)에 따른 최대 평균 파워 곡선.
+ * props: points(주 곡선), comparison(선택, 뒤에 점선으로 그릴 비교 곡선), labels(범례 문구 두 개),
+ * height(px). 폭은 useMeasure로 잰 부모 폭(최소 320px)이고, 여백(margin)을 뺀 안쪽 영역에 그린다. hover는
+ * 마우스의 안쪽 영역 기준 x 좌표(px)다.
+ */
 export function PowerCurveChart({ points, comparison, labels = ["이 라이딩", "최근 최고"], height = 280 }: Props) {
   const [ref, width] = useMeasure<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);

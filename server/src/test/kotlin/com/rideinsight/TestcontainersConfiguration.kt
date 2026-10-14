@@ -22,7 +22,7 @@ class TestcontainersConfiguration {
 	@Bean
 	@ServiceConnection
 	fun postgresContainer(): PostgreSQLContainer {
-		// Same major version as compose.yaml so tests and the local service agree.
+		// compose.yaml과 같은 주 버전(16)을 써서 테스트와 로컬 서비스의 동작이 어긋나지 않게 한다.
 		return PostgreSQLContainer(DockerImageName.parse("postgres:16"))
 	}
 

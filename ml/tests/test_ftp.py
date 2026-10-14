@@ -19,7 +19,7 @@ from ride_insight_ml import ftp
 # 길수록 FTP에 가까워지는 단순한 모양이다(20분이면 약 1.095 × FTP). GC 값은 NP = 0.8 × FTP, IF = 0.8로 둬서
 # 역산 임계값 NP / IF가 정확히 FTP(=L_FTP)가 되고, cp_setting은 FTP + 10이라 L_CP와 L_FTP가 구분된다.
 def _ride(athlete, day, ftp_w, np_w=None):
-    """A ride whose mean-maximal powers follow a simple curve scaled by the athlete's FTP."""
+    """최대 평균 파워가 선수의 FTP에 비례하는 단순한 곡선을 따르는 라이딩 하나."""
     secs = {
         "1s": 1,
         "5s": 5,
@@ -60,7 +60,7 @@ def _write_fixture(tmp_path: Path, n_athletes=12):
     for i in range(n_athletes):
         base = 200 + 10 * i
         for day in range(0, 200, 3):
-            w = base + (20 if day >= 100 else 0)  # FTP steps up on day 100
+            w = base + (20 if day >= 100 else 0)  # 100일째에 FTP가 한 단계 오른다
             rows.append(_ride(f"a{i}", day, w))
     jsonl = tmp_path / "all.jsonl"
     jsonl.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
@@ -104,11 +104,11 @@ def test_build_units_labels_and_freshness(tmp_path: Path):
     units = ftp.build_units(rides, athletes, splits)
     assert len(units) > 0
     a0 = units[units["athlete"] == "a0"].sort_values("ref_date")
-    # Label is NP / IF of the last ride in the window: 200 before day 100, 220 after.
+    # 라벨은 창의 마지막 라이딩의 NP / IF다: 100일째 전에는 200, 뒤에는 220.
     assert a0.iloc[0]["label_ftp"] == 200
     assert a0.iloc[-1]["label_ftp"] == 220
     assert a0.iloc[0]["label_cp"] == 210
-    # The unit whose window ends right after the step is "fresh"; the first one is not.
+    # 창이 FTP 상승 직후에 끝나는 단위는 "신선"하고, 첫 단위는 신선하지 않다.
     assert not a0.iloc[0]["fresh"]
     assert a0["fresh"].any()
     assert a0.iloc[0]["age"] == 35
@@ -120,8 +120,8 @@ def test_build_units_labels_and_freshness(tmp_path: Path):
 # 변화)은 신선, 28일(72일 뒤)·168일은 신선하지 않아야 한다. 처음 구현은 −28일 값과 +28일 이후 첫 값을 비교해
 # +45일 변화도 신선으로 셌다. Codex 3차 검토가 이를 잡았고(규칙 변경 5), 이 테스트가 같은 회귀를 막는다.
 def test_freshness_follows_the_registered_definition(tmp_path: Path):
-    # Label 250 until day 100, then 270. A unit is fresh only when a ride within +-28 days of its
-    # reference date carries a different label.
+    # 라벨은 100일째까지 250, 그 뒤 270이다. 기준일 ±28일 안의 라이딩 중 라벨이 다른 것이 있을 때만
+    # 그 단위가 신선하다.
     rows = [_ride("a", d, 250 if d < 100 else 270) for d in range(0, 200, 2)]
     jsonl = tmp_path / "r.jsonl"
     jsonl.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
@@ -131,9 +131,9 @@ def test_freshness_follows_the_registered_definition(tmp_path: Path):
         int((pd.Timestamp(u.ref_date) - pd.Timestamp("2020-01-01")).days): bool(u.fresh)
         for u in units.itertuples()
     }
-    assert by_day[84] is True  # change on day 100 is 16 days ahead
-    assert by_day[28] is False  # change 72 days ahead
-    assert by_day[112] is True  # change 12 days back
+    assert by_day[84] is True  # 100일째의 변화가 16일 뒤에 있다
+    assert by_day[28] is False  # 변화가 72일 뒤에 있다
+    assert by_day[112] is True  # 변화가 12일 전에 있었다
     assert by_day[168] is False
 
 
@@ -156,8 +156,8 @@ def test_rules_on_known_curve():
     assert ftp.rule_r1(u).iloc[0] == 285.0
     assert np.isnan(ftp.rule_r1(u).iloc[1])
     r3 = ftp.rule_r3(u)
-    assert 250 < r3.iloc[0] < 320  # CP below the 20-min best, above the 60-min best here
-    assert np.isnan(r3.iloc[1])  # fewer than three durations
+    assert 250 < r3.iloc[0] < 320  # 여기서 CP는 20분 최대보다 낮고 60분 최대보다 높다
+    assert np.isnan(r3.iloc[1])  # 값이 있는 구간이 3개 미만
 
 
 # build → evaluate(dev, 채택 R1) → Markdown까지 한 번에 돌려 흐름이 끊기지 않는지 본다. 합성 곡선의 20분
@@ -173,12 +173,12 @@ def test_evaluate_runs_end_to_end(tmp_path: Path):
     r = ftp.evaluate(units, "dev", adopt="R1")
     assert r["n_units"] > 0
     assert "R1" in r["methods"] and r["methods"]["R1"]["mae"]["point"] is not None
-    # The synthetic curve has 20-min best = 1.095 × FTP, so 0.95 × that overestimates by ~4 %.
+    # 합성 곡선의 20분 최대는 1.095 × FTP라 그 0.95배는 약 4% 과대 추정이 된다.
     assert r["methods"]["R1"]["bias"]["point"] > 0
     assert r["H6"]["verdict"] == "지지"
     md = ftp.to_markdown(r)
     assert "R1" in md and "H6" in md
-    # LightGBM may be skipped with so little training data; whichever ran must have a coverage number.
+    # 학습 데이터가 이렇게 적으면 LightGBM은 건너뛸 수 있다. 실제로 돈 후보는 적용 비율 값이 있어야 한다.
     for m in r["methods"].values():
         assert "skipped" in m or 0 < m["coverage"] <= 1
 
@@ -192,7 +192,7 @@ def test_athlete_bootstrap_uses_athlete_resampling():
     r = ftp.athlete_bootstrap(err, ath, np.mean, n=500)
     assert r["point"] == 5.0
     assert r["n_athletes"] == 2
-    # With two athletes the resampled mean is 1, 5 or 9: the interval must reach both extremes.
+    # 선수가 둘이면 재표집 평균은 1, 5, 9 중 하나다: 구간이 양 끝에 모두 닿아야 한다.
     assert r["ci"][0] == 1.0 and r["ci"][1] == 9.0
 
 

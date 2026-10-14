@@ -14,16 +14,17 @@ import tools.jackson.databind.JsonNode
 import tools.jackson.databind.json.JsonMapper
 
 /**
- * Inference for a LightGBM regression model exported with `booster.dump_model()` (JSON). The trees
- * are walked directly, so no native dependency is needed; the Python predictions are checked
- * against this class in the tests (docs/experiments.md, 3단계 서비스 반영).
+ * `booster.dump_model()`(JSON)로 내보낸 LightGBM 회귀 모델의 추론기. 트리를 직접 순회하므로 네이티브
+ * 의존성이 필요 없고, 테스트에서 Python 예측과 이 클래스의 결과를 대조한다(docs/experiments.md, 3단계
+ * 서비스 반영).
  *
- * Decision rule per node: numerical split `feature <= threshold` goes left. A missing value
- * (NaN) follows `default_left` when the node's `missing_type` is "NaN"; with "None" LightGBM treats
- * a missing value as zero. Models with `missing_type` "Zero" (trained with `zero_as_missing`) send
- * zeros and NaN along `default_left`; that rule is not implemented, so [fromJson] rejects them.
+ * 노드마다의 판정 규칙: 숫자 분할 `feature <= threshold`이면 왼쪽으로 간다. 결측값(NaN)은 노드의
+ * `missing_type`이 "NaN"이면 `default_left`를 따르고, "None"이면 LightGBM처럼 결측을 0으로 본다.
+ * `missing_type`이 "Zero"인 모델(`zero_as_missing`으로 학습)은 0과 NaN을 모두 `default_left`로 보내는데,
+ * 이 규칙은 구현하지 않았으므로 [fromJson]이 그런 모델을 거절한다.
+ *
+ * 생성자는 private이고 fromJson으로만 만든다. featureNames의 순서가 입력 배열의 열 순서다.
  */
-// 생성자는 private이고 fromJson으로만 만든다. featureNames의 순서가 입력 배열의 열 순서다.
 class LightGbmModel private constructor(
     val featureNames: List<String>,
     private val trees: List<JsonNode>,

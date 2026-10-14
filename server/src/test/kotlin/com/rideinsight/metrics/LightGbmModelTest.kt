@@ -13,7 +13,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import tools.jackson.databind.json.JsonMapper
 
-/** The Kotlin tree walker must reproduce LightGBM's own predictions (fixtures from ml/ftp_export.py). */
+/** Kotlin 트리 순회 추론기가 LightGBM 자체의 예측을 재현해야 한다(고정 자료는 ml/의 ftp_export.py가 만든다). */
 class LightGbmModelTest {
     private val dir = File("src/test/resources/lgbm")
     private val mapper = JsonMapper.builder().build()
@@ -56,7 +56,7 @@ class LightGbmModelTest {
         fun model(root: String) =
             """{"objective":"regression","feature_names":["a"],"tree_info":[{"tree_index":0,"tree_structure":$root}]}"""
         val leaf = """{"leaf_index":0,"leaf_value":1.0}"""
-        // The same tree with "None" loads and predicts.
+        // 같은 트리라도 missing_type이 "None"이면 읽히고 예측도 된다.
         assertEquals(1.0, LightGbmModel.fromJson(model(node("None", leaf, leaf))).predict(doubleArrayOf(0.0)))
         val e = assertFailsWith<IllegalArgumentException> {
             LightGbmModel.fromJson(model(node("None", node("Zero", leaf, leaf), leaf)))
@@ -68,7 +68,7 @@ class LightGbmModelTest {
     // 않고 통과한다.
     @Test
     fun `ftp model matches python when exported`() {
-        if (!File(dir, "ftp_model.json").exists()) return // exported only when stage 3 adopts a model
+        if (!File(dir, "ftp_model.json").exists()) return // 3단계에서 모델을 채택할 때만 내보낸다
         check("ftp_model.json", "ftp_cases.json")
     }
 }

@@ -39,7 +39,7 @@ class OpenDataCsvTest {
     // 행. 결과 파워에 유한하지 않은 값이 하나도 없어야 한다.
     @Test
     fun `non-finite values are missing power or bad rows, never propagated`() {
-        // Codex review 2026-10-10: NaN parsed by toDoubleOrNull would have reached NP.
+        // 2026-10-10 Codex 검토: toDoubleOrNull이 읽어 들인 NaN이 NP까지 퍼질 수 있었다.
         val r = read("secs,power\n0,NaN\n1,200\nNaN,200\nInfinity,200\n2,Infinity\n3,-Infinity\n")
         assertContentEquals(doubleArrayOf(0.0, 1.0, 2.0, 3.0), r.samples.secs)
         assertContentEquals(doubleArrayOf(0.0, 200.0, 0.0, 0.0), r.samples.power)

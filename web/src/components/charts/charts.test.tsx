@@ -17,9 +17,9 @@ describe("charts render without data problems", () => {
       <PowerCurveChart points={[{ secs: 1, watts: 600 }, { secs: 60, watts: 400 }, { secs: 1200, watts: 300 }]} />,
     );
     expect(container.querySelectorAll("path").length).toBeGreaterThan(0);
-    expect(container.querySelectorAll("circle").length).toBe(3); // three points -> dots too
+    expect(container.querySelectorAll("circle").length).toBe(3); // 점이 세 개면 점 표시도 그린다
     rerender(<PowerCurveChart points={[{ secs: 5, watts: 500 }]} />);
-    expect(container.querySelectorAll("circle").length).toBe(1); // a single point is still visible
+    expect(container.querySelectorAll("circle").length).toBe(1); // 점이 하나뿐이어도 보여야 한다
     rerender(<PowerCurveChart points={[]} />);
     expect(screen.getByRole("img", { name: "power curve" })).toBeInTheDocument();
   });
@@ -37,7 +37,7 @@ describe("charts render without data problems", () => {
     const { container } = render(<TrainingLoadChart days={days} />);
     const bars = Array.from(container.querySelectorAll("rect"));
     expect(bars.length).toBe(10);
-    // Zero TSS must draw zero-height bars, not half-height ones (Codex review 2026-10-10).
+    // TSS가 0이면 막대 높이도 0이어야 하고 반쯤 찬 막대가 되면 안 된다(2026-10-10 Codex 검토).
     for (const b of bars) expect(Number(b.getAttribute("height"))).toBe(0);
   });
 
@@ -49,7 +49,7 @@ describe("charts render without data problems", () => {
       <TimeSeriesChart secs={secs} series={[{ name: "파워", color: "#000", values: [100, null, 120, 130, null], unit: "W" }]} />,
     );
     const d = container.querySelector("path")?.getAttribute("d") ?? "";
-    // Two segments: [0] alone and [2..3]; d3 emits one "M" per segment.
+    // 두 조각: 혼자 있는 [0]과 [2..3]. d3는 조각마다 "M"을 하나씩 낸다.
     expect((d.match(/M/g) ?? []).length).toBe(2);
     expect(screen.getByText(/파워 \(W\)/)).toBeInTheDocument();
   });
