@@ -1,0 +1,254 @@
+{
+ "date": "2026-10-15",
+ "code": "649de9f (decoder limits ce82607 + read path fix)",
+ "conditions": "probe: ./gradlew fitMemoryProbe (JVM heap 4 GB, G1); server: bootJar with -Xmx512m -XX:+UseG1GC, empty PostgreSQL 16 container, ml/.../load.py --rounds 1 --uploads 1|5. Other projects' jobs (GPU training, database containers) were running on the same PC, so latencies are not comparable to the stage-5 load report.",
+ "probe": {
+  "jvm": "OpenJDK 64-Bit Server VM 21.0.11",
+  "max_heap": 4294967296,
+  "cases": [
+   {
+    "case": "elemnt",
+    "file_bytes": 715726,
+    "messages": 24050,
+    "records": 13471,
+    "decode_ms": 101,
+    "decode_allocated": 4909032,
+    "decode_retained": 1060504,
+    "activity_ms": 28,
+    "activity_allocated": 4521112,
+    "activity_retained": 599616,
+    "peak_retained": 1660120,
+    "peak_retained_per_message": 69,
+    "peak_retained_over_file": 2.3
+   },
+   {
+    "case": "edge810",
+    "file_bytes": 148037,
+    "messages": 4766,
+    "records": 4700,
+    "decode_ms": 30,
+    "decode_allocated": 1087392,
+    "decode_retained": 460744,
+    "activity_ms": 3,
+    "activity_allocated": 1656344,
+    "activity_retained": 207456,
+    "peak_retained": 668200,
+    "peak_retained_per_message": 140,
+    "peak_retained_over_file": 4.5
+   },
+   {
+    "case": "tiny-records-500k",
+    "file_bytes": 1000064,
+    "messages": 500000,
+    "records": 499998,
+    "decode_ms": 138,
+    "decode_allocated": 70381544,
+    "decode_retained": 8129688,
+    "activity_ms": 59,
+    "activity_allocated": 58001264,
+    "activity_retained": 23068920,
+    "peak_retained": 31198608,
+    "peak_retained_per_message": 62,
+    "peak_retained_over_file": 31.2
+   },
+   {
+    "case": "tiny-records-1m",
+    "file_bytes": 2000064,
+    "rejected": "more than 500000 record messages in file"
+   },
+   {
+    "case": "tiny-records-2m",
+    "file_bytes": 4000064,
+    "rejected": "more than 500000 record messages in file"
+   },
+   {
+    "case": "wide-255-fields-10mb",
+    "file_bytes": 9999838,
+    "messages": 39119,
+    "records": 60,
+    "decode_ms": 122,
+    "decode_allocated": 2339752,
+    "decode_retained": 131864,
+    "activity_ms": 0,
+    "activity_allocated": 8456,
+    "activity_retained": 3000,
+    "peak_retained": 134864,
+    "peak_retained_per_message": 3,
+    "peak_retained_over_file": 0.0
+   },
+   {
+    "case": "rich-records-500k",
+    "file_bytes": 6500098,
+    "messages": 500002,
+    "records": 500000,
+    "decode_ms": 152,
+    "decode_allocated": 76467696,
+    "decode_retained": 28776968,
+    "activity_ms": 340,
+    "activity_allocated": 176081472,
+    "activity_retained": 23068920,
+    "peak_retained": 51845888,
+    "peak_retained_per_message": 103,
+    "peak_retained_over_file": 8.0
+   }
+  ]
+ },
+ "server": [
+  {
+   "case": "elemnt",
+   "scenario": "single",
+   "uploads": 1,
+   "upload_status_counts": {
+    "201": 1
+   },
+   "read_status_counts": {
+    "200": 2
+   },
+   "max_heap_before_gc_mb": 58,
+   "max_heap_after_gc_mb": 32,
+   "full_gcs": 0,
+   "oom_lines_in_server_log_cumulative": 0,
+   "upload_p50_ms": 498
+  },
+  {
+   "case": "elemnt",
+   "scenario": "concurrent5",
+   "uploads": 5,
+   "upload_status_counts": {
+    "201": 5
+   },
+   "read_status_counts": {
+    "200": 10
+   },
+   "max_heap_before_gc_mb": 63,
+   "max_heap_after_gc_mb": 54,
+   "full_gcs": 0,
+   "oom_lines_in_server_log_cumulative": 0,
+   "upload_p50_ms": 845
+  },
+  {
+   "case": "tiny-records-500k",
+   "scenario": "single",
+   "uploads": 1,
+   "upload_status_counts": {
+    "201": 1
+   },
+   "read_status_counts": {
+    "200": 2
+   },
+   "max_heap_before_gc_mb": 213,
+   "max_heap_after_gc_mb": 69,
+   "full_gcs": 0,
+   "oom_lines_in_server_log_cumulative": 0,
+   "upload_p50_ms": 1703
+  },
+  {
+   "case": "tiny-records-500k",
+   "scenario": "concurrent5",
+   "uploads": 5,
+   "upload_status_counts": {
+    "201": 5
+   },
+   "read_status_counts": {
+    "200": 10
+   },
+   "max_heap_before_gc_mb": 440,
+   "max_heap_after_gc_mb": 273,
+   "full_gcs": 0,
+   "oom_lines_in_server_log_cumulative": 0,
+   "upload_p50_ms": 2100
+  },
+  {
+   "case": "tiny-records-2m",
+   "scenario": "single",
+   "uploads": 1,
+   "upload_status_counts": {
+    "413": 1
+   },
+   "read_status_counts": null,
+   "max_heap_before_gc_mb": 61,
+   "max_heap_after_gc_mb": 39,
+   "full_gcs": 0,
+   "oom_lines_in_server_log_cumulative": 0,
+   "upload_p50_ms": 259
+  },
+  {
+   "case": "tiny-records-2m",
+   "scenario": "concurrent5",
+   "uploads": 5,
+   "upload_status_counts": {
+    "413": 5
+   },
+   "read_status_counts": null,
+   "max_heap_before_gc_mb": 211,
+   "max_heap_after_gc_mb": 120,
+   "full_gcs": 0,
+   "oom_lines_in_server_log_cumulative": 0,
+   "upload_p50_ms": 324
+  },
+  {
+   "case": "wide-255-fields-10mb",
+   "scenario": "single",
+   "uploads": 1,
+   "upload_status_counts": {
+    "201": 1
+   },
+   "read_status_counts": {
+    "200": 2
+   },
+   "max_heap_before_gc_mb": 182,
+   "max_heap_after_gc_mb": 41,
+   "full_gcs": 0,
+   "oom_lines_in_server_log_cumulative": 0,
+   "upload_p50_ms": 547
+  },
+  {
+   "case": "wide-255-fields-10mb",
+   "scenario": "concurrent5",
+   "uploads": 5,
+   "upload_status_counts": {
+    "201": 5
+   },
+   "read_status_counts": {
+    "200": 10
+   },
+   "max_heap_before_gc_mb": 0,
+   "max_heap_after_gc_mb": 0,
+   "full_gcs": 0,
+   "oom_lines_in_server_log_cumulative": 0,
+   "upload_p50_ms": 620
+  },
+  {
+   "case": "rich-records-500k",
+   "scenario": "single",
+   "uploads": 1,
+   "upload_status_counts": {
+    "201": 1
+   },
+   "read_status_counts": {
+    "200": 2
+   },
+   "max_heap_before_gc_mb": 270,
+   "max_heap_after_gc_mb": 118,
+   "full_gcs": 0,
+   "oom_lines_in_server_log_cumulative": 0,
+   "upload_p50_ms": 4153
+  },
+  {
+   "case": "rich-records-500k",
+   "scenario": "concurrent5",
+   "uploads": 5,
+   "upload_status_counts": {
+    "201": 5
+   },
+   "read_status_counts": {
+    "200": 10
+   },
+   "max_heap_before_gc_mb": 511,
+   "max_heap_after_gc_mb": 461,
+   "full_gcs": 0,
+   "oom_lines_in_server_log_cumulative": 0,
+   "upload_p50_ms": 5732
+  }
+ ]
+}
