@@ -7,7 +7,8 @@ services:
       - 'POSTGRES_USER=rideinsight'
     ports:
       # Windows can reserve 5432 after a reboot; use a high host port.
-      - '55443:5432'
+      # 이 PC(127.0.0.1)에만 연다(2026-10-15): 개발 DB의 비밀번호가 저장소에 적힌 기본값이라 다른 기기에서 닿으면 안 된다.
+      - '127.0.0.1:55443:5432'
     volumes:
       - 'ride-insight-pg:/var/lib/postgresql/data'
 

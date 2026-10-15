@@ -1,0 +1,58 @@
+# OWASP ZAP 자동화 계획: 전체 스택(nginx가 서빙하는 웹 + nginx를 거친 API)을 FIT 업로드까지 포함해 스캔한다
+# (2026-10-15, docs/experiments.md 5단계 'DAST 범위 넓히기'). 처음 계획(zap/automation.yaml)은 서버(8080)의 /api와
+# /actuator만, HAR 씨앗(JSON 요청)으로만 다뤄 업로드와 웹이 빠졌다.
+#
+# 흐름: delay 작업이 ${SEED_DONE} 파일이 생길 때까지 기다리는 동안 zap/proxy_seed.py가 ZAP 프록시로 씨앗 요청(업로드
+# 포함)을 보낸다 → spider → passive scan → active scan(사이트 트리의 업로드 요청과 multipart 파트도 공격) → 보고서.
+# 변수는 zap/run_zap.sh가 정한다: TARGET(로컬 스택, 예 http://127.0.0.1:8081), SEED_DONE, REPORT_DIR, REPORT_NAME.
+# 인증은 없다(README 한계). DELETE는 씨앗에 넣지 않는다(데모 데이터 보호).
+env:
+  contexts:
+    - name: ride-insight-stack
+      urls:
+        - ${TARGET}
+      includePaths:
+        - "${TARGET}.*"
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
+
+jobs:
+  - type: delay
+    parameters:
+      time: "00:10:00"
+      fileName: ${SEED_DONE}
+
+  - type: spider
+    parameters:
+      context: ride-insight-stack
+      maxDuration: 2
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 5
+
+  - type: activeScan
+    parameters:
+      context: ride-insight-stack
+      threadPerHost: 4
+      maxScanDurationInMins: 90
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 5
+
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: ${REPORT_DIR}
+      reportFile: ${REPORT_NAME}
+      reportTitle: ride-insight stack ZAP scan
+
+  - type: report
+    parameters:
+      template: traditional-md
+      reportDir: ${REPORT_DIR}
+      reportFile: ${REPORT_NAME}
+      reportTitle: ride-insight stack ZAP scan

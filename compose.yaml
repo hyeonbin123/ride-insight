@@ -1,5 +1,7 @@
 # Whole stack: PostgreSQL + Kotlin server + nginx-served web. `docker compose up --build`, then open
 # http://localhost:8081. The server alone is on http://localhost:8080.
+# 포트는 이 PC(127.0.0.1)에만 연다(2026-10-15). API에 인증이 없어(README 한계) 모든 인터페이스에 열면 같은 네트워크의
+# 누구나 선수 데이터를 읽고 쓸 수 있었다. 다른 기기에서 보려면 이 줄을 직접 바꿔야 한다.
 services:
   postgres:
     image: postgres:16
@@ -23,7 +25,7 @@ services:
       RIDE_INSIGHT_DB_PASSWORD: rideinsight
       SPRING_DOCKER_COMPOSE_ENABLED: "false"
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -37,7 +39,7 @@ services:
   web:
     build: ./web
     ports:
-      - "8081:80"
+      - "127.0.0.1:8081:80"
     depends_on:
       server:
         condition: service_healthy

@@ -247,6 +247,16 @@ R4(CP 3변수)는 돌리지 않는다. 비선형 적합이 필요하고 FTP 추�
 - 기록된 수치 영향 없음: 1단계 파리티와 3단계 FTP 특징은 OpenData CSV 경로(`OpenDataCsv`, `ParityTool`)로 냈고 이 경로는 FIT 디코더도 바뀐 저장·조회 코드도 쓰지 않는다. 확인으로 고친 코드의 `parity` 도구를 개발 세트 앞 3명(라이딩 624개)에 다시 돌려 `reports/parity/dev.jsonl`의 우리 값(NP·IF·TSS·MMP 16구간)과 비교했고 모두 같았다
 - 응답 시간은 적지 않는다. 적용 전 측정 때 같은 PC가 다른 작업으로 붐벼 ELEMNT 업로드 하나가 10초까지 걸렸고, 재측정 때는 0.5초였다. 같은 조건의 비교가 아니다
 
+### DAST 범위 넓히기와 로컬 배포 하드닝 (2026-10-15; `reports/dast/2026-10-15-stack{1,2}.*`)
+H9 스캔(위)은 서버(8080)의 `/api`·`/actuator`만, HAR 씨앗의 JSON 요청으로만 다뤄 **FIT 업로드와 웹(nginx)이 빠졌다**. 같은 날 로컬 배포를 하드닝하고 범위를 넓혀 다시 쟀다. 판정은 H9와 같은 기준(High·Medium 0건, 진짜 경보는 고치고 다시 스캔)이다. 이 기준을 따로 먼저 커밋하지는 않았다(H9 규칙의 보안 수정 예외를 그대로 따랐다).
+
+- **하드닝**: `compose.yaml`의 서버·웹 포트와 `server/compose.yaml`의 개발 DB 포트를 `127.0.0.1`에만 연다(인증 없는 API와 저장소에 적힌 DB 비밀번호가 같은 네트워크에 열려 있었다). 확인: 스택을 띄운 뒤 이 PC의 다른 두 인터페이스 주소로 8080·8081에 연결하면 실패하고 127.0.0.1로는 된다. 웹(nginx)에는 nosniff, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Permissions-Policy`, CSP(`script-src 'self'`)를 붙이고 `server_tokens off`로 버전을 숨겼다
+- **계획**: `zap/automation-stack.yaml` + `zap/proxy_seed.py`. ZAP을 프록시로 띄운 채 delay 작업이 기다리는 동안 씨앗 스크립트가 nginx(8081)로 화면과 API 요청을 프록시로 보낸다: 선수 생성·FTP·시간대 변경, **multipart FIT 업로드**, 선수·활동 읽기 전부. 그다음 spider, passive, active scan(기본 정책). 끝점 25개(POST 업로드 포함), active scan 39~41초
+- **1차** (`stack1`): High 0, **Medium 1** — CSP: style-src 'unsafe-inline'(화면 4곳). MUI(emotion)가 실행 중에 `<style>` 태그를 넣어 허용해 둔 것으로 진짜 경보다. Low 1(Timestamp Disclosure - Unix: 번들의 숫자 상수, 오탐), Informational 3. 응답 2xx 77%, 3xx 1%, 4xx 21%, **5xx 0%**(업로드 공격 요청 포함)
+- **수정**: nginx가 요청마다 다른 nonce(`$request_id`)를 index.html의 자리 표시에 넣고(`sub_filter`) CSP를 `style-src 'self' 'nonce-…'`로 바꿨다. 화면(`src/main.tsx`)은 그 값을 읽어 emotion 캐시에 nonce를 준다. HTML은 `Cache-Control: no-cache`. 브라우저로 대시보드(PMC 그림), 선수 화면(MUI Select 메뉴), 라이딩 화면을 열어 CSP 위반 콘솔 메시지 0건, emotion `<style>` 3개 모두 nonce가 붙은 것을 확인했다
+- **2차** (`stack2`, 수정 뒤 같은 계획): **High 0, Medium 0**, Low 1(Timestamp Disclosure: 번들 상수 1540483477, 오탐), Informational 3(번들의 `select` 문자열을 SQL로 본 Suspicious Comments 오탐, Modern Web Application, User Agent Fuzzer). 응답 2xx 85%, 3xx 1%, 4xx 14%, 5xx 0%
+- 한계: classic spider는 SPA의 화면 경로를 따라가지 못한다(Modern Web Application 경보). AJAX spider(브라우저 필요)는 쓰지 않았다. 인증이 없다는 한계는 그대로다. 스캔한 웹 이미지에는 같은 날의 화면 문구·접근성 변경(다음 커밋)도 들어 있었다
+
 ## 규칙 변경
 11. **2026-10-15, 5단계 추가(업로드 자원 증폭, 측정 뒤·적용 전)**: FIT 업로드에 record 메시지 상한(500,000개)을 두고, 디코더가 담는 메시지·필드를 서비스가 쓰는 것으로 제한하며, 상한 초과(전체 메시지 2,000,000개 상한 포함)를 400 `invalid_fit` 대신 413 `fit_limit_exceeded`로 돌려준다. 적용 전 측정에서 4 MB 조작 파일 하나가 힙 512 MB 서버를 OutOfMemoryError(500)로 만들었다. 근거·측정·판정(H11)은 5단계 '업로드 자원 증폭'
 10. **2026-10-13, 3단계 측정 뒤(기록만, 결과 영향 없음)**: H7 구현에는 "신선·묵은 집단 중 하나라도 예측 단위가 20개 미만이면 구간을 내지 않고 판정 불가"라는 하한이 처음부터 있었는데 등록한 규칙에는 빠져 있었다. 이 하한을 규칙의 일부로 적는다(`ml/src/ride_insight_ml/ftp.py`의 `H7_MIN_UNITS`). 봉인 test는 신선 315단위(선수 53명)·묵은 1,271단위(선수 118명)라 하한에 걸리지 않았고, H7 결과(판정 불가)는 그대로다

@@ -2,6 +2,9 @@
 # ZAP 배포판으로 로컬 서버를 대상으로 zap/automation.yaml을 실행한다.
 #
 #   ZAP_DIR=<zap-2.17.0.jar가 있는 폴더> zap/run_zap.sh <이름> <씨앗 HAR>
+#   ZAP_DIR=... PLAN=zap/automation-stack.yaml TARGET=http://127.0.0.1:8081 zap/run_zap.sh <이름>
+#     (2026-10-15 전체 스택 계획: 씨앗 HAR 대신, ZAP이 기다리는 동안 zap/proxy_seed.py를 --done "work/zap/<이름>/seed.done"
+#     으로 실행해 프록시로 업로드를 포함한 요청을 보낸다)
 #
 # 서버가 TARGET(기본 http://127.0.0.1:8080)에서 실행 중이어야 한다. 보고서 <이름>.json/.md, ZAP 로그, 새로
 # 만든 ZAP 홈 폴더는 work/zap/<이름>/에 들어간다. 출력은 파일로만 보내고 파이프로는 절대 보내지 않는다.
@@ -14,12 +17,14 @@
 # 바로 멈춘다.
 set -euo pipefail
 
-# 필수 인자: 실행 이름(출력 폴더 이름)과 씨앗 HAR 경로(make_seed_har.py가 만든 것). ${1:?...}는 비었으면
-# 사용법을 출력하고 끝낸다. root는 이 스크립트 위치에서 구한 저장소 루트라 어느 폴더에서 실행해도 같다.
+# 인자: 실행 이름(출력 폴더 이름, 필수)과 씨앗 HAR 경로(make_seed_har.py가 만든 것, 기본 계획에서만 필요).
+# ${1:?...}는 비었으면 사용법을 출력하고 끝낸다. root는 이 스크립트 위치에서 구한 저장소 루트라 어느 폴더에서 실행해도 같다.
 # ZAP_DIR(ZAP 배포판 폴더)은 반드시 지정해야 한다.
-name=${1:?usage: zap/run_zap.sh <name> <seed HAR>}
-seed=${2:?usage: zap/run_zap.sh <name> <seed HAR>}
+name=${1:?usage: zap/run_zap.sh <name> [seed HAR]}
+seed=${2:-}
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# 계획 파일(기본 zap/automation.yaml, 씨앗 HAR 필요). PLAN으로 전체 스택 계획(zap/automation-stack.yaml)을 고른다.
+plan=${PLAN:-$root/zap/automation.yaml}
 : "${ZAP_DIR:?set ZAP_DIR to the folder that holds zap-<version>.jar}"
 
 # native: 경로를 절대 경로로 바꾸고, Git Bash(Windows)에서는 cygpath -m으로 드라이브 문자로 시작하는 Windows
@@ -40,16 +45,20 @@ if [ -e "$out" ]; then
 fi
 jars=("$ZAP_DIR"/zap-*.jar)
 [ -f "${jars[0]}" ] || { echo "no zap-*.jar in $ZAP_DIR" >&2; exit 1; }
-[ -f "$seed" ] || { echo "no seed HAR at $seed" >&2; exit 1; }
+[ -f "$plan" ] || { echo "no plan at $plan" >&2; exit 1; }
+# 기본 계획은 씨앗 HAR를 가져오므로 있어야 한다. 전체 스택 계획은 씨앗 HAR를 쓰지 않는다.
+if [ -n "$seed" ]; then [ -f "$seed" ] || { echo "no seed HAR at $seed" >&2; exit 1; }; fi
 mkdir -p "$out"
 
 # automation.yaml의 ${TARGET}, ${SEED_HAR}, ${REPORT_DIR}, ${REPORT_NAME} 자리에 들어갈 환경 변수. 대상은
 # 기본값이 로컬 서버이고(계획 파일 주석: 원격 호스트에는 쓰지 않는다), 경로는 Java가 읽을 수 있는 형태로 바꿔
 # 넘긴다.
 export TARGET=${TARGET:-http://127.0.0.1:8080}
-export SEED_HAR REPORT_DIR REPORT_NAME=$name
-SEED_HAR=$(native "$seed")
+export SEED_HAR="" SEED_DONE REPORT_DIR REPORT_NAME=$name
+if [ -n "$seed" ]; then SEED_HAR=$(native "$seed"); fi
 REPORT_DIR=$(native "$out")
+# 전체 스택 계획의 delay 작업이 기다리는 파일. zap/proxy_seed.py --done에 같은 경로를 준다.
+SEED_DONE="$REPORT_DIR/seed.done"
 
 # ZAP 실행: 힙 2 GB, 텔레메트리 끔(-notel), 업데이트 확인 끔, 실행마다 새 ZAP 홈 폴더(-dir)를 써서 이전
 # 설정·세션이 섞이지 않게 한다. 출력은 zap.log 파일로만 보낸다. set -e 상태에서도 ZAP이 실패하면 스크립트가
@@ -57,7 +66,7 @@ REPORT_DIR=$(native "$out")
 status=0
 # -port: ZAP 자체 프록시 포트가 8080에서 도는 서버와 겹치면 안 된다(기본 8099, ZAP_PORT로 바꿀 수 있다).
 java -Xmx2g -jar "$(native "${jars[0]}")" -cmd -notel -port "${ZAP_PORT:-8099}" -dir "$(native "$out/home")" \
-  -config start.checkForUpdates=false -autorun "$(native "$root/zap/automation.yaml")" \
+  -config start.checkForUpdates=false -autorun "$(native "$plan")" \
   > "$out/zap.log" 2>&1 || status=$?
 echo "ZAP exit status $status, reports and log in $out"
 exit "$status"
