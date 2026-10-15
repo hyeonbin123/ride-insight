@@ -2,13 +2,16 @@ package com.rideinsight.api
 
 // [파일 역할] 5단계 H8(변조 FIT 수용성) 판정 테스트. 테스트용 인코더 FitWriter로 정상 파일을 만든 뒤 한
 // 가지씩 망가뜨려 업로드하고, 미리 적어 둔 상태 코드와 같은지, 500이 하나도 없는지
-// 확인한다(docs/experiments.md 5단계). 결과: 7종 모두 기대 코드(H8 지지).
+// 확인한다(docs/experiments.md 5단계). 결과: 7종 모두 기대 코드(H8 지지). 2026-10-15에 처리 상한을 넘는 조작 파일
+// 3종((8)~(10), 5단계 '업로드 자원 증폭')을 더했다.
 // [왜 중요한가] 업로드 파일은 신뢰할 수 없는 입력이다. 디코더가 처리하지 못한 예외가 500으로 새거나, 조작된
 // 크기 필드로 버퍼 밖을 읽는 일이 없어야 한다.
 // [한계] 규칙과 이 테스트가 같은 커밋(fba8f44)에 들어가, '규칙을 먼저 커밋하고 쟀다'는 것은 공개 이력만으로
 // 입증되지 않는다(experiments.md에 적어 둔 한계).
 
 import com.rideinsight.fit.FitActivity
+import com.rideinsight.fit.FitDecoder
+import com.rideinsight.fit.FitStressFiles
 import com.rideinsight.fit.FitWriter
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -81,5 +84,23 @@ class TamperedFitTest : ApiTestBase() {
         assertEquals("413 file_too_large", results["7-over-10mb"])
         // 최종 조건: 어떤 변조도 500을 내지 않는다(H8).
         assertTrue(results.values.none { it.startsWith("500") }, "no 500s: $results")
+    }
+
+    // 2026-10-15 추가(docs/experiments.md 5단계 '업로드 자원 증폭', H11의 상태 코드 부분): 구조는 올바르지만 처리
+    // 상한을 넘는 파일. (8) 2바이트 record 200만 개(4 MB)와 (9) record 500,001개는 413 fit_limit_exceeded,
+    // (10) 서비스가 쓰지 않는 255필드 메시지로 채운 10 MB 가까운 파일은 담지 않고 201로 저장한다. 적용 전에는
+    // (8)이 힙 512 MB 서버에서 OutOfMemoryError(500)였다.
+    @Test
+    fun `files over the processing limits get 413 and wide unknown messages are skipped`() {
+        val id = createAthlete()
+        val results = linkedMapOf(
+            "8-two-million-tiny-records" to code(uploadBytes(id, "tiny.fit", FitStressFiles.tinyRecords(2_000_000))),
+            "9-one-record-over-the-limit" to code(uploadBytes(id, "limit.fit", FitStressFiles.tinyRecords(FitDecoder.MAX_RECORD_MESSAGES + 3))),
+            "10-wide-unknown-messages" to code(uploadBytes(id, "wide.fit", FitStressFiles.wideMessages(10_000_000))),
+        )
+        println("FIT_LIMIT_RESULTS " + results.entries.joinToString(" | ") { "${it.key}=${it.value}" })
+        assertEquals("413 fit_limit_exceeded", results["8-two-million-tiny-records"])
+        assertEquals("413 fit_limit_exceeded", results["9-one-record-over-the-limit"])
+        assertEquals("201 null", results["10-wide-unknown-messages"])
     }
 }

@@ -1,15 +1,18 @@
 package com.rideinsight.fit
 
 // [파일 역할] FIT(Flexible and Interoperable Data Transfer) 바이너리 파일을 바이트 단위로 읽는 디코더다. 파일
-// 헤더 → 정의 메시지·데이터 메시지 → CRC 순으로 읽어, 메시지마다 필드 번호별 원시 값을 담은 FitFile을 만든다.
-// 필드의 의미(파워, 심박 등)는 FitActivity가 FitProfile 번호표로 붙인다.
+// 헤더 → 정의 메시지·데이터 메시지 → CRC 순으로 읽어, 서비스가 쓰는 메시지의 필드 번호별 원시 값을 담은 FitFile을
+// 만든다(record는 RecordColumns에 열로, 나머지는 FitMessage로). 필드의 의미(파워, 심박 등)는 FitActivity가
+// FitProfile 번호표로 붙인다.
 // [설계 이유] Garmin FIT SDK 대신 직접 썼다. SDK의 FIT Protocol License가 공개 저장소의 의존성으로 두기에
 // 불확실했기 때문이다(docs/plan.md, README). 대신 python-fitparse(MIT)로 샘플 파일을 디코딩한 기대값과 레코드
 // 31,156개를 1e-6 안에서 대조하는 테스트(FitDecoderTest)로 정확성을 확인하며, 이 대조가 버그
 // 2개(threshold_power 필드 번호, 개발자 필드 정의 크기)를 잡았다(docs/ai-verification.md).
-// [보안] 업로드 파일은 신뢰할 수 없는 입력이다. 선언 데이터 크기 상한, 파일 전체가 공유하는 메시지 수 상한,
-// 체인 블록 수 상한을 두고, 구조가 어긋나면 어떤 경우든 FitDecodeException 하나만 던져 API가 400으로 답하게
-// 한다(5단계 변조 파일 테스트 H8: 500 없음).
+// [보안] 업로드 파일은 신뢰할 수 없는 입력이다. 선언 데이터 크기 상한, 파일 전체가 공유하는 메시지 수 상한과
+// record 수 상한, 체인 블록 수 상한을 두고, 구조가 어긋나면 어떤 경우든 FitDecodeException 하나만 던져 API가
+// 400으로 답하게 한다(5단계 변조 파일 테스트 H8: 500 없음). 상한을 넘으면 하위 클래스 FitLimitException(413)이다.
+// 서비스가 쓰지 않는 메시지·필드는 구조만 확인하고 담지 않아, 입력 바이트에 비해 힙이 불어나지 않게
+// 한다(2026-10-15 측정과 규칙, docs/experiments.md 5단계 '업로드 자원 증폭').
 // [FIT 구조 요약] 파일 = 헤더(12 또는 14바이트: 데이터 크기와 '.FIT' 표식) + 레코드들 + CRC-16(2바이트).
 // 레코드는 1바이트 헤더로 시작하며, 정의 메시지(로컬 타입 0~15에 전역 메시지 번호와 필드 목록을 등록)와
 // 데이터 메시지(등록된 정의대로 값만 나열)로 나뉜다. 압축 타임스탬프 헤더는 데이터 메시지 헤더에 시각
@@ -20,9 +23,18 @@ import java.nio.ByteOrder
 
 /**
  * FIT 파일의 구조 문제라면 어떤 것이든 이 예외 하나로 던진다. 받는 쪽은 그 파일을 읽을 수 없는 파일로 다뤄야
- * 한다. ApiExceptionHandler가 400 invalid_fit으로 바꾼다.
+ * 한다. ApiExceptionHandler가 400 invalid_fit으로 바꾼다. 처리 상한을 넘는 파일은 하위 클래스
+ * [FitLimitException]으로 던져 다른 응답(413)을 받게 한다.
  */
-class FitDecodeException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
+open class FitDecodeException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
+
+/**
+ * 구조는 올바를 수 있지만 이 서비스가 처리하기로 정한 상한(메시지 수, record 메시지 수)을 넘는 파일. 파일이
+ * 깨진 것이 아니라 '너무 큰 내용'이라 ApiExceptionHandler가 400이 아니라 413 fit_limit_exceeded로
+ * 바꾼다(docs/experiments.md 5단계 '업로드 자원 증폭', 2026-10-15 규칙). FitDecodeException을 상속하므로
+ * 디코더를 직접 부르는 쪽은 지금처럼 FitDecodeException 하나만 잡으면 된다.
+ */
+class FitLimitException(message: String) : FitDecodeException(message)
 
 /**
  * FIT(Flexible and Interoperable Data Transfer) 바이너리 프로토콜의 최소 디코더: 파일 헤더, 정의·데이터
@@ -43,11 +55,33 @@ object FitDecoder {
      */
     const val MAX_DATA_SIZE = 64 * 1024 * 1024
 
-    // 파일 하나(체인 블록 전체 합)에서 읽을 메시지 수 상한.
-    private const val MAX_RECORDS = 2_000_000
+    /**
+     * 파일 하나(체인 블록 전체 합)에서 읽을 데이터 메시지 수 상한(모든 종류). 담지 않는 메시지라도 하나하나
+     * 읽는 데 시간이 들어, 1바이트짜리 메시지로 10 MB를 채운 파일 같은 입력의 처리 시간을 묶는다. 값은 전과
+     * 같고, 넘으면 [FitLimitException](413)이다(2026-10-15 전에는 400 invalid_fit).
+     */
+    const val MAX_MESSAGES = 2_000_000
+
+    /**
+     * 파일 하나에서 받아들이는 record(전역 메시지 20) 수 상한. record는 시계열의 한 점이라 메모리·저장 크기가
+     * 이 수에 비례한다. 2026-10-15 측정(docs/experiments.md 5단계 '업로드 자원 증폭')으로 정한 값이다:
+     * OpenData 표본의 짝지어진 파워 라이딩 160,803개 중 가장 긴 것이 413,334샘플이고, 샘플 FIT 중 가장 긴
+     * 것은 13,471개라 둘 다 걸리지 않는다(1초 기록이면 약 5.8일). 넘으면 [FitLimitException](413).
+     */
+    const val MAX_RECORD_MESSAGES = 500_000
+
     // 체인 블록 수 상한. 메시지 상한을 파일 전체로 묶을 때 함께 넣었다(Codex 2차 검토 지적 1: 처음에는 상한이
     // 블록마다 따로 적용돼 7.5 MB 파일로 메시지 750만 개를 만들 수 있었다).
     private const val MAX_CHAINED_BLOCKS = 16
+
+    // 체인 블록 전체가 함께 쓰는 메시지 수 계수기. 상한은 블록마다가 아니라 파일 전체에 걸린다.
+    private class Counters {
+        var messages = 0
+        var records = 0
+    }
+
+    // 블록 하나를 읽은 결과(메시지는 호출자가 넘긴 목록에 바로 붙인다).
+    private class BlockResult(val header: Header, val crcValid: Boolean, val developerFieldDefinitions: Int)
 
     /**
      * FIT 파일 전체를 읽는 진입점. 일부 기기가 쓰는 체인 파일(헤더 + 데이터 + CRC 블록 여러 개가 연달아 붙은
@@ -57,19 +91,22 @@ object FitDecoder {
      */
     fun decode(bytes: ByteArray): FitFile {
         var offset = 0
-        var first: FitFile? = null
+        var first: Header? = null
         val messages = ArrayList<FitMessage>()
+        // record 메시지는 FitMessage로 만들지 않고 필드별 열에 바로 쌓는다(RecordColumns). 파일 하나에 수십만 개가
+        // 올 수 있는 유일한 메시지라, 메시지 객체를 만들지 않는 것이 메모리를 가장 크게 줄인다.
+        val records = RecordColumns.Builder()
+        val counters = Counters()
         var crcValid = true
         var developerFields = 0
         var blocks = 0
         while (offset < bytes.size) {
             if (++blocks > MAX_CHAINED_BLOCKS) throw FitDecodeException("more than $MAX_CHAINED_BLOCKS chained FIT blocks")
-            // 남은 메시지 예산(전체 상한 − 지금까지 읽은 수)을 넘겨, 상한이 블록마다가 아니라 파일 전체에
-            // 걸리게 한다.
-            val part = decodeOne(bytes, offset, MAX_RECORDS - messages.size)
+            // 계수기를 블록끼리 공유해 메시지 상한이 블록마다가 아니라 파일 전체에 걸리게 하고, 담을 메시지는
+            // 하나의 목록에 바로 붙인다.
+            val part = decodeOne(bytes, offset, counters, messages, records)
             // 헤더 정보는 첫 블록 것을 대표로 쓰고, CRC는 모든 블록이 맞아야 true다.
-            if (first == null) first = part
-            messages.addAll(part.messages)
+            if (first == null) first = part.header
             crcValid = crcValid && part.crcValid
             developerFields += part.developerFieldDefinitions
             // 다음 블록 시작 위치 = 헤더 + 데이터 + CRC 2바이트.
@@ -77,11 +114,18 @@ object FitDecoder {
         }
         // 빈 바이트 배열이면 블록이 하나도 없으므로 거절한다.
         val header = first ?: throw FitDecodeException("empty file")
-        return FitFile(header.header, crcValid, messages, developerFields)
+        return FitFile(header, crcValid, messages, records.build(), developerFields, counters.messages)
     }
 
-    // 블록 하나(헤더 + 데이터 + CRC)를 읽는다. messageBudget은 이 블록에서 더 읽어도 되는 메시지 수다.
-    private fun decodeOne(bytes: ByteArray, offset: Int, messageBudget: Int): FitFile {
+    // 블록 하나(헤더 + 데이터 + CRC)를 읽어, 담기로 한 메시지(FitProfile.KEPT_FIELDS)는 out에, record는 records에
+    // 붙인다. counters는 파일 전체가 공유하는 메시지 수 계수기다.
+    private fun decodeOne(
+        bytes: ByteArray,
+        offset: Int,
+        counters: Counters,
+        out: MutableList<FitMessage>,
+        records: RecordColumns.Builder,
+    ): BlockResult {
         val header = readHeader(bytes, offset)
         val dataEnd = offset + header.headerSize + header.dataSize
         // 헤더가 선언한 데이터 크기 + CRC 2바이트가 실제 파일보다 길면 잘린 파일이다(변조 파일 (1) 크기
@@ -101,8 +145,10 @@ object FitDecoder {
         val buffer = ByteBuffer.wrap(bytes, offset + header.headerSize, header.dataSize).slice()
         // 로컬 메시지 타입(0~15)별로 지금 등록된 정의. 같은 로컬 타입에 새 정의가 오면 덮어쓴다.
         val definitions = arrayOfNulls<Definition>(16)
-        val messages = ArrayList<FitMessage>()
-        // 마지막으로 본 전체 timestamp(FIT 초). 압축 타임스탬프의 기준이 된다.
+        // 데이터 메시지를 읽는 도구. 필드 값을 모으는 작업 공간을 메시지마다 새로 만들지 않고 재사용한다.
+        val reader = MessageReader(records)
+        // 마지막으로 본 전체 timestamp(FIT 초). 압축 타임스탬프의 기준이 된다. 결과에 담지 않는 메시지의
+        // timestamp도 기준이 되므로 모든 데이터 메시지에서 갱신한다(2026-10-15 전과 같은 동작).
         var lastTimestamp: Long? = null
         var developerFieldsSeen = 0
 
@@ -115,17 +161,18 @@ object FitDecoder {
                 // 담는다(비트 5~6이 로컬 타입, 비트 0~4가 시각 오프셋). 기준이 될 전체 timestamp가 아직
                 // 없으면 시각을 복원할 수 없어 오류다.
                 val localType = (recordHeader shr 5) and 0x03
-                val offset = (recordHeader and 0x1F).toLong()
+                val timeOffset = (recordHeader and 0x1F).toLong()
                 val def = definitions[localType]
                     ?: throw FitDecodeException("data message for undefined local type $localType")
                 val base = lastTimestamp
                     ?: throw FitDecodeException("compressed timestamp before any full timestamp")
                 // 복원 규칙: 기준 시각의 하위 5비트를 오프셋으로 바꾼다. 오프셋이 기준의 하위 5비트보다
                 // 작으면 32초 주기를 한 번 넘긴(롤오버) 것이므로 32초를 더한다.
-                var timestamp = (base and 0x1FL.inv()) or offset
-                if (offset < (base and 0x1F)) timestamp += 0x20
+                var timestamp = (base and 0x1FL.inv()) or timeOffset
+                if (timeOffset < (base and 0x1F)) timestamp += 0x20
                 lastTimestamp = timestamp
-                messages.add(readData(buffer, def, timestamp))
+                count(def, counters)
+                reader.read(buffer, def, timestamp)?.let(out::add)
             } else if (recordHeader and 0x40 != 0) {
                 // 정의 메시지: 하위 4비트가 로컬 타입, 0x20 비트는 개발자 필드 정의가 뒤따른다는 표시. 개발자
                 // 필드를 가진 정의 수는 보고용으로 센다.
@@ -141,16 +188,23 @@ object FitDecoder {
                 val localType = recordHeader and 0x0F
                 val def = definitions[localType]
                     ?: throw FitDecodeException("data message for undefined local type $localType")
-                val message = readData(buffer, def, null)
-                message.timestampRaw?.let { lastTimestamp = it }
-                messages.add(message)
+                count(def, counters)
+                val message = reader.read(buffer, def, null)
+                if (reader.timestampSeen) lastTimestamp = reader.timestamp
+                message?.let(out::add)
             }
-            // 메시지 수 상한 검사. 예산은 체인 블록 전체가 공유하므로, 작은 파일로 메시지를 대량으로 만들어
-            // 메모리를 쓰게 하는 입력을 막는다(2026-10-10 Codex 2차 검토 지적 1: 블록마다 상한을 따로 두었을
-            // 때는 작은 블록 다섯 개로 7.5 MB 파일에서 메시지 750만 개를 만들 수 있었다).
-            if (messages.size > messageBudget) throw FitDecodeException("more than $MAX_RECORDS messages in file")
         }
-        return FitFile(header, crcValid, messages, developerFieldsSeen)
+        return BlockResult(header, crcValid, developerFieldsSeen)
+    }
+
+    // 데이터 메시지 하나를 세고 상한을 확인한다. 읽기 전에 세므로 상한을 넘는 메시지는 객체를 만들기 전에
+    // 거절된다. 상한은 체인 블록 전체가 공유한다(Codex 2차 검토 지적 1: 블록마다 따로 두었을 때는 작은 블록
+    // 다섯 개로 7.5 MB 파일에서 메시지 750만 개를 만들 수 있었다).
+    private fun count(def: Definition, counters: Counters) {
+        if (++counters.messages > MAX_MESSAGES) throw FitLimitException("more than $MAX_MESSAGES messages in file")
+        if (def.globalMessage == FitProfile.MSG_RECORD && ++counters.records > MAX_RECORD_MESSAGES) {
+            throw FitLimitException("more than $MAX_RECORD_MESSAGES record messages in file")
+        }
     }
 
     // ------------------------------------------------------------------ 헤더와 CRC
@@ -227,6 +281,21 @@ object FitDecoder {
         val developerFields: List<FieldDef>,
     ) {
         val dataSize: Int = fields.sumOf { it.size } + developerFields.sumOf { it.size }
+
+        // 이 정의를 따르는 메시지를 결과에 담는가: FitProfile.KEPT_FIELDS에 있는 전역 메시지만 담는다.
+        val stored: Boolean = FitProfile.KEPT_FIELDS.containsKey(globalMessage)
+
+        // 필드마다 값을 해석할지. 담는 메시지는 KEPT_FIELDS의 필드와 timestamp(253)만, 담지 않는 메시지는
+        // 압축 타임스탬프의 기준이 되는 timestamp(253)만 해석하고 나머지는 바이트만 건너뛴다. 정의 하나에
+        // 필드가 255개여도 해석·저장하는 값은 이 목록으로 묶인다(2026-10-15, 255필드 메시지로 10 MB 파일이
+        // 484 MB를 붙잡던 문제).
+        val parse: BooleanArray = run {
+            val kept = FitProfile.KEPT_FIELDS[globalMessage]
+            BooleanArray(fields.size) { i ->
+                val n = fields[i].number
+                n == FitProfile.FIELD_TIMESTAMP || (kept != null && n in kept)
+            }
+        }
     }
 
     // 정의 메시지 본문: 예약 1바이트, 아키텍처 1바이트(1이면 빅 엔디언), 전역 메시지 번호 2바이트, 필드 수
@@ -265,46 +334,113 @@ object FitDecoder {
 
     // ------------------------------------------------------------------ 데이터 메시지
 
-    // 데이터 메시지 하나를 정의대로 읽는다. 정수는 values, 실수는 doubles에 필드 번호로 담고, 기본 타입이
-    // 정한 무효 값(예: uint16의 0xFFFF)은 값이 없는 것으로 보고 넣지 않는다. compressedTimestamp가 있으면
-    // 압축 헤더에서 복원한 시각을 timestamp 필드에 넣는다.
-    private fun readData(buffer: ByteBuffer, def: Definition, compressedTimestamp: Long?): FitMessage {
-        need(buffer, def.dataSize, "data message of global type ${def.globalMessage}")
-        val values = HashMap<Int, Long>()
-        val doubles = HashMap<Int, Double>()
-        // 기본 타입 바이트의 하위 5비트가 타입 번호다. 필드 크기가 그 타입 크기와 같은 단일 값만 해석하고,
-        // 배열(크기가 배수), 문자열, 모르는 타입은 해석하지 않는다. 실수 타입은 모든 비트가 1이면 무효
-        // 값이다.
-        for (field in def.fields) {
-            val start = buffer.position()
-            val baseType = field.baseType and 0x1F
-            val baseSize = FitBaseType.size(baseType)
-            if (baseSize != null && field.size == baseSize && baseType != FitBaseType.STRING) {
-                when (baseType) {
-                    FitBaseType.FLOAT32 -> {
-                        val raw = readU32(buffer, def.order)
-                        if (raw != 0xFFFFFFFFL) doubles[field.number] = java.lang.Float.intBitsToFloat(raw.toInt()).toDouble()
-                    }
-                    FitBaseType.FLOAT64 -> {
-                        val raw = buffer.order(def.order).getLong()
-                        if (raw != -1L) doubles[field.number] = java.lang.Double.longBitsToDouble(raw)
-                    }
-                    else -> {
-                        val raw = readInteger(buffer, def.order, baseType)
-                        if (!FitBaseType.isInvalid(baseType, raw)) values[field.number] = raw
+    /**
+     * 데이터 메시지를 정의대로 읽는 도구. 블록마다 하나를 만들어 재사용한다. 값은 작업 공간 배열(필드 번호와
+     * 값)에 모은 뒤, 담을 메시지면 필요한 크기만큼만 복사해 [FitMessage]를 만든다.
+     *
+     * 2026-10-15 전에는 메시지마다 HashMap<Int, Long>과 HashMap<Int, Double>을 만들고 모든 필드를 담았다.
+     * 측정(docs/experiments.md 5단계 '업로드 자원 증폭')에서 작은 record 200만 개짜리 4 MB 파일이 메시지당
+     * 약 410바이트, 합계 821 MB를 붙잡았고, 255필드 메시지로 채운 10 MB 파일이 484 MB를 붙잡았다. 그래서
+     * 서비스가 쓰는 메시지·필드(FitProfile.KEPT_FIELDS)만, 원시 배열로 담는다.
+     */
+    private class MessageReader(private val records: RecordColumns.Builder) {
+        // 작업 공간. 정의 하나의 필드는 최대 255개라 256칸이면 넘치지 않는다.
+        private val intKeys = IntArray(256)
+        private val intValues = LongArray(256)
+        private val doubleKeys = IntArray(256)
+        private val doubleValues = DoubleArray(256)
+        private var ints = 0
+        private var doubles = 0
+
+        /** 방금 읽은 메시지에 정수 timestamp(253)가 있었는지와 그 값(FIT 초). 압축 헤더의 기준 시각 갱신에 쓴다. */
+        var timestampSeen = false
+            private set
+        var timestamp = 0L
+            private set
+
+        // 같은 필드 번호가 정의에 두 번 나오면 뒤의 값이 이긴다(전의 HashMap과 같은 규칙).
+        private fun putInt(number: Int, value: Long) {
+            for (i in 0 until ints) if (intKeys[i] == number) { intValues[i] = value; return }
+            intKeys[ints] = number
+            intValues[ints] = value
+            ints++
+        }
+
+        private fun putDouble(number: Int, value: Double) {
+            for (i in 0 until doubles) if (doubleKeys[i] == number) { doubleValues[i] = value; return }
+            doubleKeys[doubles] = number
+            doubleValues[doubles] = value
+            doubles++
+        }
+
+        /**
+         * 데이터 메시지 하나를 읽는다. 해석하기로 한 필드([Definition.parse])만 값을 읽고, 기본 타입이 정한 무효
+         * 값(예: uint16의 0xFFFF)은 값이 없는 것으로 보고 넣지 않는다. [compressedTimestamp]가 있으면 압축
+         * 헤더에서 복원한 시각을 timestamp 필드에 넣는다. record는 [records] 열에 쌓고 null을, 그 밖에 담는
+         * 메시지면 [FitMessage]를, 담지 않는 메시지면 null을 돌려준다. 어느 쪽이든 정의된 바이트 수만큼 정확히
+         * 앞으로 간다.
+         */
+        fun read(buffer: ByteBuffer, def: Definition, compressedTimestamp: Long?): FitMessage? {
+            need(buffer, def.dataSize, "data message of global type ${def.globalMessage}")
+            ints = 0
+            doubles = 0
+            // 기본 타입 바이트의 하위 5비트가 타입 번호다. 필드 크기가 그 타입 크기와 같은 단일 값만 해석하고,
+            // 배열(크기가 배수), 문자열, 모르는 타입은 해석하지 않는다. 실수 타입은 모든 비트가 1이면 무효
+            // 값이다.
+            for ((index, field) in def.fields.withIndex()) {
+                val start = buffer.position()
+                val baseType = field.baseType and 0x1F
+                val baseSize = FitBaseType.size(baseType)
+                if (def.parse[index] && baseSize != null && field.size == baseSize && baseType != FitBaseType.STRING) {
+                    when (baseType) {
+                        FitBaseType.FLOAT32 -> {
+                            val raw = readU32(buffer, def.order)
+                            if (raw != 0xFFFFFFFFL) putDouble(field.number, java.lang.Float.intBitsToFloat(raw.toInt()).toDouble())
+                        }
+                        FitBaseType.FLOAT64 -> {
+                            val raw = buffer.order(def.order).getLong()
+                            if (raw != -1L) putDouble(field.number, java.lang.Double.longBitsToDouble(raw))
+                        }
+                        else -> {
+                            val raw = readInteger(buffer, def.order, baseType)
+                            if (!FitBaseType.isInvalid(baseType, raw)) putInt(field.number, raw)
+                        }
                     }
                 }
+                // 해석했든 안 했든 정의된 크기만큼 정확히 앞으로 가야 다음 필드 위치가 어긋나지 않는다.
+                buffer.position(start + field.size) // 해석하지 않는 필드·배열·문자열·모르는 타입은 여기서 건너뛴다
             }
-            // 해석했든 안 했든 정의된 크기만큼 정확히 앞으로 가야 다음 필드 위치가 어긋나지 않는다.
-            buffer.position(start + field.size) // 배열·문자열·모르는 타입은 여기서 건너뛴다
-        }
-        // 개발자 필드 바이트는 건너뛴다.
-        for (field in def.developerFields) buffer.position(buffer.position() + field.size)
+            // 개발자 필드 바이트는 건너뛴다.
+            for (field in def.developerFields) buffer.position(buffer.position() + field.size)
 
-        val timestampRaw = compressedTimestamp ?: values[FitProfile.FIELD_TIMESTAMP]
-        if (compressedTimestamp != null) values[FitProfile.FIELD_TIMESTAMP] = compressedTimestamp
-        return FitMessage(def.globalMessage, values, doubles, timestampRaw)
+            if (compressedTimestamp != null) putInt(FitProfile.FIELD_TIMESTAMP, compressedTimestamp)
+            // 정수 timestamp(253)를 찾아 압축 헤더의 기준 시각으로 쓸 수 있게 둔다.
+            timestampSeen = false
+            for (i in 0 until ints) {
+                if (intKeys[i] == FitProfile.FIELD_TIMESTAMP) {
+                    timestampSeen = true
+                    timestamp = intValues[i]
+                }
+            }
+            if (def.globalMessage == FitProfile.MSG_RECORD) {
+                records.add(intKeys, intValues, ints, doubleKeys, doubleValues, doubles)
+                return null
+            }
+            if (!def.stored) return null
+            return FitMessage(
+                def.globalMessage,
+                if (ints == 0) EMPTY_INTS else intKeys.copyOf(ints),
+                if (ints == 0) EMPTY_LONGS else intValues.copyOf(ints),
+                if (doubles == 0) EMPTY_INTS else doubleKeys.copyOf(doubles),
+                if (doubles == 0) EMPTY_DOUBLES else doubleValues.copyOf(doubles),
+            )
+        }
     }
+
+    // 값이 없는 메시지가 함께 쓰는 빈 배열(메시지마다 새로 만들지 않는다).
+    private val EMPTY_INTS = IntArray(0)
+    private val EMPTY_LONGS = LongArray(0)
+    private val EMPTY_DOUBLES = DoubleArray(0)
 
     // 기본 타입별로 바이트 수와 부호를 맞춰 Long으로 읽는다. 부호 없는 값은 비트 마스크(and 0xFF 등)로 음수가
     // 되지 않게 한다. 위 분기에서 걸러지지 않은 타입은 FitDecodeException.
@@ -384,31 +520,44 @@ object FitBaseType {
 /**
  * 디코딩한 데이터 메시지 하나: 필드 번호별 원시 정수 값과 실수 값. int(n)은 원시 정수, double(n)은 실수
  * 필드가 있으면 그 값을, 없으면 정수를 실수로 바꿔 준다. 값이 없으면 둘 다 null.
+ *
+ * 값은 필드 번호 배열과 값 배열의 짝으로 담는다(2026-10-15 전에는 HashMap 두 개). 담는 필드가 메시지당 십여
+ * 개뿐이라 앞에서부터 찾아도 충분히 빠르고, 메시지 하나가 차지하는 힙이 HashMap보다 몇 배 작다.
  */
-class FitMessage(
+class FitMessage internal constructor(
     val globalMessage: Int,
-    val values: Map<Int, Long>,
-    val doubles: Map<Int, Double>,
-    val timestampRaw: Long?,
+    private val intKeys: IntArray,
+    private val intValues: LongArray,
+    private val doubleKeys: IntArray,
+    private val doubleValues: DoubleArray,
 ) {
-    fun int(field: Int): Long? = values[field]
+    fun int(field: Int): Long? {
+        for (i in intKeys.indices) if (intKeys[i] == field) return intValues[i]
+        return null
+    }
 
-    fun double(field: Int): Double? = doubles[field] ?: values[field]?.toDouble()
+    fun double(field: Int): Double? {
+        for (i in doubleKeys.indices) if (doubleKeys[i] == field) return doubleValues[i]
+        return int(field)?.toDouble()
+    }
 
     /** FIT 프로필의 배율·오프셋을 적용한 필드 값: `raw / scale - offset`(예: 고도 raw / 5 − 500 m). */
     fun scaled(field: Int, scale: Double, offset: Double = 0.0): Double? = double(field)?.let { it / scale - offset }
 
     /** FIT `timestamp` 필드(253)를 Unix 초로 바꾼 값. */
-    val timestampUnix: Long? get() = values[FitProfile.FIELD_TIMESTAMP]?.let { it + FitDecoder.FIT_EPOCH_OFFSET }
+    val timestampUnix: Long? get() = int(FitProfile.FIELD_TIMESTAMP)?.let { it + FitDecoder.FIT_EPOCH_OFFSET }
 }
 
-// 디코딩 결과: 첫 블록 헤더, CRC 일치 여부(모든 블록), 메시지 목록(파일 순서), 개발자 필드 정의 수.
-// messages(n)은 전역 메시지 번호로 걸러 준다.
+// 디코딩 결과: 첫 블록 헤더, CRC 일치 여부(모든 블록), 담은 메시지 목록(파일 순서, FitProfile.KEPT_FIELDS에 있는
+// 전역 메시지 중 record를 뺀 것), record 열(파일 순서), 개발자 필드 정의 수, 읽은 데이터 메시지 전체 수(담지 않은
+// 것 포함). messages(n)은 전역 메시지 번호로 걸러 준다(record는 records로 읽는다).
 class FitFile(
     val header: FitDecoder.Header,
     val crcValid: Boolean,
     val messages: List<FitMessage>,
+    val records: RecordColumns,
     val developerFieldDefinitions: Int,
+    val totalMessages: Int,
 ) {
     fun messages(globalMessage: Int): List<FitMessage> = messages.filter { it.globalMessage == globalMessage }
 }

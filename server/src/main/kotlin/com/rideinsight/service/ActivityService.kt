@@ -62,30 +62,38 @@ class ActivityService(
         REJECTED_SPORTS[sport]?.let { throw UnsupportedSportException("sport '$it' is not supported; upload a cycling activity") }
         if (fit.records.isEmpty()) throw InvalidActivityException("the file has no record messages")
 
-        // 첫 record 시각을 0초로 두고 경과 시간(초)으로 바꾼다. 활동 시작 시각도 이 첫 record 시각이다.
-        val first = fit.records.first().timestampUnix
-        val secs = fit.records.map { (it.timestampUnix - first).toDouble() }
+        // 첫 record 시각을 0초로 두고 경과 시간(초)으로 바꾼다. 활동 시작 시각도 이 첫 record 시각이다. record는
+        // 열(FitRecords)로 담겨 있어, 시계열도 원시 배열과 그 위의 목록 보기로 만들어 원소마다 객체를 만들지
+        // 않는다(2026-10-15, docs/experiments.md 5단계 '업로드 자원 증폭').
+        val records = fit.records
+        val first = records.timestampUnix[0]
+        val secsArray = DoubleArray(records.size) { (records.timestampUnix[it] - first).toDouble() }
         // 시각이 거꾸로 가는 파일은 거절한다(400 invalid_activity, 변조 파일 (6)). 같은 시각이 반복되는 것은
         // 허용한다.
-        for (i in 1 until secs.size) {
-            if (secs[i] < secs[i - 1]) throw InvalidActivityException("record timestamps go backwards at sample $i")
+        for (i in 1 until secsArray.size) {
+            if (secsArray[i] < secsArray[i - 1]) throw InvalidActivityException("record timestamps go backwards at sample $i")
         }
+        val secs = secsArray.asList()
         // 0~32,000 W 밖의 파워는 결측(null)으로 본다. 유효한 파워가 하나도 없으면 파워 없는 활동으로 저장하고
         // 지표는 계산하지 않는다(api.md: 파워 없는 파일은 저장하되 지표 null).
-        val power = fit.records.map { r -> r.power?.takeIf { it in 0..MAX_POWER_STORED } }
+        val rawPower = records.powerColumn()
+        val power: List<Int?> = object : AbstractList<Int?>() {
+            override val size: Int get() = secsArray.size
+            override fun get(index: Int): Int? = rawPower?.get(index)?.takeIf { it in 0..MAX_POWER_STORED }
+        }
         val hasPower = power.any { it != null }
         // 저장할 시리즈. 값이 하나도 없는 시리즈는 null(센서 없음)로, 일부만 빠진 시리즈는 원소 null로
         // 저장한다.
         val series = SampleSeries(
             secs = secs,
             power = if (hasPower) power else null,
-            heartRate = fit.records.map { it.heartRate }.takeIf { l -> l.any { it != null } },
-            cadence = fit.records.map { it.cadence }.takeIf { l -> l.any { it != null } },
-            distanceM = fit.records.map { it.distanceMeters }.takeIf { l -> l.any { it != null } },
-            altitudeM = fit.records.map { it.altitudeMeters }.takeIf { l -> l.any { it != null } },
+            heartRate = records.heartRateColumn(),
+            cadence = records.cadenceColumn(),
+            distanceM = records.distanceColumn(),
+            altitudeM = records.altitudeColumn(),
         )
         // 기록 간격과 그 규칙성(최빈 간격 비율)을 추정해 활동에 함께 저장한다.
-        val interval = RecordingInterval.analyse(secs.toDoubleArray())
+        val interval = RecordingInterval.analyse(secsArray)
         // 시작 시각은 UTC로 저장한다. 같은 선수의 같은 시작 시각은 DB unique 제약에 걸려 409(중복 업로드)가
         // 된다.
         val startedAt = OffsetDateTime.ofInstant(Instant.ofEpochSecond(first), ZoneOffset.UTC)

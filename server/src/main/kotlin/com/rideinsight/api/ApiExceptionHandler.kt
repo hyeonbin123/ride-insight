@@ -12,6 +12,7 @@ package com.rideinsight.api
 // [연결] ApiIntegrationTest와 TamperedFitTest가 여기서 정한 상태 코드와 error 값을 확인한다.
 
 import com.rideinsight.fit.FitDecodeException
+import com.rideinsight.fit.FitLimitException
 import com.rideinsight.service.InvalidActivityException
 import com.rideinsight.service.NotFoundException
 import com.rideinsight.service.UnsupportedSportException
@@ -56,6 +57,13 @@ class ApiExceptionHandler {
     // 5단계 변조 파일 (1)(2)(4)(5)가 여기로 온다.
     @ExceptionHandler(FitDecodeException::class)
     fun fit(e: FitDecodeException) = respond(HttpStatus.BAD_REQUEST, "invalid_fit", "cannot decode FIT file: ${e.message}")
+
+    // 처리 상한을 넘는 FIT(record 500,000개 또는 메시지 2,000,000개 초과) → 413 fit_limit_exceeded. 파일이 깨진
+    // 것이 아니라 처리하기로 한 크기를 넘은 것이라 400과 구분한다(docs/experiments.md 5단계 '업로드 자원 증폭',
+    // 규칙 변경 11). FitLimitException은 FitDecodeException의 하위 클래스이고, Spring은 가장 가까운 예외 타입의
+    // 처리기를 고르므로 위의 400 처리기가 아니라 이 처리기가 쓰인다.
+    @ExceptionHandler(FitLimitException::class)
+    fun fitLimit(e: FitLimitException) = respond(HttpStatus.PAYLOAD_TOO_LARGE, "fit_limit_exceeded", "the FIT file is too large to process: ${e.message}")
 
     // 활동으로 쓸 수 없는 입력 → 400 invalid_activity: 빈 업로드 파일(컨트롤러가 디코딩 전에 거절), 디코딩은
     // 됐지만 record 메시지가 없거나 타임스탬프가 거꾸로 가는 파일. 변조 파일 (6)이 여기로 온다.

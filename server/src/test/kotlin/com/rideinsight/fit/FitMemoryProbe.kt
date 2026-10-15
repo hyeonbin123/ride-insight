@@ -1,7 +1,8 @@
 package com.rideinsight.fit
 
 // [파일 역할] FIT 디코딩이 입력 크기에 비해 힙을 얼마나 쓰는지 재는 측정 도구(테스트 소스에 둔 main). 정상
-// 샘플(Wahoo ELEMNT, Garmin Edge 810)과 조작 파일(FitStressFiles: 작은 record 다수, 255필드 메시지 다수)을
+// 샘플(Wahoo ELEMNT, Garmin Edge 810)과 조작 파일(FitStressFiles: 작은 record 다수, 255필드 메시지 다수, 필드를 다
+// 갖춘 record 50만 개)을
 // 같은 JVM에서 차례로 디코딩해, 단계별로 (1) 새로 할당한 바이트 수와 (2) 결과 객체가 붙잡고 있는 힙(유지 크기)을
 // 잰다. 조작 파일은 서버 업로드 측정(ml/.../load.py)에 쓰도록 출력 폴더에 함께 쓴다.
 // [왜 이렇게 쟀나] 할당 바이트는 com.sun.management.ThreadMXBean의 스레드별 누적 할당량 차이로 잰다(GC 시점에
@@ -71,7 +72,8 @@ fun main(args: Array<String>) {
         // 더 만든다(그 몫은 서버 측정에서 본다).
         val row = try {
             val (file, dec) = measure { FitDecoder.decode(bytes) }
-            val messages = file.messages.size
+            // 읽은 데이터 메시지 전체 수(2026-10-15 상한 적용 뒤에는 담지 않은 메시지도 센다).
+            val messages = file.totalMessages
             val (activity, act) = measure { FitActivity.from(file) }
             val records = activity.records.size
             val peak = dec.retained + act.retained

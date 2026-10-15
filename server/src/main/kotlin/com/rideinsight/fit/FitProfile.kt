@@ -92,6 +92,28 @@ object FitProfile {
     }
 
     /**
+     * 디코더가 결과에 담는 전역 메시지와 그 필드 번호(timestamp 253은 언제나 담는다). FitActivity가 읽는 것만
+     * 적었다: file_id 전부, sport의 종목, session 요약(시작 시각·종목·시간·거리·파워·NP·TSS·IF·FTP·상승),
+     * record의 고도·심박·케이던스·거리·속도·파워와 enhanced 속도·고도. 여기에 없는 메시지(lap, event,
+     * device_info, hrv 등)와 필드(위치, 온도 등)는 디코더가 구조만 확인하고 값을 담지 않는다.
+     * [이유] 2026-10-15 측정에서 모든 메시지·필드를 담으면 10 MB 업로드 하나가 수백 MB의 힙을 붙잡을 수
+     * 있었다(docs/experiments.md 5단계 '업로드 자원 증폭'). 새 필드를 읽으려면 여기에 먼저 더해야 한다.
+     */
+    val KEPT_FIELDS: Map<Int, Set<Int>> = mapOf(
+        MSG_FILE_ID to setOf(FileId.TYPE, FileId.MANUFACTURER, FileId.PRODUCT, FileId.SERIAL_NUMBER, FileId.TIME_CREATED),
+        MSG_SPORT to setOf(Sport.SPORT, Sport.SUB_SPORT),
+        MSG_SESSION to setOf(
+            Session.START_TIME, Session.SPORT, Session.SUB_SPORT, Session.TOTAL_ELAPSED_TIME, Session.TOTAL_TIMER_TIME,
+            Session.TOTAL_DISTANCE, Session.AVG_POWER, Session.MAX_POWER, Session.TOTAL_ASCENT, Session.NORMALIZED_POWER,
+            Session.TRAINING_STRESS_SCORE, Session.INTENSITY_FACTOR, Session.THRESHOLD_POWER,
+        ),
+        MSG_RECORD to setOf(
+            Record.ALTITUDE, Record.HEART_RATE, Record.CADENCE, Record.DISTANCE, Record.SPEED, Record.POWER,
+            Record.ENHANCED_SPEED, Record.ENHANCED_ALTITUDE,
+        ),
+    )
+
+    /**
      * 종목 코드 → 저장·응답에 쓰는 이름. 이 프로젝트가 신경 쓰는 종목 열거값만 이름을 붙이고, 모르는 코드는
      * sport_<번호>로 번호를 그대로 남겨 정보를 잃지 않는다. 3(transition)과 5(swimming)는 상수 없이 숫자로 적었다.
      */
