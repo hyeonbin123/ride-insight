@@ -123,3 +123,16 @@ tasks.register<JavaExec>("importOpenData") {
 	classpath = sourceSets.main.get().runtimeClasspath
 	mainClass.set("com.rideinsight.tools.ImportOpenDataKt")
 }
+
+// fitMemoryProbe 태스크: FIT 디코딩의 힙 사용량을 재는 측정 도구(src/test/kotlin/.../fit/FitMemoryProbe.kt)를
+// 실행한다. 조작 파일 생성기(FitStressFiles)와 테스트용 인코더(FitWriter)가 테스트 소스에 있어 테스트 클래스패스로
+// 돈다. 200만 메시지 파일을 지금 구현으로 디코딩해도 끝까지 잴 수 있게 힙을 4 GB로 연다(서버 실행 설정과는
+// 무관하다). 결과는 docs/experiments.md 5단계 '업로드 자원 증폭'.
+// 사용법: ./gradlew -q fitMemoryProbe --args="--out ../work/fit-probe"
+tasks.register<JavaExec>("fitMemoryProbe") {
+	group = "tools"
+	description = "Measure heap used by FIT decoding for normal and crafted files"
+	classpath = sourceSets.test.get().runtimeClasspath
+	mainClass.set("com.rideinsight.fit.FitMemoryProbeKt")
+	jvmArgs("-Xmx4g", "-XX:+UseG1GC")
+}

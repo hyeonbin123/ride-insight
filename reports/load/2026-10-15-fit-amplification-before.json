@@ -1,0 +1,291 @@
+{
+ "date": "2026-10-15",
+ "code": "23fbbb1 (before the limits)",
+ "conditions": "probe: ./gradlew fitMemoryProbe (JVM heap 4 GB, G1); server: bootJar with -Xmx512m -XX:+UseG1GC, empty PostgreSQL 16 container, ml/.../load.py --rounds 1 --uploads 1|5. Other workloads (GPU training, other database containers) were running on the same PC, so latencies are not comparable to the stage-5 load report.",
+ "probe": {
+  "jvm": "OpenJDK 64-Bit Server VM 21.0.11",
+  "max_heap": 4294967296,
+  "cases": [
+   {
+    "case": "elemnt",
+    "file_bytes": 715726,
+    "messages": 24050,
+    "records": 13471,
+    "decode_ms": 157,
+    "decode_allocated": 23859944,
+    "decode_retained": 18541184,
+    "activity_ms": 71,
+    "activity_allocated": 3676512,
+    "activity_retained": 1842392,
+    "peak_retained": 20383576,
+    "peak_retained_per_message": 847,
+    "peak_retained_over_file": 28.5
+   },
+   {
+    "case": "edge810",
+    "file_bytes": 148037,
+    "messages": 4766,
+    "records": 4700,
+    "decode_ms": 29,
+    "decode_allocated": 4806344,
+    "decode_retained": 4015128,
+    "activity_ms": 6,
+    "activity_allocated": 1306080,
+    "activity_retained": 728104,
+    "peak_retained": 4743232,
+    "peak_retained_per_message": 995,
+    "peak_retained_over_file": 32.0
+   },
+   {
+    "case": "tiny-records-500k",
+    "file_bytes": 1000064,
+    "messages": 500000,
+    "records": 499998,
+    "decode_ms": 345,
+    "decode_allocated": 219506656,
+    "decode_retained": 170266088,
+    "activity_ms": 350,
+    "activity_allocated": 55477408,
+    "activity_retained": 36194408,
+    "peak_retained": 206460496,
+    "peak_retained_per_message": 412,
+    "peak_retained_over_file": 206.4
+   },
+   {
+    "case": "tiny-records-1m",
+    "file_bytes": 2000064,
+    "messages": 1000000,
+    "records": 999998,
+    "decode_ms": 713,
+    "decode_allocated": 430588144,
+    "decode_retained": 340306168,
+    "activity_ms": 501,
+    "activity_allocated": 113761456,
+    "activity_retained": 70291560,
+    "peak_retained": 410597728,
+    "peak_retained_per_message": 410,
+    "peak_retained_over_file": 205.3
+   },
+   {
+    "case": "tiny-records-2m",
+    "file_bytes": 4000064,
+    "messages": 2000000,
+    "records": 1999998,
+    "decode_ms": 1173,
+    "decode_allocated": 864820352,
+    "decode_retained": 680477264,
+    "activity_ms": 1613,
+    "activity_allocated": 241638608,
+    "activity_retained": 140640496,
+    "peak_retained": 821117760,
+    "peak_retained_per_message": 410,
+    "peak_retained_over_file": 205.3
+   },
+   {
+    "case": "wide-255-fields-10mb",
+    "file_bytes": 9999838,
+    "messages": 39119,
+    "records": 60,
+    "decode_ms": 2065,
+    "decode_allocated": 568025072,
+    "decode_retained": 484352632,
+    "activity_ms": 18,
+    "activity_allocated": 8448,
+    "activity_retained": 4384,
+    "peak_retained": 484357016,
+    "peak_retained_per_message": 12381,
+    "peak_retained_over_file": 48.4
+   },
+   {
+    "case": "rich-records-500k",
+    "file_bytes": 6500098,
+    "messages": 500002,
+    "records": 500000,
+    "decode_ms": 805,
+    "decode_allocated": 340565816,
+    "decode_retained": 296328512,
+    "activity_ms": 459,
+    "activity_allocated": 133522528,
+    "activity_retained": 78914536,
+    "peak_retained": 375243048,
+    "peak_retained_per_message": 750,
+    "peak_retained_over_file": 57.7
+   }
+  ]
+ },
+ "server": [
+  {
+   "case": "elemnt",
+   "scenario": "single",
+   "uploads": 1,
+   "upload_status_counts": {
+    "201": 1
+   },
+   "read_status_counts": {
+    "200": 2
+   },
+   "max_heap_before_gc_mb": 63,
+   "max_heap_after_gc_mb": 53,
+   "full_gcs": 0,
+   "oom_lines_in_server_log_cumulative": 0,
+   "upload_p50_ms": 10022
+  },
+  {
+   "case": "elemnt",
+   "scenario": "concurrent5",
+   "uploads": 5,
+   "upload_status_counts": {
+    "201": 5
+   },
+   "read_status_counts": {
+    "200": 10
+   },
+   "max_heap_before_gc_mb": 168,
+   "max_heap_after_gc_mb": 89,
+   "full_gcs": 0,
+   "oom_lines_in_server_log_cumulative": 0,
+   "upload_p50_ms": 1830
+  },
+  {
+   "case": "tiny-records-500k",
+   "scenario": "single",
+   "uploads": 1,
+   "upload_status_counts": {
+    "201": 1
+   },
+   "read_status_counts": {
+    "200": 2
+   },
+   "max_heap_before_gc_mb": 353,
+   "max_heap_after_gc_mb": 286,
+   "full_gcs": 0,
+   "oom_lines_in_server_log_cumulative": 0,
+   "upload_p50_ms": 2403
+  },
+  {
+   "case": "tiny-records-500k",
+   "scenario": "concurrent5",
+   "uploads": 5,
+   "upload_status_counts": {
+    "201": 3,
+    "500": 2
+   },
+   "read_status_counts": {
+    "200": 10
+   },
+   "max_heap_before_gc_mb": 512,
+   "max_heap_after_gc_mb": 512,
+   "full_gcs": 22,
+   "oom_lines_in_server_log_cumulative": 4,
+   "upload_p50_ms": 16802
+  },
+  {
+   "case": "tiny-records-2m",
+   "scenario": "single",
+   "uploads": 1,
+   "upload_status_counts": {
+    "500": 1
+   },
+   "read_status_counts": null,
+   "max_heap_before_gc_mb": 512,
+   "max_heap_after_gc_mb": 512,
+   "full_gcs": 14,
+   "oom_lines_in_server_log_cumulative": 2,
+   "upload_p50_ms": 4332
+  },
+  {
+   "case": "tiny-records-2m",
+   "scenario": "concurrent5",
+   "uploads": 5,
+   "upload_status_counts": {
+    "500": 5
+   },
+   "read_status_counts": null,
+   "max_heap_before_gc_mb": 511,
+   "max_heap_after_gc_mb": 511,
+   "full_gcs": 38,
+   "oom_lines_in_server_log_cumulative": 12,
+   "upload_p50_ms": 8768
+  },
+  {
+   "case": "wide-255-fields-10mb",
+   "scenario": "single",
+   "uploads": 1,
+   "upload_status_counts": {
+    "201": 1
+   },
+   "read_status_counts": {
+    "200": 2
+   },
+   "max_heap_before_gc_mb": 512,
+   "max_heap_after_gc_mb": 512,
+   "full_gcs": 2,
+   "oom_lines_in_server_log_cumulative": 0,
+   "upload_p50_ms": 4009
+  },
+  {
+   "case": "wide-255-fields-10mb",
+   "scenario": "concurrent5",
+   "uploads": 5,
+   "upload_status_counts": {
+    "500": 5
+   },
+   "read_status_counts": null,
+   "max_heap_before_gc_mb": 511,
+   "max_heap_after_gc_mb": 511,
+   "full_gcs": 47,
+   "oom_lines_in_server_log_cumulative": 13,
+   "upload_p50_ms": 13895
+  },
+  {
+   "case": "rich-records-500k",
+   "scenario": "single",
+   "uploads": 1,
+   "upload_status_counts": {
+    "201": 1
+   },
+   "read_status_counts": {
+    "200": 2
+   },
+   "max_heap_before_gc_mb": 510,
+   "max_heap_after_gc_mb": 450,
+   "full_gcs": 0,
+   "oom_lines_in_server_log_cumulative": 0,
+   "upload_p50_ms": 70229
+  },
+  {
+   "case": "rich-records-500k",
+   "scenario": "concurrent5",
+   "uploads": 5,
+   "upload_status_counts": {
+    "201": 1,
+    "500": 4
+   },
+   "read_status_counts": {
+    "0": 10
+   },
+   "max_heap_before_gc_mb": 512,
+   "max_heap_after_gc_mb": 512,
+   "full_gcs": 19,
+   "oom_lines_in_server_log_cumulative": 9,
+   "upload_p50_ms": 4827
+  }
+ ],
+ "opendata_ride_lengths": {
+  "source": "data/features/all.jsonl (stage-3 feature export: every paired power ride of the 800-athlete sample)",
+  "rides": 160803,
+  "max_samples": 413334,
+  "top5_samples": [
+   413334,
+   366798,
+   211406,
+   195199,
+   121809
+  ],
+  "p50": 4186.0,
+  "p99": 21672.0,
+  "p99_9": 36049.38600000003,
+  "rides_over_86400": 9,
+  "rides_over_500000": 0
+ }
+}
