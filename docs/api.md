@@ -28,6 +28,7 @@
 
 - 인증은 2단계에서 넣지 않는다(로컬 데모). 5단계 보안 점검에서 선수 토큰(헤더)을 넣을지 정한다
 - 오류 응답은 `{ "error": "<코드>", "message": "<설명>" }`
+- 400 `bad_request`는 요청 형식 오류(JSON·타입 불일치·파트 누락)와 컨트롤러·서비스가 일부러 하는 입력 검사(`BadRequestException`: `every` ≥ 1, `weeks` 1~104, 조회 범위 3년 이하, 날짜 1900-01-01~2100-12-31)에만 쓴다. 코드 안의 `IllegalArgumentException`(require 실패 등 내부 버그)은 500 `internal`로 드러난다(2026-10-15 변경: 그 전에는 `IllegalArgumentException` 전체가 400이라 내부 버그가 400으로 가려질 수 있었고, 날짜 범위 검사가 없어 FTP 적용일 +300000-01-01이 500이었다)
 
 ## OpenData 가져오기
 `./gradlew importOpenData --args="--zip <선수 zip> --index <ride index json> --name <이름> [--label cp|ftp]"`: 짝지어진 파워 라이딩을 활동으로 넣고 `cp_setting`(또는 FTP 라벨) 변화를 `athlete_threshold`에 넣는다. 화면 데모와 3단계 입력에 쓴다.

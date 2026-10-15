@@ -170,6 +170,24 @@ class ApiIntegrationTest : ApiTestBase() {
 
     // FTP 변경 재계산과 훈련 부하: FTP 300으로 만든 선수에 파워가 있는 ELEMNT 라이딩을 올리고 2000-01-01부터
     // FTP 250을 등록하면, 활동 1개가 다시 계산되고 TSS가 (300/250)²배가 돼야 한다(TSS ∝ 1/FTP²). 이어서 그날
+    // 2026-10-15: 날짜 입력(기준일·조회 범위·FTP 적용일·목록 커서)이 1900~2100년 밖이면 400 bad_request. 그 전에는
+    // FTP 적용일 +300000-01-01이 재계산 쿼리의 timestamptz 범위를 넘어 PostgreSQL 오류로 500이었고(IllegalArgument
+    // Exception → 400 매핑을 정리하며 입력 검사를 다시 보다가 찾음), 1500년·9999년 같은 날짜는 그대로 받아들였다.
+    // weeks 범위 밖은 전처럼 400(이제 BadRequestException).
+    @Test
+    fun `dates outside 1900-2100 are a 400, not a 500`() {
+        val id = createAthlete()
+        val results = linkedMapOf<String, Int>()
+        results["training-load 1500"] = get("/api/athletes/$id/training-load?from=1500-01-01&to=1500-01-02").status
+        results["ftp-estimate weeks=0"] = get("/api/athletes/$id/ftp-estimate?weeks=0").status
+        results["ftp-estimate asOf 2101"] = get("/api/athletes/$id/ftp-estimate?asOf=2101-01-01").status
+        results["activities before 1800"] = get("/api/athletes/$id/activities?before=1800-01-01T00:00:00Z").status
+        results["threshold 9999"] = put("/api/athletes/$id/threshold", """{"effectiveFrom":"9999-01-01","ftpWatts":250}""").status
+        results["threshold +300000"] = put("/api/athletes/$id/threshold", """{"effectiveFrom":"+300000-01-01","ftpWatts":250}""").status
+        println("DATE_RANGE_RESULTS $results")
+        for ((k, v) in results) assertEquals(400, v, k)
+    }
+
     // 훈련 부하의 TSS가 활동 TSS와 같은지, from > to가 400인지, 52주 기간 커브가 10구간 이상인지, 삭제 뒤
     // 조회·재삭제가 404인지 본다.
     @Test

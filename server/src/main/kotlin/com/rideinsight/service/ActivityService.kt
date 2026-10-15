@@ -179,6 +179,7 @@ class ActivityService(
     // 읽어, 활동마다 쿼리를 따로 보내지 않는다.
     fun list(athleteId: UUID, before: OffsetDateTime?, limit: Int): List<StoredActivity> {
         if (!athletes.exists(athleteId)) throw NotFoundException("athlete $athleteId not found")
+        before?.let { requireReasonableDate(it.toLocalDate(), "before") }
         val rows = activities.list(athleteId, before, limit.coerceIn(1, 200))
         val all = activities.metricsFor(rows.map { it.id })
         return rows.map { r -> StoredActivity(r, all[r.id]?.let { (m, json) -> withMmp(m, json) }) }

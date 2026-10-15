@@ -13,6 +13,7 @@ package com.rideinsight.api
 
 import com.rideinsight.fit.FitDecodeException
 import com.rideinsight.fit.FitLimitException
+import com.rideinsight.service.BadRequestException
 import com.rideinsight.service.InvalidActivityException
 import com.rideinsight.service.NotFoundException
 import com.rideinsight.service.UnsupportedSportException
@@ -95,11 +96,13 @@ class ApiExceptionHandler {
         return respond(HttpStatus.BAD_REQUEST, "validation", details.ifEmpty { "invalid request body" })
     }
 
-    // 그 밖의 잘못된 요청 → 400 bad_request: 코드의 require() 실패(IllegalArgumentException), JSON 본문 파싱
+    // 그 밖의 잘못된 요청 → 400 bad_request: 컨트롤러·서비스의 입력 검사(BadRequestException), JSON 본문 파싱
     // 실패, 경로·쿼리 값의 타입 불일치(UUID가 아닌 id, limit=abc), multipart에 file 파트 없음. 메시지가 여러
-    // 줄이면 첫 줄만 돌려준다.
+    // 줄이면 첫 줄만 돌려준다. 2026-10-15 전에는 IllegalArgumentException 전체가 여기로 와서 내부 코드의
+    // require() 실패(버그)도 400으로 가려졌다. 이제 IllegalArgumentException은 맨 아래 처리기에서 500 + 로그가
+    // 된다(Errors.kt의 BadRequestException 주석).
     @ExceptionHandler(
-        IllegalArgumentException::class,
+        BadRequestException::class,
         HttpMessageNotReadableException::class,
         MethodArgumentTypeMismatchException::class,
         MissingServletRequestPartException::class,

@@ -58,16 +58,20 @@ class AthleteService(
     /** 어떤 날짜부터의 FTP를 정하고, 그 날짜 이후 활동의 TSS를 다시 계산한다. */
     @Transactional
     fun setThreshold(id: UUID, effectiveFrom: LocalDate, ftpWatts: Int): Int {
+        requireReasonableDate(effectiveFrom, "effectiveFrom")
         if (!athletes.lock(id)) throw NotFoundException("athlete $id not found")
         athletes.setThreshold(id, effectiveFrom, ftpWatts, "manual")
         return metrics.recomputeFrom(id, effectiveFrom.atStartOfDay().atOffset(ZoneOffset.UTC))
     }
 
-    // PMC 시계열. 범위는 to ≥ from이고 길이는 3 × 366일 이하로 제한한다. 어기면 require가 400으로 이어진다.
+    // PMC 시계열. 범위는 to ≥ from이고 길이는 3 × 366일 이하, 날짜는 1900~2100년으로 제한한다. 어기면 400
+    // bad_request(BadRequestException).
     fun trainingLoad(id: UUID, from: LocalDate, to: LocalDate): List<TrainingLoad.Day> {
         if (!athletes.exists(id)) throw NotFoundException("athlete $id not found")
-        require(!to.isBefore(from)) { "'to' must not be before 'from'" }
-        require(java.time.temporal.ChronoUnit.DAYS.between(from, to) <= 3 * 366) { "range must be at most three years" }
+        requireReasonableDate(from, "from")
+        requireReasonableDate(to, "to")
+        if (to.isBefore(from)) throw BadRequestException("'to' must not be before 'from'")
+        if (java.time.temporal.ChronoUnit.DAYS.between(from, to) > 3 * 366) throw BadRequestException("range must be at most three years")
         // 부하는 지수 가중 평균이라 조회 시작일 전의 훈련이 남아 있어야 한다. CTL이 조회 시작일에 좌우되지
         // 않도록 선수의 첫 활동부터 조회 전날까지 먼저 계산(워밍업)해 그 마지막 값을 초기값으로 넘긴다.
         // 처음에는 120일만 워밍업해 CTL의 약 6%가 빠졌고, 조회 시작일에 따라 CTL이 최대 6% 달라졌다
@@ -94,7 +98,8 @@ class AthleteService(
     /** [asOf]까지(당일 포함) 최근 [weeks]주 동안 표준 구간마다의 최대 파워. */
     fun powerCurve(id: UUID, weeks: Int, asOf: LocalDate): List<Pair<Int, Double>> {
         if (!athletes.exists(id)) throw NotFoundException("athlete $id not found")
-        require(weeks in 1..104) { "weeks must be between 1 and 104" }
+        if (weeks !in 1..104) throw BadRequestException("weeks must be between 1 and 104")
+        requireReasonableDate(asOf, "asOf")
         val to = asOf.plusDays(1).atStartOfDay().atOffset(ZoneOffset.UTC)
         val from = to.minusWeeks(weeks.toLong())
         val best = activities.maxMmp(id, from, to)

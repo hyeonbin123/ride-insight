@@ -9,6 +9,7 @@ package com.rideinsight.api
 // 호출한다. 예외는 ApiExceptionHandler가 상태 코드로 바꾼다(없는 id → 404, 잘못된 every·UUID → 400).
 
 import com.rideinsight.service.ActivityService
+import com.rideinsight.service.BadRequestException
 import java.util.UUID
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.DeleteMapping
@@ -38,9 +39,9 @@ class ActivityController(private val activities: ActivityService) {
     // 단위로 바꿨다. 실제 고르기는 SamplesResponse.from(Dtos.kt)이 한다.
     @GetMapping("/{id}/samples")
     fun samples(@PathVariable id: UUID, @RequestParam(defaultValue = "1") every: Int): SamplesResponse {
-        // every가 0 이하면 구간 번호 계산(t / every)이 성립하지 않으므로 IllegalArgumentException → 400으로
-        // 거절한다(ApiIntegrationTest가 every=0을 확인).
-        require(every >= 1) { "'every' must be at least 1" }
+        // every가 0 이하면 구간 번호 계산(t / every)이 성립하지 않으므로 400 bad_request로 거절한다
+        // (ApiIntegrationTest가 every=0을 확인).
+        if (every < 1) throw BadRequestException("'every' must be at least 1")
         val series = activities.samples(id)
         // MAX_POINTS보다 많은 점은 절대 돌려주지 않는다: 호출자가 너무 많은 점을 요청하면 구간 폭(초)을 넓힌다.
         // 구간 번호는 floor(t / every)라, 길이(마지막 − 첫 경과 시간, 초)가 span이면 구간은 최대
