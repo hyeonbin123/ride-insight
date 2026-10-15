@@ -25,7 +25,7 @@
 | `GET /activities/{id}/power-curve` | 16구간 MMP + 전 구간(1초 단위 1~최대) 곡선 | 곡선은 로그 간격으로 ≤ 300점 |
 | `GET /athletes/{id}/training-load?from&to&tz` | 현지 날짜별 TSS 합, CTL, ATL, TSB | CTL 42일·ATL 7일 지수 가중, 활동 없는 날은 TSS 0으로 감쇠. 부하는 선수의 첫 활동부터 누적해 `from` 이전 값을 워밍업으로 쓴다 |
 | `GET /athletes/{id}/power-curve?weeks=6&asOf&tz` | 기간 최대 파워 커브(활동별 MMP의 구간별 최대) | 3단계 FTP 추정의 입력. 기간은 asOf 다음 날 현지 0시까지 |
-| `GET /athletes/{id}/ftp-estimate?weeks=6&asOf&tz` | FTP 추정(규칙 R1)과 R2·R3, 근거(창 안 파워 라이딩 수, 측정 오차) | 3단계 서비스 반영 |
+| `GET /athletes/{id}/ftp-estimate?weeks=6&asOf&tz` | FTP 추정(규칙 R1)과 R2·R3, 근거(창 안 파워 라이딩 수, 측정 오차) | 3단계 서비스 반영. 안내 문장 `note`(영어)와 함께 측정 오차를 숫자로도 준다: `devMaeWatts` 31, `testMaeWatts` 29, `testBiasWatts` −17(2026-10-15 추가, 화면은 이 숫자로 한국어 안내를 만든다) |
 | `DELETE /activities/{id}` | 삭제 | 204 |
 
 - **날짜 기준(2026-10-15 변경)**: 활동 날짜(적용할 FTP 찾기), 훈련 부하의 날짜 묶음, 기간 커브·FTP 추정의 기준일 창, 날짜 기본값('오늘')은 선수 시간대(`time_zone`, 기본 `Asia/Seoul`)의 현지 날짜로 센다. 그 전에는 모두 UTC 날짜라 한국에서 오전 9시 전에 시작한 라이딩이 PMC의 전날에 쌓이고 그날부터 바꾼 FTP 대신 전날 FTP로 계산될 수 있었다. 조회 요청의 `tz`는 보기만 바꾼다(저장된 TSS는 선수 시간대로 고른 FTP로 계산된 그대로). OpenData 가져오기 도구는 메타데이터 날짜가 UTC라 가져온 선수를 `UTC`로 만든다. 활동의 `startedAt`은 그대로 UTC 시각으로 저장·응답한다

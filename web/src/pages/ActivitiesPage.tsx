@@ -24,7 +24,7 @@ import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-q
 import { useNavigate } from "react-router";
 import { api, ApiRequestError } from "../api/client";
 import type { Activity } from "../api/types";
-import { formatDate, formatDuration, formatNumber, formatWatts } from "../format";
+import { describeError, formatDate, formatDuration, formatNumber, formatWatts } from "../format";
 import { useAthleteStore } from "../state/athleteStore";
 import { NeedAthlete } from "../components/NeedAthlete";
 
@@ -67,7 +67,7 @@ export function ActivitiesPage() {
             text: a.metrics ? `저장됨 · NP ${formatWatts(a.metrics.normalizedPower)} · TSS ${formatNumber(a.metrics.tss, 0)}` : "저장됨 (파워 없음)",
           });
         } catch (e) {
-          results.push({ name: f.name, ok: false, text: e instanceof ApiRequestError ? `${e.status} ${e.code}: ${e.message}` : String(e) });
+          results.push({ name: f.name, ok: false, text: e instanceof ApiRequestError ? `${e.status} ${describeError(e)}` : describeError(e) });
         }
       }
       return results;
@@ -137,7 +137,7 @@ export function ActivitiesPage() {
             라이딩 {items.length ? `(${items.length}${list.hasNextPage ? "+" : ""})` : ""}
           </Typography>
           {list.isLoading && <LinearProgress />}
-          {list.isError && <Alert severity="error">{String(list.error)}</Alert>}
+          {list.isError && <Alert severity="error">{describeError(list.error)}</Alert>}
           {!list.isLoading && items.length === 0 && <Typography color="text.secondary">아직 라이딩이 없습니다. FIT 파일을 올려 보세요.</Typography>}
           {items.length > 0 && (
             <Table size="small">

@@ -66,3 +66,49 @@ export function dateIn(d: Date, timeZone?: string): string {
     return isoDate(d);
   }
 }
+
+// FTP 추정 카드의 안내 문장(한국어). 서버의 note는 영어 문장이라 화면 언어와 맞지 않아, 2026-10-15부터 서버가
+// 따로 주는 숫자(devMaeWatts 등)로 여기서 문장을 만든다. 숫자가 없는 응답(이전 서버)이면 note를 그대로 쓴다.
+export function ftpEstimateNote(e: {
+  ftpWatts?: number;
+  weeks: number;
+  ridesInWindow: number;
+  note: string;
+  devMaeWatts?: number;
+  testMaeWatts?: number;
+  testBiasWatts?: number;
+}): string {
+  if (e.ftpWatts == null) return `최근 ${e.weeks}주에 파워가 기록된 20분 이상 라이딩이 없어 추정할 수 없습니다.`;
+  if (e.devMaeWatts == null || e.testMaeWatts == null || e.testBiasWatts == null) return e.note;
+  const direction = e.testBiasWatts < 0 ? "낮게" : "높게";
+  return (
+    `규칙 R1: 최근 ${e.weeks}주 파워 라이딩 ${e.ridesInWindow}개의 20분 최고 파워 × 0.95. ` +
+    `선수가 설정한 FTP와 비교하면 평균 ${e.devMaeWatts} W(개발 세트), 봉인 테스트에서 ${e.testMaeWatts} W 차이가 났고 ` +
+    `평균 ${Math.abs(e.testBiasWatts)} W ${direction} 추정했습니다. 학습 모델은 미리 정한 기준(5 W 이상 개선)을 확정하지 못해 쓰지 않습니다.`
+  );
+}
+
+// 서버 오류 코드(docs/api.md)의 한국어 설명. 화면에 '설명 (코드: 서버 메시지)'로 보여 준다. 처음에는 서버의 영어
+// 메시지만 보여 화면 언어가 섞였다(2026-10-15 수정).
+const ERROR_TEXT: Record<string, string> = {
+  not_found: "찾을 수 없습니다",
+  validation: "입력값이 올바르지 않습니다",
+  bad_request: "요청이 올바르지 않습니다",
+  invalid_fit: "FIT 파일을 읽을 수 없습니다",
+  invalid_activity: "활동으로 쓸 수 없는 파일입니다(기록이 없거나 시각이 거꾸로 감)",
+  unsupported_sport: "사이클링 활동만 올릴 수 있습니다",
+  duplicate_activity: "같은 시작 시각의 라이딩이 이미 있습니다",
+  file_too_large: "파일이 10 MB를 넘습니다",
+  fit_limit_exceeded: "파일이 처리 한도(기록 50만 개)를 넘습니다",
+  internal: "서버 오류가 났습니다",
+};
+
+// 오류 객체 → 화면 문장. code·message가 있는 서버 오류(ApiRequestError)면 한국어 설명을 앞에 붙인다.
+export function describeError(e: unknown): string {
+  if (e && typeof e === "object" && "code" in e && "message" in e) {
+    const { code, message } = e as { code: string; message: string };
+    const text = ERROR_TEXT[code];
+    return text ? `${text} (${code}: ${message})` : `${code}: ${message}`;
+  }
+  return e instanceof Error ? e.message : String(e);
+}

@@ -209,4 +209,9 @@ data class FtpEstimateResponse(
     val best60m: Double?,
     val weeks: Int,
     val note: String,
+    // 2026-10-15 추가: note의 수치를 따로 준다(화면이 한국어 문장을 직접 만들도록). R1의 dev MAE, 봉인 test MAE, 봉인
+    // test 편향(음수 = 선수 설정 FTP보다 낮게 추정). 값은 docs/experiments.md 3단계 결과.
+    val devMaeWatts: Int,
+    val testMaeWatts: Int,
+    val testBiasWatts: Int,
 )

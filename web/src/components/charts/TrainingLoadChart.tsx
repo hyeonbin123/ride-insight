@@ -1,11 +1,14 @@
 // [파일 역할] 대시보드의 훈련 부하 차트(PMC, Performance Management Chart). 날짜별 TSS 막대, CTL(42일 지수
 // 가중 평균, 체력)·ATL(7일, 피로) 선을 왼쪽 축에, TSB(컨디션 = 어제 CTL − 어제 ATL) 선을 오른쪽 축에 그린다.
 // 값 계산은 서버(GET /athletes/{id}/training-load)가 하고 여기서는 그리기만 한다.
+// [접근성, 2026-10-15] SVG에 한국어 요약(기간, 마지막 날의 CTL·ATL·TSB, 기간 TSS 합)을 달고, 날짜별 값을 표로 펼쳐
+// 보는 <details>를 둔다. 처음에는 영어 일반명 'training load chart'뿐이었다.
 
 import * as d3 from "d3";
 import { useMemo, useState } from "react";
 import { Box, Typography } from "@mui/material";
 import type { TrainingLoadDay } from "../../api/types";
+import { loadSummary } from "./chartText";
 import { useMeasure } from "./useMeasure";
 
 interface Props {
@@ -27,7 +30,8 @@ export function TrainingLoadChart({ days, height = 300 }: Props) {
 
   // 날짜 문자열을 UTC 자정의 Date로 바꿔 둔다(아래 UTC 축과 맞추기 위해).
   const parsed = useMemo(() => days.map((d) => ({ ...d, t: new Date(d.date + "T00:00:00Z") })), [days]);
-  // API의 날짜는 UTC 기준 날짜라 축도 UTC여야 한다(2026-10-10 Codex 검토).
+  // API의 날짜는 시각 없는 날짜(2026-10-15부터 선수 시간대의 현지 날짜)라, UTC 자정으로 두고 축도 UTC로 그려야
+  // 브라우저 시간대와 상관없이 날짜가 그대로 보인다(2026-10-10 Codex 검토).
   const x = useMemo(
     () => d3.scaleUtc().domain(d3.extent(parsed, (d) => d.t) as [Date, Date]).range([0, innerW]),
     [parsed, innerW],
@@ -60,6 +64,7 @@ export function TrainingLoadChart({ days, height = 300 }: Props) {
   const barW = Math.max(1, innerW / Math.max(parsed.length, 1) - 1);
   // 마우스 x와 가장 가까운 날을 찾아 세로선과 아래 글자에 쓴다.
   const hovered = hover == null || parsed.length === 0 ? null : parsed[d3.minIndex(parsed, (d) => Math.abs(x(d.t) - hover))];
+  const summary = loadSummary(days);
 
   return (
     <Box ref={ref} sx={{ width: "100%" }}>
@@ -67,7 +72,7 @@ export function TrainingLoadChart({ days, height = 300 }: Props) {
         width={w}
         height={height}
         role="img"
-        aria-label="training load chart"
+        aria-label={summary}
         onMouseMove={(e) => {
           // 마우스 좌표를 그림 안쪽 영역 기준(왼쪽 여백 제외)으로 바꾼다.
           const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
@@ -113,6 +118,34 @@ export function TrainingLoadChart({ days, height = 300 }: Props) {
           ? `${hovered.date} · TSS ${hovered.tss.toFixed(0)} · CTL ${hovered.ctl.toFixed(1)} · ATL ${hovered.atl.toFixed(1)} · TSB ${hovered.tsb.toFixed(1)}`
           : "막대: 일일 TSS · 파랑: CTL(42일) · 주황: ATL(7일) · 보라(오른쪽 축): TSB"}
       </Typography>
+      {days.length > 0 && (
+        <details>
+          <summary>표로 보기</summary>
+          <table>
+            <caption>{summary}</caption>
+            <thead>
+              <tr>
+                <th scope="col">날짜</th>
+                <th scope="col">TSS</th>
+                <th scope="col">CTL</th>
+                <th scope="col">ATL</th>
+                <th scope="col">TSB</th>
+              </tr>
+            </thead>
+            <tbody>
+              {days.map((d) => (
+                <tr key={d.date}>
+                  <th scope="row">{d.date}</th>
+                  <td>{d.tss.toFixed(0)}</td>
+                  <td>{d.ctl.toFixed(1)}</td>
+                  <td>{d.atl.toFixed(1)}</td>
+                  <td>{d.tsb.toFixed(1)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
     </Box>
   );
 }

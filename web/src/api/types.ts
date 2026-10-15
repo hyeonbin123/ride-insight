@@ -140,4 +140,8 @@ export interface FtpEstimate {
   best60m?: number;
   weeks: number;
   note: string;
+  // 2026-10-15 추가: note의 측정 오차를 숫자로. 화면은 이 값으로 한국어 안내를 만든다(format.ts의 ftpEstimateNote).
+  devMaeWatts?: number;
+  testMaeWatts?: number;
+  testBiasWatts?: number;
 }

@@ -3,7 +3,7 @@
 // 전체가 달라진다.
 
 import { describe, expect, it } from "vitest";
-import { dateIn, formatDuration, formatWatts, isoDate, secsLabel, windowLabel } from "./format";
+import { dateIn, describeError, formatDuration, formatWatts, ftpEstimateNote, isoDate, secsLabel, windowLabel } from "./format";
 
 describe("format helpers", () => {
   // 1시간 미만은 m:ss, 이상은 h:mm:ss, 소수 초는 반올림, null은 '-'.
@@ -34,5 +34,22 @@ describe("format helpers", () => {
     expect(dateIn(ride, "UTC")).toBe("2026-10-14");
     expect(dateIn(ride)).toBe(isoDate(ride));
     expect(dateIn(ride, "Mars/Olympus")).toBe("2026-10-14");
+  });
+
+  // 화면 언어(2026-10-15): FTP 추정 안내는 서버의 숫자로 한국어 문장을 만들고, 숫자가 없는 응답이면 서버 note를 쓴다.
+  // 서버 오류는 코드별 한국어 설명을 앞에 붙인다.
+  it("builds the FTP estimate note and error messages in Korean", () => {
+    const base = { weeks: 6, ridesInWindow: 12, note: "rule R1 ..." };
+    expect(ftpEstimateNote({ ...base, ftpWatts: 250, devMaeWatts: 31, testMaeWatts: 29, testBiasWatts: -17 })).toBe(
+      "규칙 R1: 최근 6주 파워 라이딩 12개의 20분 최고 파워 × 0.95. 선수가 설정한 FTP와 비교하면 평균 31 W(개발 세트), " +
+        "봉인 테스트에서 29 W 차이가 났고 평균 17 W 낮게 추정했습니다. 학습 모델은 미리 정한 기준(5 W 이상 개선)을 확정하지 못해 쓰지 않습니다.",
+    );
+    expect(ftpEstimateNote({ ...base })).toBe("최근 6주에 파워가 기록된 20분 이상 라이딩이 없어 추정할 수 없습니다.");
+    expect(ftpEstimateNote({ ...base, ftpWatts: 250 })).toBe("rule R1 ...");
+    expect(describeError({ code: "fit_limit_exceeded", message: "more than 500000 record messages in file" })).toBe(
+      "파일이 처리 한도(기록 50만 개)를 넘습니다 (fit_limit_exceeded: more than 500000 record messages in file)",
+    );
+    expect(describeError({ code: "teapot", message: "short and stout" })).toBe("teapot: short and stout");
+    expect(describeError(new Error("network down"))).toBe("network down");
   });
 });

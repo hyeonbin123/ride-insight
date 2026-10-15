@@ -140,6 +140,7 @@ class AthleteController(
         val e = ftp.estimate(id, weeks, asOf ?: LocalDate.now(zone), zone)
         return FtpEstimateResponse(
             e.method, e.ftpWatts, e.rules, e.criticalPowerWPrimeKj, e.windowsUsed, e.ridesInWindow, e.best20m, e.best60m, weeks, e.note,
+            FtpEstimateService.DEV_MAE_WATTS, FtpEstimateService.SEALED_TEST_MAE_WATTS, -FtpEstimateService.SEALED_TEST_BIAS_WATTS,
         )
     }
 

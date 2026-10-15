@@ -2,12 +2,16 @@
 // 최고 곡선(점선)을 겹쳐 보여 주고, 대시보드에서는 기간 최고 곡선 하나를 그린다.
 // [구현 방식] D3는 스케일·선 경로 계산만 맡고, 실제 SVG 요소는 React JSX로 그린다. D3가 DOM을 직접 고치지
 // 않으므로 React의 렌더링과 충돌하지 않는다.
+// [접근성, 2026-10-15] 그림만으로는 화면 읽기 프로그램이 값을 알 수 없어, SVG에 한국어 요약(aria-label: 점 수, 최고
+// 파워, 20분 값)을 달고 그림 아래에 표준 구간 값을 표로 펼쳐 보는 <details>를 둔다. 처음에는 영어 일반명
+// 'power curve'뿐이었다.
 
 import * as d3 from "d3";
 import { useMemo, useState } from "react";
 import { Box, Typography } from "@mui/material";
 import type { CurvePoint } from "../../api/types";
 import { formatWatts, secsLabel } from "../../format";
+import { curveSummary, STANDARD_SECS } from "./chartText";
 import { useMeasure } from "./useMeasure";
 
 interface Props {
@@ -56,6 +60,11 @@ export function PowerCurveChart({ points, comparison, labels = ["이 라이딩",
   const line = d3.line<CurvePoint>().x((p) => x(p.secs)).y((p) => y(p.watts)).curve(d3.curveMonotoneX);
   // 마우스 x와 화면상 가장 가까운 주 곡선의 점(d3.minIndex)을 찾아 아래 글자와 강조 점에 쓴다.
   const hovered = hover == null || points.length === 0 ? null : points[d3.minIndex(points, (p) => Math.abs(x(p.secs) - hover))];
+  // 화면 읽기용 요약과 값 표. 표는 표준 구간(1초~90분)에 해당하는 점만 보여 준다(곡선은 최대 300점이라 다 적으면
+  // 너무 길다). 비교 곡선이 있으면 같은 구간의 값을 옆 열에 둔다.
+  const summary = curveSummary(labels[0], points);
+  const tableRows = points.filter((p) => STANDARD_SECS.includes(p.secs));
+  const comparisonAt = new Map((comparison ?? []).map((p) => [p.secs, p.watts]));
 
   return (
     <Box ref={ref} sx={{ width: "100%" }}>
@@ -63,7 +72,7 @@ export function PowerCurveChart({ points, comparison, labels = ["이 라이딩",
         width={w}
         height={height}
         role="img"
-        aria-label="power curve"
+        aria-label={summary}
         onMouseMove={(e) => {
           // SVG 기준 마우스 좌표에서 왼쪽 여백을 빼 안쪽 영역 좌표로 바꾼다. 나가면 강조를 지운다.
           const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
@@ -104,6 +113,30 @@ export function PowerCurveChart({ points, comparison, labels = ["이 라이딩",
       <Typography variant="caption" sx={{ display: "block", minHeight: 20, color: "text.secondary" }}>
         {hovered ? `${secsLabel(hovered.secs)}: ${formatWatts(hovered.watts)}` : `${labels[0]}${comparison ? ` · 점선: ${labels[1]}` : ""}`}
       </Typography>
+      {tableRows.length > 0 && (
+        <details>
+          <summary>표로 보기</summary>
+          <table>
+            <caption>{summary}</caption>
+            <thead>
+              <tr>
+                <th scope="col">구간</th>
+                <th scope="col">{labels[0]}</th>
+                {comparison && <th scope="col">{labels[1]}</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {tableRows.map((p) => (
+                <tr key={p.secs}>
+                  <th scope="row">{secsLabel(p.secs)}</th>
+                  <td>{formatWatts(p.watts)}</td>
+                  {comparison && <td>{formatWatts(comparisonAt.get(p.secs))}</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
     </Box>
   );
 }

@@ -23,7 +23,7 @@ import { api } from "../api/client";
 import { PowerCurveChart } from "../components/charts/PowerCurveChart";
 import { TrainingLoadChart } from "../components/charts/TrainingLoadChart";
 import { NeedAthlete } from "../components/NeedAthlete";
-import { dateIn, formatNumber, formatWatts, isoDate, windowLabel } from "../format";
+import { dateIn, describeError, formatNumber, formatWatts, ftpEstimateNote, isoDate, windowLabel } from "../format";
 import { useAthleteStore } from "../state/athleteStore";
 
 /** 훈련 부하(PMC)와 최근 기간 최고 파워 커브. */
@@ -137,7 +137,7 @@ export function DashboardPage() {
             FTP 추정 ({weeks}주 기준)
           </Typography>
           {estimate.isLoading && <LinearProgress />}
-          {estimate.isError && <Alert severity="error">{String(estimate.error)}</Alert>}
+          {estimate.isError && <Alert severity="error">{describeError(estimate.error)}</Alert>}
           {/* 추정값(크게), 근거(방법, 기간 안 파워 라이딩 수, 20분·60분 최대, CP 모델 값), 서버가 준 안내 */}
           {/* 문장(note: 규칙 정의와 측정 오차). 20분 이상 라이딩이 없으면 추정값은 '-'이고 note가 그 */}
           {/* 이유를 말한다. */}
@@ -149,7 +149,7 @@ export function DashboardPage() {
                 {estimate.data.rules["R3_critical_power"] != null ? ` · CP 모델 ${formatWatts(estimate.data.rules["R3_critical_power"])}` : ""}
               </Typography>
               <Typography variant="caption" color="text.secondary" sx={{ flexBasis: "100%" }}>
-                {estimate.data.note}
+                {ftpEstimateNote(estimate.data)}
               </Typography>
             </Stack>
           )}
@@ -170,7 +170,7 @@ export function DashboardPage() {
             </ToggleButtonGroup>
           </Stack>
           {load.isLoading && <LinearProgress />}
-          {load.isError && <Alert severity="error">{String(load.error)}</Alert>}
+          {load.isError && <Alert severity="error">{describeError(load.error)}</Alert>}
           {load.data && <TrainingLoadChart days={load.data.days} />}
         </CardContent>
       </Card>
@@ -187,7 +187,7 @@ export function DashboardPage() {
             </ToggleButtonGroup>
           </Stack>
           {curve.isLoading && <LinearProgress />}
-          {curve.isError && <Alert severity="error">{String(curve.error)}</Alert>}
+          {curve.isError && <Alert severity="error">{describeError(curve.error)}</Alert>}
           {/* 커브 점이 있으면 곡선과 16구간 값 목록을, 응답은 왔는데 점이 없으면 '파워 라이딩 없음' 안내를 */}
           {/* 보여 준다. 요청이 실패하면 위의 오류 상자만 보인다(처음 구현은 오류 상자와 이 안내를 함께 */}
           {/* 보였다, 2026-10-13 수정). */}

@@ -21,7 +21,37 @@ describe("charts render without data problems", () => {
     rerender(<PowerCurveChart points={[{ secs: 5, watts: 500 }]} />);
     expect(container.querySelectorAll("circle").length).toBe(1); // 점이 하나뿐이어도 보여야 한다
     rerender(<PowerCurveChart points={[]} />);
-    expect(screen.getByRole("img", { name: "power curve" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "파워 커브(이 라이딩): 값 없음" })).toBeInTheDocument();
+  });
+
+  // 접근성(2026-10-15): 차트마다 한국어 요약이 SVG의 이름(aria-label)이 되고, 파워 커브와 훈련 부하는 값을 표로 펼쳐
+  // 볼 수 있어야 한다. 처음에는 영어 일반명('power curve' 등)뿐이라 화면 읽기 프로그램이 값을 알 수 없었다.
+  it("names every chart with a Korean summary and offers a value table", () => {
+    const { container, unmount } = render(
+      <PowerCurveChart
+        points={[{ secs: 1, watts: 812 }, { secs: 60, watts: 420 }, { secs: 1200, watts: 263 }, { secs: 1300, watts: 255 }]}
+        comparison={[{ secs: 1200, watts: 270 }]}
+        labels={["이 라이딩", "6주 최고"]}
+      />,
+    );
+    expect(screen.getByRole("img", { name: "파워 커브(이 라이딩): 점 4개, 최고 812 W(1s), 20분 263 W" })).toBeInTheDocument();
+    // 표에는 표준 구간(1초·1분·20분)만, 비교 곡선 값은 옆 열에. 표준이 아닌 1300초는 빠진다.
+    const rows = Array.from(container.querySelectorAll("tbody tr")).map((r) => r.textContent);
+    expect(rows).toEqual(["1s812 W-", "1m420 W-", "20m263 W270 W"]);
+    unmount();
+
+    render(
+      <TrainingLoadChart
+        days={[
+          { date: "2026-10-14", tss: 0, ctl: 50, atl: 40, tsb: 12.5 },
+          { date: "2026-10-15", tss: 120, ctl: 51.7, atl: 52.1, tsb: 10 },
+        ]}
+      />,
+    );
+    expect(
+      screen.getByRole("img", { name: "훈련 부하 2026-10-14~2026-10-15: 마지막 날 CTL 51.7, ATL 52.1, TSB 10.0, 기간 TSS 합 120" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("표로 보기")).toBeInTheDocument();
   });
 
   // 훈련 부하: 열흘 모두 TSS·CTL·ATL·TSB가 0이면 막대 10개의 높이가 모두 0이어야 한다. y 도메인이 [0, 0]이
@@ -52,5 +82,7 @@ describe("charts render without data problems", () => {
     // 두 조각: 혼자 있는 [0]과 [2..3]. d3는 조각마다 "M"을 하나씩 낸다.
     expect((d.match(/M/g) ?? []).length).toBe(2);
     expect(screen.getByText(/파워 \(W\)/)).toBeInTheDocument();
+    // 빠진 값은 평균·최대에서 뺀다: 평균 (100+120+130)/3 = 117, 최대 130, 길이 0:04.
+    expect(screen.getByRole("img", { name: "시계열 0:04: 파워 평균 117 W·최대 130 W" })).toBeInTheDocument();
   });
 });

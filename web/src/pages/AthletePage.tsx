@@ -20,8 +20,8 @@ import {
   Typography,
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiRequestError } from "../api/client";
-import { dateIn } from "../format";
+import { api } from "../api/client";
+import { dateIn, describeError } from "../format";
 import { useAthleteStore } from "../state/athleteStore";
 
 /**
@@ -88,8 +88,8 @@ export function AthletePage() {
     },
   });
 
-  // 오류 표시 문자열: 서버 오류면 '코드: 메시지'(예: validation: ...), 그 밖의 예외면 메시지만.
-  const errorText = (e: unknown) => (e instanceof ApiRequestError ? `${e.code}: ${e.message}` : e instanceof Error ? e.message : null);
+  // 오류 표시 문자열: 서버 오류면 한국어 설명 + (코드: 메시지), 그 밖의 예외면 메시지만(format.ts의 describeError).
+  const errorText = (e: unknown) => describeError(e);
 
   return (
     <Grid container spacing={2}>

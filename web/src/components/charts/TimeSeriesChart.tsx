@@ -2,11 +2,14 @@
 // FTP 기준선과 마우스 위치의 값 읽기를 보여 준다.
 // [구현 방식] D3로 스케일과 선 경로 문자열만 만들고 SVG는 JSX로 그린다. 1시간 라이딩이면 점이 수천 개라
 // 점마다 요소를 만들지 않고 시리즈마다 path 하나로 그린다.
+// [접근성, 2026-10-15] 수천 점을 표로 펼치는 대신 SVG에 한국어 요약(길이, 시리즈별 평균·최대)을 단다. 처음에는 영어
+// 일반명 'time series chart'뿐이었다.
 
 import * as d3 from "d3";
 import { useMemo, useState } from "react";
 import { Box, Typography } from "@mui/material";
 import { formatDuration } from "../../format";
+import { seriesSummary } from "./chartText";
 import { useMeasure } from "./useMeasure";
 
 // 그릴 시리즈 하나: 이름, 색, 값 배열(secs와 같은 길이, 빠진 샘플은 null), 단위, 오른쪽 축 여부.
@@ -32,6 +35,7 @@ interface Props {
  * props: secs(x값, 경과 초), series(시리즈 목록), height, reference(왼쪽 축 기준선, 예: FTP). 좌우 여백
  * 48px은 양쪽 축 숫자 자리다.
  */
+
 export function TimeSeriesChart({ secs, series, height = 260, reference }: Props) {
   const [ref, width] = useMeasure<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
@@ -87,7 +91,7 @@ export function TimeSeriesChart({ secs, series, height = 260, reference }: Props
         width={w}
         height={height}
         role="img"
-        aria-label="time series chart"
+        aria-label={seriesSummary(secs, series)}
         onMouseMove={(e) => {
           // 마우스 좌표를 그림 안쪽 영역 기준(왼쪽 여백 제외)으로 바꿔 hover에 저장한다.
           const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
