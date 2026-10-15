@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="840" height="350" viewBox="0 0 840 350" font-family="sans-serif" font-size="13">
+<rect width="840" height="350" fill="#ffffff"/>
+<text x="16" y="24" font-size="15" font-weight="bold">봉인 test(선수 123명, 예측 단위 1,586개): 선수가 설정한 FTP와의 평균 절대 오차</text>
+<text x="16" y="44" fill="#555">점: MAE, 막대: 선수 단위 부트스트랩 95% 구간, 오른쪽: 편향(예측 − 설정값)</text>
+<line x1="190.0" y1="48" x2="190.0" y2="294" stroke="#e0e0e0"/>
+<text x="190.0" y="310" text-anchor="middle" fill="#666">0</text>
+<line x1="271.7" y1="48" x2="271.7" y2="294" stroke="#e0e0e0"/>
+<text x="271.7" y="310" text-anchor="middle" fill="#666">10</text>
+<line x1="353.3" y1="48" x2="353.3" y2="294" stroke="#e0e0e0"/>
+<text x="353.3" y="310" text-anchor="middle" fill="#666">20</text>
+<line x1="435.0" y1="48" x2="435.0" y2="294" stroke="#e0e0e0"/>
+<text x="435.0" y="310" text-anchor="middle" fill="#666">30</text>
+<line x1="516.7" y1="48" x2="516.7" y2="294" stroke="#e0e0e0"/>
+<text x="516.7" y="310" text-anchor="middle" fill="#666">40</text>
+<line x1="598.3" y1="48" x2="598.3" y2="294" stroke="#e0e0e0"/>
+<text x="598.3" y="310" text-anchor="middle" fill="#666">50</text>
+<line x1="680.0" y1="48" x2="680.0" y2="294" stroke="#e0e0e0"/>
+<text x="680.0" y="310" text-anchor="middle" fill="#666">60</text>
+<text x="435.0" y="328" text-anchor="middle" fill="#666">MAE (W)</text>
+<text x="180" y="77.0" text-anchor="end">R1 20분×0.95 (서비스)</text>
+<line x1="396.3" y1="73.0" x2="464.6" y2="73.0" stroke="#ef6c00" stroke-width="3"/>
+<circle cx="428.2" cy="73.0" r="5" fill="#ef6c00"/>
+<text x="690" y="77.0" fill="#333">29.2 W · 편향 -17.2</text>
+<text x="180" y="111.0" text-anchor="end">R2 60분 최대</text>
+<line x1="535.5" y1="107.0" x2="619.4" y2="107.0" stroke="#757575" stroke-width="3"/>
+<circle cx="576.5" cy="107.0" r="5" fill="#757575"/>
+<text x="690" y="111.0" fill="#333">47.3 W · 편향 -41.7</text>
+<text x="180" y="145.0" text-anchor="end">R3 CP 모델</text>
+<line x1="413.4" y1="141.0" x2="483.7" y2="141.0" stroke="#757575" stroke-width="3"/>
+<circle cx="445.9" cy="141.0" r="5" fill="#757575"/>
+<text x="690" y="145.0" fill="#333">31.3 W · 편향 -18.4</text>
+<text x="180" y="179.0" text-anchor="end">R5 R1 선형 보정</text>
+<line x1="399.1" y1="175.0" x2="480.6" y2="175.0" stroke="#757575" stroke-width="3"/>
+<circle cx="439.1" cy="175.0" r="5" fill="#757575"/>
+<text x="690" y="179.0" fill="#333">30.5 W · 편향 -7.2</text>
+<text x="180" y="213.0" text-anchor="end">M1 LightGBM</text>
+<line x1="338.8" y1="209.0" x2="381.1" y2="209.0" stroke="#757575" stroke-width="3"/>
+<circle cx="358.6" cy="209.0" r="5" fill="#757575"/>
+<text x="690" y="213.0" fill="#333">20.6 W · 편향 -0.8</text>
+<text x="180" y="247.0" text-anchor="end">M1b + W/kg</text>
+<line x1="343.5" y1="243.0" x2="392.0" y2="243.0" stroke="#757575" stroke-width="3"/>
+<circle cx="365.5" cy="243.0" r="5" fill="#757575"/>
+<text x="690" y="247.0" fill="#333">21.5 W · 편향 +1.6</text>
+<text x="180" y="281.0" text-anchor="end">M2 Ridge (채택 후보)</text>
+<line x1="345.1" y1="277.0" x2="414.3" y2="277.0" stroke="#1565c0" stroke-width="3"/>
+<circle cx="376.8" cy="277.0" r="5" fill="#1565c0"/>
+<text x="690" y="281.0" fill="#333">22.9 W · 편향 -3.8</text>
+<text x="16" y="342" fill="#555">H5 (M2 − R1): -6.3 W [-9.1, -3.0] → 판정 불가 (기준: 5 W 이상 낮음)</text>
+</svg>
