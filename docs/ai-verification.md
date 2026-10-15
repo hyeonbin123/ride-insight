@@ -151,3 +151,4 @@
   - (ZAP이 잡음) 웹의 CSP가 style-src 'unsafe-inline'이었다(Medium) → emotion에 요청마다 다른 nonce
   - (작업 중 도구 실수) 측정 스크립트가 상대 경로로 보고서를 저장소 밖 폴더에 썼다(옮기고 지움). `importOpenData`는 `RIDE_INSIGHT_DB_URL`을 줘도 Spring의 Docker Compose 지원이 켜져 개발 DB(`server/compose.yaml`)로 들어갔다 → `SPRING_DOCKER_COMPOSE_ENABLED=false`로 다시 실행
 - **사람이 정한 것**: 이번 범위(CI 화면 테스트, 업로드 자원 상한, 퍼징·예외 매핑, 현지 날짜, 배포 하드닝·DAST, 화면 문구·접근성, README 그림·선행 연구. 새 봉인 셋의 FTP 재측정과 인증은 제외), 기본 시간대 Asia/Seoul(일상 선택, 바꿀 수 있음). record 상한 500,000은 측정과 OpenData의 가장 긴 라이딩(413,334샘플)을 근거로 정했다
+- **추가(같은 날, 커밋 `a39b05a`·`111874f`): 업로드 동시 처리 상한**. 만든 것: `UploadGate`(동시 2개, 30초 대기 뒤 429 + Retry-After), compose 서버 메모리 한도 768 MB. 검증: 규칙(H12)을 먼저 커밋하고 같은 방법으로 전후를 잼(GC 뒤 최대 481 → 269 MB, 모두 201, 5xx·OOM 0), 컨테이너의 메모리 한도와 JVM 최대 힙을 직접 확인, 래치로 시점을 맞춘 단위 테스트. 잡은 실수: 판정 지표로 고른 'GC 전 최대 사용 힙'이 GC 정책에 좌우되는 값이라(업로드 1개만으로 344 MB) H12가 기각됐다. 판정은 그대로 두고 지표 선택 실수를 규칙 변경 13에 적었다
