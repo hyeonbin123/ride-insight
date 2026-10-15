@@ -95,11 +95,14 @@ fun importAthlete(
     require(label == "cp" || label == "ftp") { "--label must be cp or ftp" }
     // 인덱스 JSON의 성별(M/F일 때만)과 출생 연도로 선수를 만든다. 체중은 넣지 않는다.
     val tree = JsonMapper.builder().build().readTree(index)
+    // OpenData에는 선수 시간대가 없고 메타데이터 날짜는 UTC라, 가져온 선수의 시간대는 UTC로 둔다. 그러면 FTP
+    // 적용일(UTC 날짜)과 활동 날짜를 같은 기준으로 센다(2026-10-15 전과 같은 결과). 화면에서 바꿀 수 있다.
     val athlete = athletes.insert(
         name,
         tree.path("gender").asString(null)?.takeIf { it == "M" || it == "F" },
         tree.path("yob").asString(null)?.toIntOrNull(),
         null,
+        "UTC",
     )
     // CSV와 짝지어졌고 파워 플래그가 있는 라이딩만, 날짜순으로.
     val rides = tree.path("rides").filter { it.path("csv").asString(null) != null && it.path("power_flag").asBoolean(false) }

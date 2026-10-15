@@ -5,7 +5,7 @@
 ## 저장 모델
 | 테이블 | 내용 |
 |---|---|
-| `athlete` | id(uuid), name, gender, birth_year, weight_kg, created_at |
+| `athlete` | id(uuid), name, gender, birth_year, weight_kg, created_at, time_zone(IANA 이름, 기본 `Asia/Seoul`, 2026-10-15 V3) |
 | `athlete_threshold` | athlete_id, effective_from(date), ftp_watts, source(`manual` / `estimate`). 그 날짜의 FTP는 effective_from ≤ 날짜인 가장 최근 행 |
 | `activity` | id(uuid), athlete_id, started_at(timestamptz), source(`fit` / `opendata`), source_name, sport, rec_int_secs, sample_count, duration_secs, device(manufacturer, product), crc_valid, jitter(최빈 간격 비율), power_missing, created_at. 같은 선수·같은 시작 시각은 유일(중복 업로드 거절) |
 | `activity_samples` | activity_id, secs real[], power smallint[], heart_rate smallint[], cadence smallint[], distance_m real[], altitude_m real[]. 활동당 한 행. 결측은 NULL 원소 |
@@ -14,18 +14,21 @@
 ## API (모두 `/api` 아래, JSON)
 | 메서드·경로 | 동작 | 완료 기준 |
 |---|---|---|
-| `POST /athletes` | 선수 생성 {name, gender?, birthYear?, weightKg?, ftp?} | 201 + id. 이름 1~100자, FTP 50~1000 W 아니면 400. 체중은 20 kg 초과 300 kg 미만(DB check와 같은 범위)이 아니면 400(2026-10-13 추가: 그 전에는 검증이 없어 범위 밖 체중이 500이었다) |
-| `GET /athletes/{id}` | 선수 + 현재 FTP | 없으면 404 |
-| `PUT /athletes/{id}/threshold` | FTP 등록 {effectiveFrom, ftpWatts} | 그 날짜 이후 활동의 TSS를 다시 계산한다 |
+| `POST /athletes` | 선수 생성 {name, gender?, birthYear?, weightKg?, ftp?, timeZone?} | 201 + id. 이름 1~100자, FTP 50~1000 W 아니면 400. 체중은 20 kg 초과 300 kg 미만(DB check와 같은 범위)이 아니면 400(2026-10-13 추가: 그 전에는 검증이 없어 범위 밖 체중이 500이었다) |
+| `GET /athletes/{id}?tz` | 선수 + 현재 FTP(선수 시간대의 오늘 기준) + timeZone | 없으면 404 |
+| `PUT /athletes/{id}/time-zone` | 시간대 변경 {timeZone} | 모든 활동의 지표를 다시 계산하고 {timeZone, recomputedActivities}. 모르는 이름은 400 (2026-10-15 추가) |
+| `PUT /athletes/{id}/threshold` | FTP 등록 {effectiveFrom, ftpWatts} | 그 날짜(선수 시간대의 현지 0시) 이후 활동의 TSS를 다시 계산한다 |
 | `POST /athletes/{id}/activities` | FIT 업로드(multipart, 파일 1개) | 201 + 활동 요약(지표 포함). 디코딩 실패 400(`FitDecodeException` 메시지), 종목이 러닝·수영·걷기·하이킹이면 422(그 외 종목과 종목 미상은 저장), 파워 없는 파일은 저장하되 지표 null, 같은 시작 시각이면 409, 10 MB 초과 413 `file_too_large`, record 메시지 500,000개 또는 데이터 메시지 2,000,000개 초과 413 `fit_limit_exceeded`(2026-10-15 추가, docs/experiments.md 규칙 변경 11. 그 전에는 메시지 상한 초과가 400 `invalid_fit`이었고 record 상한은 없었다). 2026-10-15 퍼징으로 고친 것: record timestamp가 FIT date_time(uint32) 범위 밖이면 400 `invalid_fit`, 심박·케이던스는 파워처럼 0~32,000만, 거리·고도는 real 범위의 유한한 값만 저장하고 나머지는 결측(그 전에는 범위 밖 값이 DB 오류로 500) |
 | `GET /athletes/{id}/activities?before&limit` | 활동 목록(지표 포함, 최신순) | 기본 50개(최대 200), `before`(시작 시각) 커서. 응답의 `nextBefore`를 다음 요청에 넣는다 (처음 적었던 `from&to&cursor`는 구현에 맞춰 고침, Codex 검토 2026-10-10) |
 | `GET /activities/{id}` | 활동 상세 + 지표 | |
 | `GET /activities/{id}/samples?every=N` | 시계열(경과 시간 N초 구간마다 첫 샘플 한 점) | 기본 every=1, 응답이 20,000점을 넘지 않도록 N을 자동으로 키운다 |
 | `GET /activities/{id}/power-curve` | 16구간 MMP + 전 구간(1초 단위 1~최대) 곡선 | 곡선은 로그 간격으로 ≤ 300점 |
-| `GET /athletes/{id}/training-load?from&to` | 날짜별 TSS 합, CTL, ATL, TSB | CTL 42일·ATL 7일 지수 가중, 활동 없는 날은 TSS 0으로 감쇠. 부하는 선수의 첫 활동부터 누적해 `from` 이전 값을 워밍업으로 쓴다 |
-| `GET /athletes/{id}/power-curve?weeks=6` | 기간 최대 파워 커브(활동별 MMP의 구간별 최대) | 3단계 FTP 추정의 입력 |
+| `GET /athletes/{id}/training-load?from&to&tz` | 현지 날짜별 TSS 합, CTL, ATL, TSB | CTL 42일·ATL 7일 지수 가중, 활동 없는 날은 TSS 0으로 감쇠. 부하는 선수의 첫 활동부터 누적해 `from` 이전 값을 워밍업으로 쓴다 |
+| `GET /athletes/{id}/power-curve?weeks=6&asOf&tz` | 기간 최대 파워 커브(활동별 MMP의 구간별 최대) | 3단계 FTP 추정의 입력. 기간은 asOf 다음 날 현지 0시까지 |
+| `GET /athletes/{id}/ftp-estimate?weeks=6&asOf&tz` | FTP 추정(규칙 R1)과 R2·R3, 근거(창 안 파워 라이딩 수, 측정 오차) | 3단계 서비스 반영 |
 | `DELETE /activities/{id}` | 삭제 | 204 |
 
+- **날짜 기준(2026-10-15 변경)**: 활동 날짜(적용할 FTP 찾기), 훈련 부하의 날짜 묶음, 기간 커브·FTP 추정의 기준일 창, 날짜 기본값('오늘')은 선수 시간대(`time_zone`, 기본 `Asia/Seoul`)의 현지 날짜로 센다. 그 전에는 모두 UTC 날짜라 한국에서 오전 9시 전에 시작한 라이딩이 PMC의 전날에 쌓이고 그날부터 바꾼 FTP 대신 전날 FTP로 계산될 수 있었다. 조회 요청의 `tz`는 보기만 바꾼다(저장된 TSS는 선수 시간대로 고른 FTP로 계산된 그대로). OpenData 가져오기 도구는 메타데이터 날짜가 UTC라 가져온 선수를 `UTC`로 만든다. 활동의 `startedAt`은 그대로 UTC 시각으로 저장·응답한다
 - 인증은 2단계에서 넣지 않는다(로컬 데모). 5단계 보안 점검에서 선수 토큰(헤더)을 넣을지 정한다
 - 오류 응답은 `{ "error": "<코드>", "message": "<설명>" }`
 - 400 `bad_request`는 요청 형식 오류(JSON·타입 불일치·파트 누락)와 컨트롤러·서비스가 일부러 하는 입력 검사(`BadRequestException`: `every` ≥ 1, `weeks` 1~104, 조회 범위 3년 이하, 날짜 1900-01-01~2100-12-31)에만 쓴다. 코드 안의 `IllegalArgumentException`(require 실패 등 내부 버그)은 500 `internal`로 드러난다(2026-10-15 변경: 그 전에는 `IllegalArgumentException` 전체가 400이라 내부 버그가 400으로 가려질 수 있었고, 날짜 범위 검사가 없어 FTP 적용일 +300000-01-01이 500이었다)

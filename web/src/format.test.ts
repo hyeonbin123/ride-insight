@@ -3,7 +3,7 @@
 // 전체가 달라진다.
 
 import { describe, expect, it } from "vitest";
-import { formatDuration, formatWatts, secsLabel, windowLabel } from "./format";
+import { dateIn, formatDuration, formatWatts, isoDate, secsLabel, windowLabel } from "./format";
 
 describe("format helpers", () => {
   // 1시간 미만은 m:ss, 이상은 h:mm:ss, 소수 초는 반올림, null은 '-'.
@@ -24,5 +24,15 @@ describe("format helpers", () => {
     expect(secsLabel(300)).toBe("5m");
     expect(secsLabel(3600)).toBe("1h");
     expect(secsLabel(5400)).toBe("1h30m");
+  });
+
+  // 현지 날짜(2026-10-15): 2026-10-14T21:30Z는 서울로는 10-15, UTC로는 10-14. 시간대가 없거나 모르는 이름이면
+  // UTC 날짜로 대신한다. 서버의 선수 시간대 기준(TimeZoneTest)과 같은 경계를 화면도 쓰는지 본다.
+  it("counts dates in the athlete's time zone", () => {
+    const ride = new Date("2026-10-14T21:30:00Z");
+    expect(dateIn(ride, "Asia/Seoul")).toBe("2026-10-15");
+    expect(dateIn(ride, "UTC")).toBe("2026-10-14");
+    expect(dateIn(ride)).toBe(isoDate(ride));
+    expect(dateIn(ride, "Mars/Olympus")).toBe("2026-10-14");
   });
 });

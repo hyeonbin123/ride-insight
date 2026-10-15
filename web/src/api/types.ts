@@ -22,6 +22,8 @@ export interface Athlete {
   weightKg?: number;
   createdAt: string;
   currentThreshold?: Threshold;
+  // 현지 날짜를 셀 시간대(IANA 이름, 기본 Asia/Seoul). 서버는 PMC 날짜·FTP 적용일·기준일을 이 시간대로 센다.
+  timeZone: string;
 }
 
 // 선수 생성 요청. 서버 검증: 이름 1~100자, 성별 M/F, 출생 연도 1900~2100, FTP 50~1000 W(docs/api.md). ftp를
@@ -33,6 +35,7 @@ export interface CreateAthleteRequest {
   birthYear?: number;
   weightKg?: number;
   ftp?: number;
+  timeZone?: string;
 }
 
 // 활동 하나의 지표: 계산에 쓴 FTP(ftpUsed), NP, IF, TSS, 평균·최대 파워, 일(kJ), 16구간 MMP. FTP가 없으면

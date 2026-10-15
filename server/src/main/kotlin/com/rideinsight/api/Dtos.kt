@@ -40,7 +40,12 @@ data class CreateAthleteRequest(
     @Min(1900) @Max(2100) val birthYear: Int? = null,
     @DecimalMin(value = "20", inclusive = false) @DecimalMax(value = "300", inclusive = false) val weightKg: Float? = null,
     @Min(50) @Max(1000) val ftp: Int? = null,
+    // 현지 날짜를 셀 시간대(IANA 이름). 없으면 Asia/Seoul. 모르는 이름은 400(AthleteService가 검사).
+    val timeZone: String? = null,
 )
+
+// PUT /api/athletes/{id}/time-zone 본문: 바꿀 시간대 이름.
+data class TimeZoneRequest(val timeZone: String)
 
 // PUT /api/athletes/{id}/threshold 본문. effectiveFrom은 ISO 날짜(yyyy-MM-dd)이고 FTP 범위는 선수 생성과
 // 같다. effectiveFrom은 null이 될 수 없는 생성자 인자라, 빠지면 JSON을 객체로 만들지 못해 400 bad_request가
@@ -66,10 +71,11 @@ data class AthleteResponse(
     val weightKg: Double?,
     val createdAt: OffsetDateTime,
     val currentThreshold: ThresholdResponse?,
+    val timeZone: String,
 ) {
     companion object {
         fun from(a: Athlete, t: Threshold?) =
-            AthleteResponse(a.id, a.name, a.gender, a.birthYear, a.weightKg, a.createdAt, t?.let(ThresholdResponse::from))
+            AthleteResponse(a.id, a.name, a.gender, a.birthYear, a.weightKg, a.createdAt, t?.let(ThresholdResponse::from), a.timeZone)
     }
 }
 

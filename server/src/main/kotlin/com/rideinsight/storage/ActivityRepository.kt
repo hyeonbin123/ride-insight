@@ -219,19 +219,20 @@ class ActivityRepository(private val jdbc: JdbcClient) {
             .list().toMap()
     }
 
-    // PMC 입력: 날짜(UTC)별 TSS 합. TSS가 없는 활동(FTP 미등록, 파워 없음)은 빠진다. 시작 시각을 at time zone
-    // 'UTC'로 바꾼 뒤 날짜로 잘라 DB 세션 시간대와 상관없이 같은 날짜가 나온다.
-    /** 두 날짜 사이(양 끝 포함)의 날짜(UTC)별 TSS 합. */
-    fun dailyTss(athleteId: UUID, from: java.time.LocalDate, to: java.time.LocalDate): Map<java.time.LocalDate, Double> =
+    // PMC 입력: 현지 날짜별 TSS 합. TSS가 없는 활동(FTP 미등록, 파워 없음)은 빠진다. 시작 시각을 at time zone
+    // <선수 시간대>로 바꾼 뒤 날짜로 잘라 DB 세션 시간대와 상관없이 같은 날짜가 나온다(2026-10-15 전에는 'UTC' 고정).
+    // 시간대 이름은 java.time.ZoneId가 받아들인 값만 오고(BadRequestException으로 검사), ?로 바인딩한다.
+    /** 두 날짜 사이(양 끝 포함)의 현지 날짜별 TSS 합. */
+    fun dailyTss(athleteId: UUID, from: java.time.LocalDate, to: java.time.LocalDate, zone: java.time.ZoneId): Map<java.time.LocalDate, Double> =
         jdbc.sql(
             """
-            select (a.started_at at time zone 'UTC')::date as day, sum(m.tss) as tss
+            select (a.started_at at time zone ?)::date as day, sum(m.tss) as tss
             from activity a join activity_metrics m on m.activity_id = a.id
             where a.athlete_id = ? and m.tss is not null
-              and (a.started_at at time zone 'UTC')::date between ? and ?
+              and (a.started_at at time zone ?)::date between ? and ?
             group by day
             """,
-        ).params(athleteId, from, to)
+        ).params(zone.id, athleteId, zone.id, from, to)
             .query { rs, _ -> rs.getObject("day", java.time.LocalDate::class.java) to rs.getDouble("tss") }
             .list().toMap()
 
@@ -240,10 +241,10 @@ class ActivityRepository(private val jdbc: JdbcClient) {
         jdbc.sql("select count(*) from activity where athlete_id = ? and has_power and started_at >= ? and started_at < ?")
             .params(athleteId, from, to).query(Long::class.java).single().toInt()
 
-    /** 선수의 첫 활동 날짜(UTC). 활동이 없으면 null. 훈련 부하 워밍업의 시작점이다. */
-    fun firstActivityDate(athleteId: UUID): java.time.LocalDate? =
-        jdbc.sql("select min((started_at at time zone 'UTC')::date) from activity where athlete_id = ?")
-            .param(athleteId).query(java.time.LocalDate::class.java).optional().orElse(null)
+    /** 선수의 첫 활동 날짜(현지). 활동이 없으면 null. 훈련 부하 워밍업의 시작점이다. */
+    fun firstActivityDate(athleteId: UUID, zone: java.time.ZoneId): java.time.LocalDate? =
+        jdbc.sql("select min((started_at at time zone ?)::date) from activity where athlete_id = ?")
+            .params(zone.id, athleteId).query(java.time.LocalDate::class.java).optional().orElse(null)
 
     // 기간 최대 파워 커브: 기간 [from, to) 안 활동들의 mmp jsonb를 jsonb_each로 (키, 값) 행으로 펼쳐 키별
     // 최댓값을 구한다. 값이 null인 구간은 jsonb_typeof = 'number' 조건으로 걸러진다. jsonb 숫자는 text를 거쳐

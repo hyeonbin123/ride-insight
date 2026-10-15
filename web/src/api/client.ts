@@ -62,6 +62,7 @@ function json(method: string, body: unknown): RequestInit {
 // - createAthlete / getAthlete: 선수 생성(POST /api/athletes), 조회(현재 FTP 포함)
 // - setThreshold: FTP 등록(PUT .../threshold). 서버가 그 날짜 이후 활동의 IF·TSS를 다시 계산하고
 //   개수(recomputedActivities)를 돌려준다
+// - setTimeZone: 선수 시간대 변경(PUT .../time-zone). 서버가 모든 활동의 지표를 다시 계산한다
 // - uploadActivity: FIT 업로드(multipart의 file 파트)
 // - listActivities: 최신순 목록, before 커서 페이지네이션
 // - getActivity / getSamples / getActivityPowerCurve / deleteActivity: 활동 상세, 시계열, 파워 커브, 삭제
@@ -76,6 +77,8 @@ export const api = {
       `/api/athletes/${id}/threshold`,
       json("PUT", { effectiveFrom, ftpWatts }),
     ),
+  setTimeZone: (id: string, timeZone: string) =>
+    request<{ timeZone: string; recomputedActivities: number }>(`/api/athletes/${id}/time-zone`, json("PUT", { timeZone })),
   uploadActivity: (athleteId: string, file: File) => {
     // FormData를 body로 넘기면 브라우저가 multipart 경계가 들어간 Content-Type을 직접 붙인다. 그래서 여기서는
     // 헤더를 정하지 않는다(직접 정하면 경계 값이 빠져 서버가 해석하지 못한다). 서버는 'file' 파트 하나를 받고

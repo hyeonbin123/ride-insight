@@ -10,6 +10,7 @@ package com.rideinsight.service
 
 import com.rideinsight.metrics.FtpRules
 import java.time.LocalDate
+import java.time.ZoneId
 import java.util.UUID
 import org.springframework.stereotype.Service
 
@@ -46,9 +47,9 @@ class FtpEstimateService(private val athletes: AthleteService) {
 
     // 입력: 선수 id, 기간(주), 기준일. 기간 커브(구간 초 → 최대 W)를 맵으로 바꿔 세 규칙에 넣는다. 없는 선수
     // 404와 weeks 범위(1~104) 검사는 먼저 불리는 AthleteService.powerCurve에서 난다.
-    fun estimate(athleteId: UUID, weeks: Int, asOf: LocalDate): Estimate {
-        val points = athletes.powerCurve(athleteId, weeks, asOf)
-        val rides = athletes.powerRideCount(athleteId, weeks, asOf)
+    fun estimate(athleteId: UUID, weeks: Int, asOf: LocalDate, zone: ZoneId): Estimate {
+        val points = athletes.powerCurve(athleteId, weeks, asOf, zone)
+        val rides = athletes.powerRideCount(athleteId, weeks, asOf, zone)
         val best = points.toMap()
         val r1 = FtpRules.twentyMinute(best)
         val r2 = FtpRules.sixtyMinute(best)

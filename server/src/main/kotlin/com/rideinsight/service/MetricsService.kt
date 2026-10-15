@@ -18,7 +18,7 @@ import com.rideinsight.storage.AthleteRepository
 import com.rideinsight.storage.MetricsRow
 import com.rideinsight.storage.SampleSeries
 import java.time.OffsetDateTime
-import java.time.ZoneOffset
+import java.time.ZoneId
 import java.util.UUID
 import org.springframework.stereotype.Service
 import tools.jackson.databind.json.JsonMapper
@@ -88,31 +88,44 @@ class MetricsService(
     // 파워가 없는 활동은 계산하지 않고 null(지표 행 없음)을 돌려준다. 있으면 계산한 뒤 mmp를 JSON 문자열로
     // 바꿔 upsert한다(이미 있으면 덮어씀).
     /** 활동 하나의 지표를 계산해 저장하고 그 행을 돌려준다(파워가 없으면 null). */
-    fun computeAndStore(activityId: UUID, athleteId: UUID, startedAt: OffsetDateTime, series: SampleSeries, hasPower: Boolean): MetricsRow? {
+    fun computeAndStore(
+        activityId: UUID,
+        athleteId: UUID,
+        startedAt: OffsetDateTime,
+        series: SampleSeries,
+        hasPower: Boolean,
+        zone: ZoneId? = null,
+    ): MetricsRow? {
         if (!hasPower) return null
-        val row = compute(athleteId, startedAt, series)
+        val row = compute(athleteId, startedAt, series, zone)
         // 곡선은 [[초, W], ...] 형식의 JSON으로 저장한다.
         val curveJson = row.curve?.let { c -> mapper.writeValueAsString(c.map { (s, w) -> listOf(s, w) }) }
         activities.saveMetrics(activityId, row, mapper.writeValueAsString(row.mmp), curveJson)
         return row
     }
 
-    // 활동 시작일(UTC)에 유효한 FTP를 찾아 [computeWithFtp]로 계산한다. FTP는 effective_from ≤ 그 날짜 중 가장
-    // 최근 값이다.
-    fun compute(athleteId: UUID, startedAt: OffsetDateTime, series: SampleSeries): MetricsRow {
-        val ftp = athletes.thresholdOn(athleteId, startedAt.atZoneSameInstant(ZoneOffset.UTC).toLocalDate())?.ftpWatts
+    // 활동 시작 시각의 현지 날짜(선수 시간대)에 유효한 FTP를 찾아 [computeWithFtp]로 계산한다. FTP는
+    // effective_from ≤ 그 날짜 중 가장 최근 값이다. 2026-10-15 전에는 UTC 날짜를 써서, 한국 시각 오전 9시 전에 시작한
+    // 라이딩은 그날부터 바꾼 FTP가 아니라 전날 FTP로 계산될 수 있었다. [zone]을 주지 않으면 선수 행에서 읽는다.
+    fun compute(athleteId: UUID, startedAt: OffsetDateTime, series: SampleSeries, zone: ZoneId? = null): MetricsRow {
+        val z = zone ?: zoneOf(athleteId)
+        val ftp = athletes.thresholdOn(athleteId, startedAt.atZoneSameInstant(z).toLocalDate())?.ftpWatts
         return computeWithFtp(series, ftp)
     }
+
+    // 선수의 시간대. 선수가 없으면(호출 전에 확인하므로 실제로는 없음) 기본 시간대.
+    private fun zoneOf(athleteId: UUID): ZoneId = ZoneId.of(athletes.find(athleteId)?.timeZone ?: DEFAULT_TIME_ZONE)
 
     // from 이후 시작한 활동을 오래된 순으로 다시 계산한다. 파워가 없거나 샘플이 없는 활동은 건너뛰고, 다시
     // 계산한 수를 돌려준다. 호출하는 AthleteService.setThreshold의 트랜잭션(선수 행 잠금) 안에서 돈다.
     /** [from] 이후에 시작한 선수의 모든 활동을 다시 계산한다(FTP 변경 뒤). */
     fun recomputeFrom(athleteId: UUID, from: OffsetDateTime): Int {
         var n = 0
+        val zone = zoneOf(athleteId) // 활동마다 다시 읽지 않도록 한 번만 읽는다
         for (a in activities.listFrom(athleteId, from)) {
             if (!a.hasPower) continue
             val series = activities.samples(a.id) ?: continue
-            computeAndStore(a.id, athleteId, a.startedAt, series, true)
+            computeAndStore(a.id, athleteId, a.startedAt, series, true, zone)
             n++
         }
         return n

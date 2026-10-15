@@ -27,6 +27,22 @@ class BadRequestException(message: String) : RuntimeException(message)
  * 뜻이 없다. 2026-10-15 전에는 검사가 없어 `asOf=+999999999-12-31` 같은 값이 날짜 계산의 DateTimeException이나
  * PostgreSQL의 범위 오류로 500이 되었다.
  */
+/** 선수 시간대의 기본값. V3__athlete_time_zone.sql의 열 기본값과 같다. */
+const val DEFAULT_TIME_ZONE = "Asia/Seoul"
+
+/**
+ * 시간대 이름(IANA 이름 'Asia/Seoul', 'UTC', 또는 '+09:00' 같은 고정 오프셋)을 [java.time.ZoneId]로 바꾼다. 비었거나
+ * 64자를 넘거나 Java가 모르는 이름이면 [BadRequestException](400). [name]은 오류 메시지에 쓰는 파라미터 이름이다.
+ */
+fun parseTimeZone(text: String, name: String = "timeZone"): java.time.ZoneId {
+    if (text.isBlank() || text.length > 64) throw BadRequestException("'$name' must be a time zone such as Asia/Seoul")
+    return try {
+        java.time.ZoneId.of(text)
+    } catch (e: java.time.DateTimeException) {
+        throw BadRequestException("'$name' is not a known time zone: $text")
+    }
+}
+
 fun requireReasonableDate(date: java.time.LocalDate, name: String) {
     if (date.year !in 1900..2100) throw BadRequestException("'$name' must be between 1900-01-01 and 2100-12-31")
 }

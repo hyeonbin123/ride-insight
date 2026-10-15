@@ -6,7 +6,8 @@ package com.rideinsight.api
 // ActivityService, FtpEstimateService)에 맡긴다. 인증은 없다(README 한계: 로컬 데모라 선수 id를 아는 사람은
 // 누구나 읽고 쓸 수 있다. 5단계에서 넣지 않기로 미리 정함).
 // [연결] 화면의 web/src/api/client.ts가 호출하고, ApiIntegrationTest가 api.md 완료 기준대로 확인한다. 날짜
-// 기본값은 모두 UTC 기준 오늘이다.
+// 기본값은 선수 시간대(기본 Asia/Seoul) 기준 오늘이고, 조회 요청은 tz 파라미터로 시간대를 바꿔 볼 수
+// 있다(2026-10-15 전에는 모두 UTC, TimeZoneTest).
 
 import com.rideinsight.service.ActivityService
 import com.rideinsight.service.AthleteService
@@ -16,7 +17,6 @@ import jakarta.validation.Valid
 import java.net.URI
 import java.time.LocalDate
 import java.time.OffsetDateTime
-import java.time.ZoneOffset
 import java.util.UUID
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
@@ -44,15 +44,23 @@ class AthleteController(
     // 받아 검사했으므로 Double로 바꿔도 값이 그대로다.
     @PostMapping
     fun create(@Valid @RequestBody req: CreateAthleteRequest): ResponseEntity<AthleteResponse> {
-        val (athlete, threshold) = athletes.create(req.name.trim(), req.gender, req.birthYear, req.weightKg?.toDouble(), req.ftp)
+        val (athlete, threshold) = athletes.create(req.name.trim(), req.gender, req.birthYear, req.weightKg?.toDouble(), req.ftp, req.timeZone)
         return ResponseEntity.created(URI.create("/api/athletes/${athlete.id}")).body(AthleteResponse.from(athlete, threshold))
     }
 
-    // GET /api/athletes/{id}: 선수 정보와 오늘(UTC) 기준으로 유효한 FTP. 없는 id는 404.
+    // GET /api/athletes/{id}?tz: 선수 정보와 오늘(선수 시간대, tz를 주면 그 시간대) 기준으로 유효한 FTP. 없는 id는 404.
     @GetMapping("/{id}")
-    fun get(@PathVariable id: UUID): AthleteResponse {
-        val (athlete, threshold) = athletes.get(id)
+    fun get(@PathVariable id: UUID, @RequestParam(required = false) tz: String?): AthleteResponse {
+        val (athlete, threshold) = athletes.get(id, tz)
         return AthleteResponse.from(athlete, threshold)
+    }
+
+    // PUT /api/athletes/{id}/time-zone: 선수 시간대를 바꾸고 모든 활동의 지표를 다시 계산한다(활동의 현지 날짜가
+    // 바뀌면 적용할 FTP가 바뀔 수 있다). 모르는 시간대는 400.
+    @PutMapping("/{id}/time-zone")
+    fun setTimeZone(@PathVariable id: UUID, @RequestBody req: TimeZoneRequest): Map<String, Any> {
+        val (zone, recomputed) = athletes.setTimeZone(id, req.timeZone)
+        return mapOf("timeZone" to zone, "recomputedActivities" to recomputed)
     }
 
     // GET /api/athletes/{id}/thresholds: 날짜별 FTP 이력 전체(적용일 오름차순).
@@ -106,11 +114,14 @@ class AthleteController(
         @PathVariable id: UUID,
         @RequestParam(required = false) from: LocalDate?,
         @RequestParam(required = false) to: LocalDate?,
+        @RequestParam(required = false) tz: String?,
     ): TrainingLoadResponse {
-        val end = to ?: LocalDate.now(ZoneOffset.UTC)
+        // 날짜는 선수(또는 tz) 시간대의 현지 날짜다. to가 없으면 그 시간대의 오늘.
+        val zone = athletes.zone(id, tz)
+        val end = to ?: LocalDate.now(zone)
         val start = from ?: end.minusDays(90)
         return TrainingLoadResponse(
-            athletes.trainingLoad(id, start, end).map { TrainingLoadDay(it.date, it.tss, it.ctl, it.atl, it.tsb) },
+            athletes.trainingLoad(id, start, end, zone).map { TrainingLoadDay(it.date, it.tss, it.ctl, it.atl, it.tsb) },
         )
     }
 
@@ -123,8 +134,10 @@ class AthleteController(
         @PathVariable id: UUID,
         @RequestParam(defaultValue = "6") weeks: Int,
         @RequestParam(required = false) asOf: LocalDate?,
+        @RequestParam(required = false) tz: String?,
     ): FtpEstimateResponse {
-        val e = ftp.estimate(id, weeks, asOf ?: LocalDate.now(ZoneOffset.UTC))
+        val zone = athletes.zone(id, tz)
+        val e = ftp.estimate(id, weeks, asOf ?: LocalDate.now(zone), zone)
         return FtpEstimateResponse(
             e.method, e.ftpWatts, e.rules, e.criticalPowerWPrimeKj, e.windowsUsed, e.ridesInWindow, e.best20m, e.best60m, weeks, e.note,
         )
@@ -137,8 +150,10 @@ class AthleteController(
         @PathVariable id: UUID,
         @RequestParam(defaultValue = "6") weeks: Int,
         @RequestParam(required = false) asOf: LocalDate?,
+        @RequestParam(required = false) tz: String?,
     ): PowerCurveResponse {
-        val points = athletes.powerCurve(id, weeks, asOf ?: LocalDate.now(ZoneOffset.UTC))
+        val zone = athletes.zone(id, tz)
+        val points = athletes.powerCurve(id, weeks, asOf ?: LocalDate.now(zone), zone)
         return PowerCurveResponse(
             points.map { (s, w) -> CurvePoint(s, w) },
             // standard는 같은 값을 GoldenCheetah 메타데이터 이름(예: 20m_critical_power)으로 키를 바꾼

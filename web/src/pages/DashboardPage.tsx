@@ -23,7 +23,7 @@ import { api } from "../api/client";
 import { PowerCurveChart } from "../components/charts/PowerCurveChart";
 import { TrainingLoadChart } from "../components/charts/TrainingLoadChart";
 import { NeedAthlete } from "../components/NeedAthlete";
-import { formatNumber, formatWatts, isoDate, windowLabel } from "../format";
+import { dateIn, formatNumber, formatWatts, isoDate, windowLabel } from "../format";
 import { useAthleteStore } from "../state/athleteStore";
 
 /** 훈련 부하(PMC)와 최근 기간 최고 파워 커브. */
@@ -33,12 +33,22 @@ export function DashboardPage() {
   // 같다), 기준일(asOf).
   const [days, setDays] = useState(90);
   const [weeks, setWeeks] = useState(6);
-  // 기준일("as of")은 기본이 오늘이고, '마지막 라이딩 기준' 버튼은 가장 최근 활동 날짜로 옮긴다. 오늘
-  // 날짜는 처음 렌더 때 한 번만 계산해 고정한다(UTC 날짜, 서버도 날짜를 UTC로 센다). '마지막 라이딩 기준'
-  // 버튼은 OpenData에서 가져온 예전 데이터처럼 최근 라이딩이 없을 때도 그래프가 비지 않게 하려고
-  // 넣었다(커밋 c3546ab).
-  const [today] = useState(() => isoDate(new Date()));
-  const [asOf, setAsOf] = useState(today);
+  // 기준일("as of")은 기본이 오늘이고, '마지막 라이딩 기준' 버튼은 가장 최근 활동 날짜로 옮긴다. '오늘'과
+  // 라이딩 날짜는 선수 시간대(기본 Asia/Seoul)의 현지 날짜다. 서버도 2026-10-15부터 PMC·기준일을 같은 시간대로
+  // 센다(그 전에는 둘 다 UTC). 선수 정보는 메뉴바와 같은 캐시(['athlete', id])에서 온다. 사용자가 날짜를 고르기
+  // 전에는 asOfChoice가 null이고 그동안은 '오늘'을 쓴다. '마지막 라이딩 기준' 버튼은 OpenData에서 가져온 예전
+  // 데이터처럼 최근 라이딩이 없을 때도 그래프가 비지 않게 하려고 넣었다(커밋 c3546ab).
+  const athlete = useQuery({
+    queryKey: ["athlete", athleteId],
+    queryFn: () => api.getAthlete(athleteId!),
+    enabled: !!athleteId,
+  });
+  const timeZone = athlete.data?.timeZone;
+  // 지금 시각은 처음 렌더 때 한 번만 잡아 고정한다(렌더 중에 Date를 새로 부르지 않는다).
+  const [now] = useState(() => new Date());
+  const today = useMemo(() => dateIn(now, timeZone), [now, timeZone]);
+  const [asOfChoice, setAsOf] = useState<string | null>(null);
+  const asOf = asOfChoice ?? today;
 
   // PMC 조회 범위: to = 기준일, from = 기준일 − days일. 날짜를 UTC 자정으로 해석해 하루 단위(86,400,000 ms)로
   // 빼므로 시간대에 따라 날짜가 밀리지 않는다. 훈련 부하 워밍업(첫 활동부터 누적)은 서버가 하므로 from 이전
@@ -77,7 +87,8 @@ export function DashboardPage() {
   // 마지막 날(=기준일) 값, latestDate는 최신 활동의 날짜 부분이다.
   if (!athleteId) return <NeedAthlete />;
   const last = load.data?.days.at(-1);
-  const latestDate = latest.data?.items[0]?.startedAt.slice(0, 10);
+  const latestStart = latest.data?.items[0]?.startedAt;
+  const latestDate = latestStart ? dateIn(new Date(latestStart), timeZone) : undefined;
 
   return (
     <Stack spacing={2}>

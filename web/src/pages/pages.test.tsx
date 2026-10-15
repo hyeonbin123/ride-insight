@@ -78,6 +78,7 @@ describe("dashboard page", () => {
   // 대시보드의 다른 요청은 정상으로 두고(훈련 부하는 계속 기다리는 상태) 파워 커브만 바꿔 가며 본다.
   function mockDashboard() {
     useAthleteStore.setState({ athleteId: "a1" });
+    vi.spyOn(api, "getAthlete").mockResolvedValue({ id: "a1", name: "A", createdAt: "2024-01-01T00:00:00Z", timeZone: "Asia/Seoul" });
     vi.spyOn(api, "listActivities").mockResolvedValue({ items: [] });
     vi.spyOn(api, "getTrainingLoad").mockReturnValue(new Promise(() => {}));
     vi.spyOn(api, "getFtpEstimate").mockResolvedValue(ESTIMATE);

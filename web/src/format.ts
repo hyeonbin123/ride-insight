@@ -48,9 +48,21 @@ export function secsLabel(secs: number): string {
   return m ? `${h}h${m}m` : `${h}h`;
 }
 
-// Date → 'yyyy-MM-dd'. toISOString을 쓰므로 UTC 기준 날짜다(한국 시간 오전 9시 전에는 전날 날짜가 된다).
-// 서버가 기준일을 받지 않았을 때 쓰는 기본값도 UTC 오늘(LocalDate.now(UTC))이라 기준이 같다. 대시보드
-// 기준일과 FTP 적용 시작일 기본값에 쓴다.
+// Date → 'yyyy-MM-dd'(UTC 날짜). 날짜 문자열끼리 더하고 빼는 계산(PMC 조회 범위)에만 쓴다. '오늘'이나 라이딩
+// 날짜처럼 사람이 보는 날짜는 선수 시간대로 세는 dateIn을 쓴다.
 export function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
+}
+
+// Date → 시간대 timeZone의 현지 날짜 'yyyy-MM-dd'. 서버가 2026-10-15부터 PMC·FTP 적용일·기준일을 선수 시간대(기본
+// Asia/Seoul)의 현지 날짜로 세므로, 화면의 '오늘'과 '마지막 라이딩 날짜'도 같은 시간대로 센다. 그 전에는 UTC
+// 날짜라 한국 시각 오전 9시 전에는 전날이 됐다. en-CA 형식이 yyyy-mm-dd라 그대로 쓴다. 시간대가 없거나 브라우저가
+// 모르는 이름이면 UTC 날짜로 대신한다.
+export function dateIn(d: Date, timeZone?: string): string {
+  if (!timeZone) return isoDate(d);
+  try {
+    return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+  } catch {
+    return isoDate(d);
+  }
 }

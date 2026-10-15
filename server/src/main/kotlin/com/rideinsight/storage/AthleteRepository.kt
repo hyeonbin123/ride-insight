@@ -23,6 +23,8 @@ class Athlete(
     val birthYear: Int?,
     val weightKg: Double?,
     val createdAt: OffsetDateTime,
+    // 현지 날짜를 셀 때 쓰는 시간대(IANA 이름, V3__athlete_time_zone.sql). 기본 Asia/Seoul.
+    val timeZone: String,
 )
 
 // FTP 이력 한 줄: 적용 시작일, 와트, 출처(manual, import, estimate).
@@ -31,12 +33,16 @@ class Threshold(val effectiveFrom: LocalDate, val ftpWatts: Int, val source: Str
 @Repository
 class AthleteRepository(private val jdbc: JdbcClient) {
     // 선수를 넣고(returning id) 다시 읽어 DB가 채운 created_at까지 담아 돌려준다.
-    fun insert(name: String, gender: String?, birthYear: Int?, weightKg: Double?): Athlete {
+    fun insert(name: String, gender: String?, birthYear: Int?, weightKg: Double?, timeZone: String): Athlete {
         val id = jdbc.sql(
-            "insert into athlete (name, gender, birth_year, weight_kg) values (?, ?, ?, ?) returning id",
-        ).params(listOf(name, gender, birthYear, weightKg)).query(UUID::class.java).single()
+            "insert into athlete (name, gender, birth_year, weight_kg, time_zone) values (?, ?, ?, ?, ?) returning id",
+        ).params(listOf(name, gender, birthYear, weightKg, timeZone)).query(UUID::class.java).single()
         return find(id)!!
     }
+
+    // 선수의 시간대를 바꾼다. 바꾼 행이 없으면(선수 없음) false.
+    fun setTimeZone(id: UUID, timeZone: String): Boolean =
+        jdbc.sql("update athlete set time_zone = ? where id = ?").params(timeZone, id).update() > 0
 
     fun find(id: UUID): Athlete? =
         jdbc.sql("select * from athlete where id = ?").param(id).query(::mapAthlete).optional().orElse(null)
@@ -92,6 +98,7 @@ class AthleteRepository(private val jdbc: JdbcClient) {
         birthYear = rs.intOrNull("birth_year"),
         weightKg = rs.doubleOrNull("weight_kg"),
         createdAt = rs.getObject("created_at", OffsetDateTime::class.java),
+        timeZone = rs.getString("time_zone"),
     )
 
     private fun mapThreshold(rs: ResultSet, @Suppress("UNUSED_PARAMETER") row: Int) = Threshold(
