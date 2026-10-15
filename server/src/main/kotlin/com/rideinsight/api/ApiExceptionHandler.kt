@@ -16,12 +16,14 @@ import com.rideinsight.fit.FitLimitException
 import com.rideinsight.service.BadRequestException
 import com.rideinsight.service.InvalidActivityException
 import com.rideinsight.service.NotFoundException
+import com.rideinsight.service.TooManyUploadsException
 import com.rideinsight.service.UnsupportedSportException
 import com.rideinsight.storage.DuplicateActivityException
 // 아래는 Spring MVC·멀티파트가 요청을 해석하는 단계에서 던지는 예외들이다: 본문 파싱 실패, 메서드·미디어 타입
 // 불일치, 요청 파라미터·파트 누락, 경로 변수 타입 불일치, 경로 없음, 업로드 크기 초과. 각각 아래 처리기에서
 // 4xx로 바꾼다.
 import org.slf4j.LoggerFactory
+import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.http.converter.HttpMessageNotReadableException
@@ -80,6 +82,15 @@ class ApiExceptionHandler {
     // unique(athlete_id, started_at) 위반을 ActivityRepository가 이 예외로 바꿔 던진다.
     @ExceptionHandler(DuplicateActivityException::class)
     fun duplicate(e: DuplicateActivityException) = respond(HttpStatus.CONFLICT, "duplicate_activity", e.message ?: "")
+
+    // 동시에 처리하는 업로드가 꽉 차 대기 상한(기본 30초) 안에 차례가 오지 않음 → 429 too_many_uploads와
+    // Retry-After 헤더(초). 서버 오류가 아니라 잠시 뒤 다시 보내면 되는 상태라 4xx다(2026-10-15, 규칙 변경 12,
+    // service/UploadGate.kt).
+    @ExceptionHandler(TooManyUploadsException::class)
+    fun tooManyUploads(e: TooManyUploadsException): ResponseEntity<ErrorResponse> =
+        ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+            .header(HttpHeaders.RETRY_AFTER, e.retryAfterSeconds.toString())
+            .body(ErrorResponse("too_many_uploads", e.message ?: "too many uploads"))
 
     // 10 MB를 넘는 업로드 → 413 file_too_large. 한도는 application.properties의
     // spring.servlet.multipart.max-file-size이고, 클라이언트가 연결 끊김 대신 실제 413을 받도록

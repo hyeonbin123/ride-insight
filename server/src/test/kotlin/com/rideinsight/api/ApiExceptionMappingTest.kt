@@ -10,6 +10,7 @@ import com.rideinsight.fit.FitDecodeException
 import com.rideinsight.fit.FitLimitException
 import com.rideinsight.service.BadRequestException
 import com.rideinsight.service.InvalidActivityException
+import com.rideinsight.service.TooManyUploadsException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import org.springframework.web.method.annotation.ExceptionHandlerMethodResolver
@@ -33,5 +34,15 @@ class ApiExceptionMappingTest {
         assertEquals("fit", handlerFor(FitDecodeException("truncated")))
         assertEquals("fitLimit", handlerFor(FitLimitException("more than 500000 record messages in file")))
         assertEquals("invalidActivity", handlerFor(InvalidActivityException("no records")))
+    }
+
+    // 업로드 동시 처리 상한(규칙 변경 12): 429 too_many_uploads와 Retry-After 헤더.
+    @Test
+    fun `a full upload gate is a 429 with Retry-After`() {
+        assertEquals("tooManyUploads", handlerFor(TooManyUploadsException(5)))
+        val r = ApiExceptionHandler().tooManyUploads(TooManyUploadsException(5))
+        assertEquals(429, r.statusCode.value())
+        assertEquals("5", r.headers.getFirst("Retry-After"))
+        assertEquals("too_many_uploads", r.body!!.error)
     }
 }

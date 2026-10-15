@@ -19,6 +19,9 @@ services:
 
   server:
     build: ./server
+    # 메모리 한도(2026-10-15, docs/experiments.md 규칙 변경 12). 이미지가 -XX:MaxRAMPercentage=75라 최대 힙은 약
+    # 576 MB로, 업로드 측정에 쓴 512 MB 힙과 비슷하다. 한도가 없으면 Docker 가상 머신 메모리의 75%까지 힙이 클 수 있었다.
+    mem_limit: 768m
     environment:
       RIDE_INSIGHT_DB_URL: jdbc:postgresql://postgres:5432/rideinsight
       RIDE_INSIGHT_DB_USER: rideinsight
