@@ -132,3 +132,22 @@
   - (문서) 규칙 변경 4의 "31,703개 중 748개"는 745개(748은 모든 기록 간격을 센 값), 없는 모듈·틀린 동작을 적은 docstring 3개, H7의 집단당 20단위 하한이 규칙에 없던 것(규칙 변경 10, 결과 영향 없음)
 - **검증**: 고치기 전 코드에서 새 테스트가 실패하는 것을 확인한 뒤 고쳤다. 고친 뒤 Kotlin 51개(Testcontainers 포함), Python 34개, 화면 8개 테스트와 ruff·oxlint·빌드 통과
 - **사람이 정한 것**: 측정 결과에 영향을 주는 버그는 "고치고 재측정"(재측정 계획을 먼저 등록하고, 봉인 결과는 규칙대로 남긴다)
+
+### 2026-10-15 개선: 업로드 자원 증폭·퍼징·예외 매핑·현지 날짜·DAST 범위·화면 (커밋 `23fbbb1`~`0bbee33`)
+- **만든 것**: Claude Code. CI(화면 vitest 추가, node24 액션), 조작 FIT 생성기(`FitStressFiles`)와 힙 측정 도구(`./gradlew fitMemoryProbe`), 디코더의 필드 제한·record 열 저장(`RecordColumns`)·상한(413 `fit_limit_exceeded`), 조회 경로(파워 커브 저장, 배열 텍스트 파싱), 고정 seed 퍼징(`FitFuzz`), `BadRequestException` 매핑과 날짜 범위 검사, 선수 시간대(Flyway V3), compose·nginx 하드닝과 CSP nonce, ZAP 전체 스택 계획(`zap/automation-stack.yaml`, `zap/proxy_seed.py`), 화면 한국어 안내·차트 접근성, README 그림(`docs/figures/`)
+- **검증**
+  - 측정(규칙 먼저, `a844a32`): 조작 파일 5종을 같은 JVM에서 재고(유지 힙) 힙 512 MB 서버에 1개·동시 5개 업로드. 적용 전 4 MB 파일 하나가 821 MB를 붙잡아 OutOfMemoryError(500), 적용 뒤 H11 지지(`reports/load/2026-10-15-fit-amplification-*.json`, experiments.md 5단계 '업로드 자원 증폭')
+  - 퍼징: 바이트 변이 4,000건 + 구조를 아는 무작위 파일 2,000건을 업로드의 DB 앞 단계와 지표 계산에(`FitFuzzTest`), 450건을 실제 HTTP 업로드로(`TamperedFitTest`), uint32 밖 timestamp 7가지를 직접(계약: 정해진 400·413·422만, DB 열에 들어가는 값, 입력당 3초·전체 4분 안)
+  - 외부 값 대조 유지: python-fitparse 대조 테스트(레코드 31,156개)를 바꾸지 않고 통과, 고친 코드의 `parity` 도구로 개발 세트 3명(라이딩 624개)을 다시 돌려 `reports/parity/dev.jsonl`과 모든 값이 같음
+  - 예외 매핑: Spring의 `ExceptionHandlerMethodResolver`로 예외마다 어느 처리기로 가는지 확인(`ApiExceptionMappingTest`)
+  - 현지 날짜: 2026-10-14T21:30Z(한국 10-15 06:30) 라이딩으로 FTP 선택·PMC 날짜·기간 커브 창·요청 tz·시간대 변경 재계산을 통합 테스트(`TimeZoneTest`)와 화면 테스트(`dateIn`)로 확인
+  - DAST: 업로드를 포함한 전체 스택 스캔 1차 Medium 1 → 고친 뒤 2차 High·Medium 0, 5xx 0%. CSP를 바꾼 뒤 브라우저로 세 화면을 열어 CSP 위반 0건
+- **잡은 실수**
+  - (기존 코드, Codex 검토 세 번·ZAP·H8이 놓침) 디코더가 메시지마다 HashMap 두 개를 만들고 쓰지 않는 필드까지 담아, 4 MB 파일 하나로 힙 512 MB 서버가 OutOfMemoryError(500)였다. 메시지 수 상한(200만)은 메시지당 크기가 큰 파일(255필드)에는 효과가 없었다
+  - (이번 수정의 빈틈, H11 첫 재측정이 잡음) 디코더만 고친 첫 수정 뒤에도 50만 샘플 활동을 동시에 조회하면 OutOfMemoryError였다(조회가 요청마다 샘플 전체를 박싱해 읽고 곡선을 다시 계산). 판정 기준은 두고 조회 경로를 고쳤다
+  - (퍼징이 잡음) 정의가 필드 타입을 바꾼 파일에서 심박·케이던스가 smallint 범위를, 거리·고도가 real 범위를 넘어 DB 오류로 500(HTTP로 1건 재현: "1.0E298 is out of range for type real"), 64비트 timestamp로 시작 시각이 서기 4461783년. 바이트 변이 4,000건에서는 계약 위반이 없었다(구조를 아는 생성이 필요했던 이유)
+  - (예외 매핑을 정리하다 찾음) FTP 적용일 `+300000-01-01`이 재계산 쿼리의 timestamptz 범위를 넘어 500. 그리고 IllegalArgumentException 전체가 400이라 내부 require 실패가 400으로 가려질 수 있었다
+  - (읽기 전용 코드 검토가 지적, 테스트로 확인) 모든 날짜가 UTC라 한국 새벽 라이딩이 PMC 전날에 쌓이고 전날 FTP가 적용됐다
+  - (ZAP이 잡음) 웹의 CSP가 style-src 'unsafe-inline'이었다(Medium) → emotion에 요청마다 다른 nonce
+  - (작업 중 도구 실수) 측정 스크립트가 상대 경로로 보고서를 저장소 밖 폴더에 썼다(옮기고 지움). `importOpenData`는 `RIDE_INSIGHT_DB_URL`을 줘도 Spring의 Docker Compose 지원이 켜져 개발 DB(`server/compose.yaml`)로 들어갔다 → `SPRING_DOCKER_COMPOSE_ENABLED=false`로 다시 실행
+- **사람이 정한 것**: 이번 범위(CI 화면 테스트, 업로드 자원 상한, 퍼징·예외 매핑, 현지 날짜, 배포 하드닝·DAST, 화면 문구·접근성, README 그림·선행 연구. 새 봉인 셋의 FTP 재측정과 인증은 제외), 기본 시간대 Asia/Seoul(일상 선택, 바꿀 수 있음). record 상한 500,000은 측정과 OpenData의 가장 긴 라이딩(413,334샘플)을 근거로 정했다
