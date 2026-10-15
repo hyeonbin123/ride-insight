@@ -17,7 +17,7 @@
 | `POST /athletes` | 선수 생성 {name, gender?, birthYear?, weightKg?, ftp?} | 201 + id. 이름 1~100자, FTP 50~1000 W 아니면 400. 체중은 20 kg 초과 300 kg 미만(DB check와 같은 범위)이 아니면 400(2026-10-13 추가: 그 전에는 검증이 없어 범위 밖 체중이 500이었다) |
 | `GET /athletes/{id}` | 선수 + 현재 FTP | 없으면 404 |
 | `PUT /athletes/{id}/threshold` | FTP 등록 {effectiveFrom, ftpWatts} | 그 날짜 이후 활동의 TSS를 다시 계산한다 |
-| `POST /athletes/{id}/activities` | FIT 업로드(multipart, 파일 1개) | 201 + 활동 요약(지표 포함). 디코딩 실패 400(`FitDecodeException` 메시지), 종목이 러닝·수영·걷기·하이킹이면 422(그 외 종목과 종목 미상은 저장), 파워 없는 파일은 저장하되 지표 null, 같은 시작 시각이면 409, 10 MB 초과 413 `file_too_large`, record 메시지 500,000개 또는 데이터 메시지 2,000,000개 초과 413 `fit_limit_exceeded`(2026-10-15 추가, docs/experiments.md 규칙 변경 11. 그 전에는 메시지 상한 초과가 400 `invalid_fit`이었고 record 상한은 없었다) |
+| `POST /athletes/{id}/activities` | FIT 업로드(multipart, 파일 1개) | 201 + 활동 요약(지표 포함). 디코딩 실패 400(`FitDecodeException` 메시지), 종목이 러닝·수영·걷기·하이킹이면 422(그 외 종목과 종목 미상은 저장), 파워 없는 파일은 저장하되 지표 null, 같은 시작 시각이면 409, 10 MB 초과 413 `file_too_large`, record 메시지 500,000개 또는 데이터 메시지 2,000,000개 초과 413 `fit_limit_exceeded`(2026-10-15 추가, docs/experiments.md 규칙 변경 11. 그 전에는 메시지 상한 초과가 400 `invalid_fit`이었고 record 상한은 없었다). 2026-10-15 퍼징으로 고친 것: record timestamp가 FIT date_time(uint32) 범위 밖이면 400 `invalid_fit`, 심박·케이던스는 파워처럼 0~32,000만, 거리·고도는 real 범위의 유한한 값만 저장하고 나머지는 결측(그 전에는 범위 밖 값이 DB 오류로 500) |
 | `GET /athletes/{id}/activities?before&limit` | 활동 목록(지표 포함, 최신순) | 기본 50개(최대 200), `before`(시작 시각) 커서. 응답의 `nextBefore`를 다음 요청에 넣는다 (처음 적었던 `from&to&cursor`는 구현에 맞춰 고침, Codex 검토 2026-10-10) |
 | `GET /activities/{id}` | 활동 상세 + 지표 | |
 | `GET /activities/{id}/samples?every=N` | 시계열(경과 시간 N초 구간마다 첫 샘플 한 점) | 기본 every=1, 응답이 20,000점을 넘지 않도록 N을 자동으로 키운다 |

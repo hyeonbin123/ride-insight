@@ -184,6 +184,11 @@ class FitActivity(
             var k = 0
             for (i in 0 until raw.size) {
                 val t = raw.int(i, FitProfile.FIELD_TIMESTAMP) ?: continue // timestamp가 없으면 시간축에 놓을 수 없다
+                // FIT의 timestamp는 date_time(uint32 초)이다. 정의가 기본 타입을 부호 있는 32비트나 64비트로 바꾸면
+                // 음수나 아주 큰 값이 올 수 있고, 그대로 쓰면 Long이 넘치거나(시작 시각을 만들 때 DateTimeException)
+                // DB의 timestamptz 범위를 벗어나 500이 되었다(2026-10-15 퍼징, FitFuzzTest). 그런 파일은 FIT
+                // 규약을 어긴 파일이므로 400 invalid_fit으로 거절한다.
+                if (t !in 0L..0xFFFFFFFFL) throw FitDecodeException("record timestamp $t is outside the FIT date_time range")
                 ts[k] = t + FitDecoder.FIT_EPOCH_OFFSET
                 power[k] = raw.int(i, FitProfile.Record.POWER)?.toInt() ?: FitRecords.ABSENT
                 heartRate[k] = raw.int(i, FitProfile.Record.HEART_RATE)?.toInt() ?: FitRecords.ABSENT

@@ -86,6 +86,35 @@ class TamperedFitTest : ApiTestBase() {
         assertTrue(results.values.none { it.startsWith("500") }, "no 500s: $results")
     }
 
+    // 2026-10-15 추가: 퍼징 입력(FitFuzz)을 실제 HTTP 업로드로 보내 DB 저장까지 지나게 한다. 바이트 변이 300건과
+    // 구조를 아는 무작위 파일 150건(고정 seed). 응답은 정해 둔 코드(201 저장, 400 invalid_fit·invalid_activity,
+    // 409 같은 시작 시각, 413 상한, 422 거절 종목)만 허용하고 500은 하나도 없어야 한다. DB 앞 단계의 수천 건 퍼징은
+    // FitFuzzTest가 하고, 여기서는 DB 열 범위처럼 실제 저장에서만 드러나는 문제를 본다. 같은 선수에게 같은 시작
+    // 시각이 쌓이면 409만 늘어나므로 25건마다 새 선수를 만든다.
+    @Test
+    fun `fuzzed uploads only get the documented status codes`() {
+        val seeds = com.rideinsight.fit.FitFuzz.seeds()
+        val rng = java.util.Random(20261017L)
+        val allowed = setOf("201 null", "400 invalid_fit", "400 invalid_activity", "409 duplicate_activity", "413 fit_limit_exceeded", "422 unsupported_sport")
+        val counts = sortedMapOf<String, Int>()
+        val bad = ArrayList<String>()
+        var athlete = createAthlete()
+        for (i in 0 until 450) {
+            if (i % 25 == 0) athlete = createAthlete()
+            val (source, bytes) = if (i < 300) {
+                val (name, seed) = seeds[rng.nextInt(seeds.size)]
+                name to com.rideinsight.fit.FitFuzz.mutate(seed, rng)
+            } else {
+                "structured" to com.rideinsight.fit.FitFuzz.structured(rng)
+            }
+            val c = code(uploadBytes(athlete, "fuzz-$i.fit", bytes))
+            counts.merge(c, 1, Int::plus)
+            if (c !in allowed) bad += "#$i from $source: $c"
+        }
+        println("FIT_FUZZ_HTTP n=450 statuses=$counts")
+        assertTrue(bad.isEmpty(), bad.take(10).joinToString("\n"))
+    }
+
     // 2026-10-15 추가(docs/experiments.md 5단계 '업로드 자원 증폭', H11의 상태 코드 부분): 구조는 올바르지만 처리
     // 상한을 넘는 파일. (8) 2바이트 record 200만 개(4 MB)와 (9) record 500,001개는 413 fit_limit_exceeded,
     // (10) 서비스가 쓰지 않는 255필드 메시지로 채운 10 MB 가까운 파일은 담지 않고 201로 저장한다. 적용 전에는
