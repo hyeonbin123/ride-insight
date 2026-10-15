@@ -9,6 +9,7 @@ package com.rideinsight.service
 // JSON 변환에는 Spring이 만든 JsonMapper(Jackson 3) 빈을 주입받아 쓴다.
 
 import com.rideinsight.metrics.MeanMaximalPower
+import com.rideinsight.metrics.PowerCurve
 import com.rideinsight.metrics.PowerMetrics
 import com.rideinsight.metrics.RecordingInterval
 import com.rideinsight.metrics.RideSamples
@@ -35,15 +36,53 @@ class MetricsService(
          * 저장된 행을 다시 계산할 수 있게 한다(docs/api.md: 지표 코드가 바뀌면 다시 계산해 덮어쓴다).
          */
         const val METRICS_VERSION = 1
-    }
 
-    // 저장 형식(SampleSeries, 결측은 null) → 지표 입력(RideSamples, 결측은 0 W)으로 바꾼다. 파워 시리즈
-    // 자체가 없으면 모든 샘플을 결측으로 센다.
-    fun rideSamples(series: SampleSeries): RideSamples {
-        val power = series.power
-        val missing = power?.count { it == null } ?: series.secs.size
-        val watts = DoubleArray(series.secs.size) { i -> (power?.get(i) ?: 0).toDouble() }
-        return RideSamples(series.secs.toDoubleArray(), watts, missing)
+        // 저장 형식(SampleSeries, 결측은 null) → 지표 입력(RideSamples, 결측은 0 W)으로 바꾼다. 파워 시리즈
+        // 자체가 없으면 모든 샘플을 결측으로 센다. DB도 Spring도 쓰지 않는 순수 함수라 퍼징 테스트도 부른다.
+        fun rideSamples(series: SampleSeries): RideSamples {
+            val power = series.power
+            val missing = power?.count { it == null } ?: series.secs.size
+            val watts = DoubleArray(series.secs.size) { i -> (power?.get(i) ?: 0).toDouble() }
+            return RideSamples(series.secs.toDoubleArray(), watts, missing)
+        }
+
+        /**
+         * 주어진 FTP로 지표를 계산하는 순수 함수(DB 없음). 계산 순서: 기록 간격 추정 → NP → IF·TSS(FTP가 없으면
+         * null) → 16구간 MMP(GC 3000 W 가드 적용) → 평균·최대 파워, 일 → 전 구간 파워 커브. 기록 간격을 추정할
+         * 수 없으면(샘플 2개 미만 등) 간격이 필요한 값은 모두 null이다.
+         */
+        fun computeWithFtp(series: SampleSeries, ftp: Int?): MetricsRow {
+            val samples = rideSamples(series)
+            val interval = RecordingInterval.analyse(samples.secs)
+            val recInt = interval?.intervalSecs
+            val np = recInt?.let { PowerMetrics.normalizedPower(samples.power, it) }
+            val intensity = np?.let { PowerMetrics.intensityFactor(it, ftp?.toDouble()) }
+            val tss = if (np != null && recInt != null) {
+                PowerMetrics.trainingStressScore(np, samples.size, recInt, ftp?.toDouble())
+            } else {
+                null
+            }
+            val mmp = LinkedHashMap<String, Double?>()
+            for (w in MeanMaximalPower.STANDARD_WINDOWS_SECS) {
+                mmp[MeanMaximalPower.metricKey(w)] = recInt?.let { MeanMaximalPower.peakPower(samples, it, w.toDouble()) }
+            }
+            // 평균 파워는 결측을 0 W로 채운 지표 입력의 평균이고, 최대 파워는 실제로 기록된 값 중 최댓값이다.
+            // 일(kJ) = 파워 합 × 기록 간격 / 1000.
+            val present = series.power?.filterNotNull() ?: emptyList()
+            return MetricsRow(
+                metricsVersion = METRICS_VERSION,
+                ftpUsed = ftp,
+                normalizedPower = np,
+                intensityFactor = intensity,
+                tss = tss,
+                averagePower = if (samples.size > 0) samples.power.average() else null,
+                maxPower = present.maxOrNull(),
+                workKj = recInt?.let { samples.power.sum() * it / 1000.0 },
+                mmp = mmp,
+                // 전 구간 파워 커브도 여기서 한 번 계산해 저장한다(2026-10-15: 조회마다 다시 계산하던 것을 옮김).
+                curve = PowerCurve.points(samples),
+            )
+        }
     }
 
     // 파워가 없는 활동은 계산하지 않고 null(지표 행 없음)을 돌려준다. 있으면 계산한 뒤 mmp를 JSON 문자열로
@@ -52,44 +91,17 @@ class MetricsService(
     fun computeAndStore(activityId: UUID, athleteId: UUID, startedAt: OffsetDateTime, series: SampleSeries, hasPower: Boolean): MetricsRow? {
         if (!hasPower) return null
         val row = compute(athleteId, startedAt, series)
-        activities.saveMetrics(activityId, row, mapper.writeValueAsString(row.mmp))
+        // 곡선은 [[초, W], ...] 형식의 JSON으로 저장한다.
+        val curveJson = row.curve?.let { c -> mapper.writeValueAsString(c.map { (s, w) -> listOf(s, w) }) }
+        activities.saveMetrics(activityId, row, mapper.writeValueAsString(row.mmp), curveJson)
         return row
     }
 
-    // 계산 순서: 기록 간격 추정 → 활동 시작일(UTC)에 유효한 FTP 조회 → NP → IF·TSS(FTP가 없으면 null) →
-    // 16구간 MMP(GC 3000 W 가드 적용) → 평균·최대 파워, 일. 기록 간격을 추정할 수 없으면(샘플 2개 미만 등)
-    // 간격이 필요한 값은 모두 null이다.
+    // 활동 시작일(UTC)에 유효한 FTP를 찾아 [computeWithFtp]로 계산한다. FTP는 effective_from ≤ 그 날짜 중 가장
+    // 최근 값이다.
     fun compute(athleteId: UUID, startedAt: OffsetDateTime, series: SampleSeries): MetricsRow {
-        val samples = rideSamples(series)
-        val interval = RecordingInterval.analyse(samples.secs)
-        val recInt = interval?.intervalSecs
-        // FTP는 활동 시작 시각의 UTC 날짜로 찾는다(effective_from ≤ 그 날짜 중 가장 최근 값).
         val ftp = athletes.thresholdOn(athleteId, startedAt.atZoneSameInstant(ZoneOffset.UTC).toLocalDate())?.ftpWatts
-        val np = recInt?.let { PowerMetrics.normalizedPower(samples.power, it) }
-        val intensity = np?.let { PowerMetrics.intensityFactor(it, ftp?.toDouble()) }
-        val tss = if (np != null && recInt != null) {
-            PowerMetrics.trainingStressScore(np, samples.size, recInt, ftp?.toDouble())
-        } else {
-            null
-        }
-        val mmp = LinkedHashMap<String, Double?>()
-        for (w in MeanMaximalPower.STANDARD_WINDOWS_SECS) {
-            mmp[MeanMaximalPower.metricKey(w)] = recInt?.let { MeanMaximalPower.peakPower(samples, it, w.toDouble()) }
-        }
-        // 평균 파워는 결측을 0 W로 채운 지표 입력의 평균이고, 최대 파워는 실제로 기록된 값 중 최댓값이다.
-        // 일(kJ) = 파워 합 × 기록 간격 / 1000.
-        val present = series.power?.filterNotNull() ?: emptyList()
-        return MetricsRow(
-            metricsVersion = METRICS_VERSION,
-            ftpUsed = ftp,
-            normalizedPower = np,
-            intensityFactor = intensity,
-            tss = tss,
-            averagePower = if (samples.size > 0) samples.power.average() else null,
-            maxPower = present.maxOrNull(),
-            workKj = recInt?.let { samples.power.sum() * it / 1000.0 },
-            mmp = mmp,
-        )
+        return computeWithFtp(series, ftp)
     }
 
     // from 이후 시작한 활동을 오래된 순으로 다시 계산한다. 파워가 없거나 샘플이 없는 활동은 건너뛰고, 다시
@@ -112,5 +124,12 @@ class MetricsService(
         @Suppress("UNCHECKED_CAST")
         val raw = mapper.readValue(json, Map::class.java) as Map<String, Any?>
         return raw.mapValues { (_, v) -> (v as Number?)?.toDouble() }
+    }
+
+    // DB의 curve jsonb 텍스트([[초, W], ...]) → (초, W) 목록.
+    fun parseCurve(json: String): List<Pair<Int, Double>> {
+        @Suppress("UNCHECKED_CAST")
+        val raw = mapper.readValue(json, List::class.java) as List<List<Number>>
+        return raw.map { (s, w) -> s.toInt() to w.toDouble() }
     }
 }

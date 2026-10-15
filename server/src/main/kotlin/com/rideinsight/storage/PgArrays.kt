@@ -27,6 +27,81 @@ object PgArrays {
             }
         }
 
+    /** 정수 배열에서 '값 없음'을 나타내는 표시(parseInts의 NULL 원소). */
+    const val ABSENT_INT = Int.MIN_VALUE
+
+    /**
+     * PostgreSQL 숫자 배열의 텍스트 표현('{1,2.5,NULL}')을 DoubleArray로 푼다. NULL 원소는 NaN, 입력이 null(SQL
+     * NULL 컬럼)이면 null. 숫자 배열의 텍스트에는 따옴표·공백이 없다(PostgreSQL 배열 출력 형식).
+     */
+    fun parseDoubles(text: String?): DoubleArray? {
+        if (text == null) return null
+        val out = DoubleArray(countElements(text))
+        var k = 0
+        forEachElement(text) { from, to ->
+            out[k++] = if (isNull(text, from, to)) Double.NaN else text.substring(from, to).toDouble()
+        }
+        return out
+    }
+
+    /** 같은 방식으로 정수 배열('{1,-2,NULL}')을 IntArray로 푼다. NULL 원소는 [ABSENT_INT]. */
+    fun parseInts(text: String?): IntArray? {
+        if (text == null) return null
+        val out = IntArray(countElements(text))
+        var k = 0
+        forEachElement(text) { from, to ->
+            out[k++] = if (isNull(text, from, to)) ABSENT_INT else parseInt(text, from, to)
+        }
+        return out
+    }
+
+    /** 원시 배열 위의 읽기 전용 목록 보기(복사하지 않음). NaN은 null로 보인다. */
+    fun view(values: DoubleArray): List<Double?> = object : AbstractList<Double?>() {
+        override val size: Int get() = values.size
+        override fun get(index: Int): Double? = values[index].takeIf { !it.isNaN() }
+    }
+
+    /** 원시 배열 위의 읽기 전용 목록 보기(복사하지 않음). [ABSENT_INT]는 null로 보인다. */
+    fun view(values: IntArray): List<Int?> = object : AbstractList<Int?>() {
+        override val size: Int get() = values.size
+        override fun get(index: Int): Int? = values[index].takeIf { it != ABSENT_INT }
+    }
+
+    // '{}'면 0개, 아니면 쉼표 수 + 1개.
+    private fun countElements(text: String): Int {
+        if (text.length <= 2) return 0
+        var n = 1
+        for (i in 1 until text.length - 1) if (text[i] == ',') n++
+        return n
+    }
+
+    // 중괄호 안의 원소 구간 [from, to)를 차례로 넘긴다.
+    private inline fun forEachElement(text: String, action: (Int, Int) -> Unit) {
+        if (text.length <= 2) return
+        var start = 1
+        for (i in 1 until text.length) {
+            if (text[i] == ',' || i == text.length - 1) {
+                action(start, i)
+                start = i + 1
+            }
+        }
+    }
+
+    private fun isNull(text: String, from: Int, to: Int) = to - from == 4 && text.regionMatches(from, "NULL", 0, 4)
+
+    // 부호 있는 십진 정수를 문자열 조각에서 바로 읽는다(원소마다 String을 만들지 않는다).
+    private fun parseInt(text: String, from: Int, to: Int): Int {
+        var i = from
+        val negative = text[i] == '-'
+        if (negative) i++
+        var v = 0
+        while (i < to) {
+            v = v * 10 + (text[i] - '0')
+            i++
+        }
+        return if (negative) -v else v
+    }
+
     // 배열 컬럼 → List<Double?>. 컬럼이 SQL NULL(시리즈 없음)이면 null. 원소는 컬럼 형에 따라 다른 숫자
     // 형으로 오므로 Number로 받아 바꾼다.
     fun readDoubles(rs: ResultSet, column: String): List<Double?>? {

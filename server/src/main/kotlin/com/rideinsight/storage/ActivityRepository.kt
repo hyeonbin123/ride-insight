@@ -58,6 +58,8 @@ class MetricsRow(
     val maxPower: Int?,
     val workKj: Double?,
     val mmp: Map<String, Double?>,
+    // 전 구간 파워 커브((초, W) 목록). 저장할 때만 채우고, 읽을 때는 서비스가 curve JSON을 따로 읽는다.
+    val curve: List<Pair<Int, Double>>? = null,
 )
 
 // 같은 선수·같은 시작 시각의 활동이 이미 있을 때 던진다. API에서는 409, ImportOpenData에서는 건너뛴 수로
@@ -130,26 +132,31 @@ class ActivityRepository(private val jdbc: JdbcClient) {
         return id
     }
 
-    // 지표 upsert: 처음이면 insert, 이미 있으면(FTP 변경 후 재계산) 모든 값과 computed_at을 덮어쓴다. mmp는
-    // JSON 문자열을 ::jsonb로 형 변환해 넣는다.
-    fun saveMetrics(activityId: UUID, m: MetricsRow, mmpJson: String) {
+    // 지표 upsert: 처음이면 insert, 이미 있으면(FTP 변경 후 재계산) 모든 값과 computed_at을 덮어쓴다. mmp와
+    // curve(전 구간 파워 커브, V2__activity_metrics_curve.sql)는 JSON 문자열을 ::jsonb로 형 변환해 넣는다.
+    fun saveMetrics(activityId: UUID, m: MetricsRow, mmpJson: String, curveJson: String?) {
         jdbc.sql(
             """
             insert into activity_metrics (activity_id, metrics_version, ftp_used, normalized_power, intensity_factor, tss,
-                average_power, max_power, work_kj, mmp)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)
+                average_power, max_power, work_kj, mmp, curve)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb)
             on conflict (activity_id) do update set metrics_version = excluded.metrics_version, ftp_used = excluded.ftp_used,
                 normalized_power = excluded.normalized_power, intensity_factor = excluded.intensity_factor, tss = excluded.tss,
                 average_power = excluded.average_power, max_power = excluded.max_power, work_kj = excluded.work_kj,
-                mmp = excluded.mmp, computed_at = now()
+                mmp = excluded.mmp, curve = excluded.curve, computed_at = now()
             """,
         ).params(
             listOf(
                 activityId, m.metricsVersion, m.ftpUsed, m.normalizedPower, m.intensityFactor, m.tss,
-                m.averagePower, m.maxPower, m.workKj, mmpJson,
+                m.averagePower, m.maxPower, m.workKj, mmpJson, curveJson,
             ),
         ).update()
     }
+
+    /** 저장된 전 구간 파워 커브 JSON. 지표 행이 없거나 곡선을 저장하기 전(2026-10-15 전)의 행이면 null. */
+    fun curveJson(activityId: UUID): String? =
+        jdbc.sql("select curve::text from activity_metrics where activity_id = ?").param(activityId)
+            .query(String::class.java).optional().orElse(null)
 
     // 활동 한 건(없으면 null).
     fun find(id: UUID): ActivityRow? =
@@ -171,17 +178,27 @@ class ActivityRepository(private val jdbc: JdbcClient) {
         jdbc.sql("select * from activity where athlete_id = ? and started_at >= ? order by started_at")
             .params(athleteId, from).query(::mapActivity).list()
 
-    // 샘플 행을 읽어 SampleSeries로. secs는 NOT NULL 컬럼이라 !!로 꺼내고, 형을 List<Double>로 맞추려고 원소
-    // null은 0.0으로 바꾼다.
+    // 샘플 행을 읽어 SampleSeries로. 배열은 텍스트('{1,2,NULL}')로 받아 원시 배열로 직접 풀고, SampleSeries는 그
+    // 배열 위의 목록 보기로 만든다. 처음에는 드라이버의 java.sql.Array로 읽어 원소마다 Float·Short 객체가 생기고
+    // 다시 Double·Int 목록으로 복사해, 샘플 50만 개짜리 활동 하나를 읽는 데 100 MB 넘게 들었다(2026-10-15 측정,
+    // docs/experiments.md 5단계 '업로드 자원 증폭'). secs는 NOT NULL 컬럼이고, 원소 NULL은 0.0으로 둔다(전과 같음).
     fun samples(activityId: UUID): SampleSeries? =
-        jdbc.sql("select * from activity_samples where activity_id = ?").param(activityId).query { rs, _ ->
+        jdbc.sql(
+            """
+            select secs::text as secs, power::text as power, heart_rate::text as heart_rate, cadence::text as cadence,
+                distance_m::text as distance_m, altitude_m::text as altitude_m
+            from activity_samples where activity_id = ?
+            """,
+        ).param(activityId).query { rs, _ ->
+            val secs = PgArrays.parseDoubles(rs.getString("secs"))!!
+            for (i in secs.indices) if (secs[i].isNaN()) secs[i] = 0.0
             SampleSeries(
-                secs = PgArrays.readDoubles(rs, "secs")!!.map { it ?: 0.0 },
-                power = PgArrays.readInts(rs, "power"),
-                heartRate = PgArrays.readInts(rs, "heart_rate"),
-                cadence = PgArrays.readInts(rs, "cadence"),
-                distanceM = PgArrays.readDoubles(rs, "distance_m"),
-                altitudeM = PgArrays.readDoubles(rs, "altitude_m"),
+                secs = secs.asList(),
+                power = PgArrays.parseInts(rs.getString("power"))?.let(PgArrays::view),
+                heartRate = PgArrays.parseInts(rs.getString("heart_rate"))?.let(PgArrays::view),
+                cadence = PgArrays.parseInts(rs.getString("cadence"))?.let(PgArrays::view),
+                distanceM = PgArrays.parseDoubles(rs.getString("distance_m"))?.let(PgArrays::view),
+                altitudeM = PgArrays.parseDoubles(rs.getString("altitude_m"))?.let(PgArrays::view),
             )
         }.optional().orElse(null)
 

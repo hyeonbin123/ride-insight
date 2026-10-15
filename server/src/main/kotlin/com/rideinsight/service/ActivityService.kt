@@ -10,7 +10,7 @@ package com.rideinsight.service
 
 import com.rideinsight.fit.FitActivity
 import com.rideinsight.fit.FitProfile
-import com.rideinsight.metrics.MeanMaximalPower
+import com.rideinsight.metrics.PowerCurve
 import com.rideinsight.metrics.RecordingInterval
 import com.rideinsight.storage.ActivityRepository
 import com.rideinsight.storage.ActivityRow
@@ -45,8 +45,6 @@ class ActivityService(
         )
         // DB smallint 컬럼에 맞춘 파워 상한(W).
         const val MAX_POWER_STORED = 32_000 // smallint 컬럼이라 이보다 큰 값은 결측으로 다룬다
-        // 활동 파워 커브의 최대 점 수(docs/api.md: 곡선은 로그 간격으로 300점 이하).
-        const val MAX_CURVE_POINTS = 300
     }
 
     // FIT 업로드 처리. 입력: 선수 id, 파일 바이트, 원래 파일 이름. 출력: 저장된 활동과 지표. 예외: 없는 선수
@@ -145,25 +143,17 @@ class ActivityService(
         return activities.samples(id) ?: throw NotFoundException("activity $id has no samples")
     }
 
-    // 활동 전 구간 파워 커브: 저장된 샘플로 로그 간격 지속 시간마다 MMP를 다시 계산한다(3000 W 가드 없는
-    // best). 파워가 없거나 기록 간격을 추정할 수 없으면 빈 곡선과 저장된 16구간 값만 돌려준다.
+    // 활동 전 구간 파워 커브(3000 W 가드 없는 best, 로그 간격 300점 이하)와 저장된 16구간 값. 곡선은 업로드 때
+    // 계산해 저장한 것을 읽는다(2026-10-15 전에는 요청마다 샘플 전체를 읽어 다시 계산했다, metrics.PowerCurve
+    // 주석). 곡선을 저장하기 전에 올린 활동만 샘플로 계산한다. 파워가 없으면 빈 곡선이다.
     /** 활동 하나의 전 구간 최대 평균 파워 곡선. 지속 시간은 로그 간격 격자다(최대 약 300점). */
     fun powerCurve(id: UUID): Pair<List<Pair<Int, Double>>, Map<String, Double?>> {
         val a = activities.find(id) ?: throw NotFoundException("activity $id not found")
-        val series = activities.samples(id) ?: throw NotFoundException("activity $id has no samples")
         val stored = loadMetrics(id)?.mmp ?: emptyMap()
         if (!a.hasPower) return emptyList<Pair<Int, Double>>() to stored
-        val rs = metrics.rideSamples(series)
-        val recInt = RecordingInterval.estimate(rs.secs) ?: return emptyList<Pair<Int, Double>>() to stored
-        // 곡선의 최대 지속 시간 = 라이딩 길이(마지막 secs + 기록 간격). 라이딩보다 긴 구간은 best가 null이라
-        // 건너뛴다.
-        val maxSecs = (rs.secs.last() + recInt).toInt()
-        val points = ArrayList<Pair<Int, Double>>()
-        for (d in curveDurations(maxSecs)) {
-            val w = MeanMaximalPower.best(rs, recInt, d.toDouble()) ?: continue
-            points.add(d to w)
-        }
-        return points to stored
+        activities.curveJson(id)?.let { return metrics.parseCurve(it) to stored }
+        val series = activities.samples(id) ?: throw NotFoundException("activity $id has no samples")
+        return PowerCurve.points(MetricsService.rideSamples(series)) to stored
     }
 
     // 삭제. 샘플·지표는 DB cascade로 함께 지워진다. 없으면 404.
@@ -179,24 +169,4 @@ class ActivityService(
         m.metricsVersion, m.ftpUsed, m.normalizedPower, m.intensityFactor, m.tss, m.averagePower, m.maxPower, m.workKj,
         metrics.parseMmp(json),
     )
-
-    // 1초부터 시작해 다음 값 = max(d + 1, d × growth)로 늘리는 로그 간격 격자에, 16개 표준 구간과 최대 길이를
-    // 더한다(정렬된 집합이라 중복은 한 번만). 점이 300개를 넘으면 growth를 1.5배씩 키워 다시 만든다. 처음에는
-    // 300점을 넘을 수 있었다(Codex 2차 검토 지적 11).
-    /** [maxSecs]까지의 로그 간격 지속 시간 목록. 개수는 [MAX_CURVE_POINTS]를 넘지 않는다. */
-    internal fun curveDurations(maxSecs: Int): List<Int> {
-        var growth = 1.04
-        while (true) {
-            val out = sortedSetOf<Int>()
-            var d = 1.0
-            while (d <= maxSecs) {
-                out.add(d.toInt())
-                d = maxOf(d + 1, d * growth)
-            }
-            for (w in MeanMaximalPower.STANDARD_WINDOWS_SECS) if (w <= maxSecs) out.add(w)
-            if (maxSecs >= 1) out.add(maxSecs)
-            if (out.size <= MAX_CURVE_POINTS) return out.toList()
-            growth *= 1.5 // 비정상 라이딩(예: 일주일 떨어진 샘플 두 개)은 더 성긴 격자가 필요하다
-        }
-    }
 }
