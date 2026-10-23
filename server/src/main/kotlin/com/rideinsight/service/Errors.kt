@@ -21,18 +21,20 @@ class InvalidActivityException(message: String) : RuntimeException(message)
 // 입력 검사는 이 예외로만 400이 되고, 그 밖의 IllegalArgumentException은 500으로 드러난다.
 class BadRequestException(message: String) : RuntimeException(message)
 
-/**
- * 날짜 입력(기준일·조회 범위·FTP 적용일·목록 커서)이 받을 수 있는 범위(1900-01-01 ~ 2100-12-31)인지 확인한다.
- * 벗어나면 [BadRequestException]. 이 범위는 선수 출생 연도 검사(1900~2100)와 같고, 그 밖의 날짜는 이 서비스에서
- * 뜻이 없다. 2026-10-15 전에는 검사가 없어 `asOf=+999999999-12-31` 같은 값이 날짜 계산의 DateTimeException이나
- * PostgreSQL의 범위 오류로 500이 되었다.
- */
 /** 선수 시간대의 기본값. V3__athlete_time_zone.sql의 열 기본값과 같다. */
 const val DEFAULT_TIME_ZONE = "Asia/Seoul"
 
 /**
- * 시간대 이름(IANA 이름 'Asia/Seoul', 'UTC', 또는 '+09:00' 같은 고정 오프셋)을 [java.time.ZoneId]로 바꾼다. 비었거나
- * 64자를 넘거나 Java가 모르는 이름이면 [BadRequestException](400). [name]은 오류 메시지에 쓰는 파라미터 이름이다.
+ * 시간대 이름을 [java.time.ZoneId]로 바꾼다. `ZoneId.of`가 받는 이름은 모두 받는다: IANA 지역 이름('Asia/Seoul',
+ * 'Etc/GMT-9'), 'UTC', 고정 오프셋('+09:00', 'UTC+9', 'GMT+9'). 비었거나 64자를 넘거나 Java가 모르는 이름이면
+ * [BadRequestException](400). [name]은 오류 메시지에 쓰는 파라미터 이름이다. 저장·응답에는 Java가 정규화한 이름을 쓴다
+ * ('UTC+9' → 'UTC+09:00', 'GMT+9' → 'GMT+09:00').
+ *
+ * 받은 시간대는 Java의 뜻 하나로만 쓰인다. 고정 오프셋은 ISO-8601처럼 +가 그리니치 동쪽이다('Etc/GMT-9'처럼 tz
+ * 데이터베이스의 Etc 이름만 그 데이터베이스 규칙대로 부호가 반대라 UTC+9). 현지 날짜는 모두 서버가 java.time으로 세고 DB에는
+ * 시간대 이름을 넘기지 않기 때문이다(2026-10-24부터). 그 전에는 PMC의 날짜 묶음만 SQL `at time zone`이 셌는데, PostgreSQL은
+ * tz 데이터베이스에 없는 '+09:00'·'UTC+09:00' 같은 이름을 POSIX 규칙(+가 서쪽)으로 읽어 같은 선수의 PMC를 UTC−9 날짜로
+ * 묶었다(ActivityRepository.tssByStart 주석). 오프셋을 거절하는 대신 해석을 한 곳으로 모아 고쳤다.
  */
 fun parseTimeZone(text: String, name: String = "timeZone"): java.time.ZoneId {
     if (text.isBlank() || text.length > 64) throw BadRequestException("'$name' must be a time zone such as Asia/Seoul")
@@ -43,6 +45,12 @@ fun parseTimeZone(text: String, name: String = "timeZone"): java.time.ZoneId {
     }
 }
 
+/**
+ * 날짜 입력(기준일·조회 범위·FTP 적용일·목록 커서)이 받을 수 있는 범위(1900-01-01 ~ 2100-12-31)인지 확인한다.
+ * 벗어나면 [BadRequestException]. 이 범위는 선수 출생 연도 검사(1900~2100)와 같고, 그 밖의 날짜는 이 서비스에서
+ * 뜻이 없다. 2026-10-15 전에는 검사가 없어 `asOf=+999999999-12-31` 같은 값이 날짜 계산의 DateTimeException이나
+ * PostgreSQL의 범위 오류로 500이 되었다.
+ */
 fun requireReasonableDate(date: java.time.LocalDate, name: String) {
     if (date.year !in 1900..2100) throw BadRequestException("'$name' must be between 1900-01-01 and 2100-12-31")
 }

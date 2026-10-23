@@ -8,6 +8,9 @@ package com.rideinsight.storage
 // 붙이지 않는다(Codex 2차 검토가 SQL 주입 경로 없음을 확인).
 // [연결] ActivityService, AthleteService, MetricsService, tools/ImportOpenData가 쓴다. 스키마는
 // src/main/resources/db/migration/V1__init.sql.
+// [시간대] 이 저장소의 쿼리는 시간대 이름을 받지 않는다(2026-10-24부터). 날짜 경계는 서비스가 java.time으로 계산한
+// 순간(OffsetDateTime)으로 받고, 활동에 현지 날짜를 매기는 일도 서비스가 한다. PostgreSQL의 `at time zone`은 Java와
+// 다르게 해석하는 이름이 있어서다(tssByStart 주석).
 
 import java.sql.ResultSet
 import java.time.OffsetDateTime
@@ -219,32 +222,42 @@ class ActivityRepository(private val jdbc: JdbcClient) {
             .list().toMap()
     }
 
-    // PMC 입력: 현지 날짜별 TSS 합. TSS가 없는 활동(FTP 미등록, 파워 없음)은 빠진다. 시작 시각을 at time zone
-    // <선수 시간대>로 바꾼 뒤 날짜로 잘라 DB 세션 시간대와 상관없이 같은 날짜가 나온다(2026-10-15 전에는 'UTC' 고정).
-    // 시간대 이름은 java.time.ZoneId가 받아들인 값만 오고(BadRequestException으로 검사), ?로 바인딩한다.
-    /** 두 날짜 사이(양 끝 포함)의 현지 날짜별 TSS 합. */
-    fun dailyTss(athleteId: UUID, from: java.time.LocalDate, to: java.time.LocalDate, zone: java.time.ZoneId): Map<java.time.LocalDate, Double> =
+    // PMC 입력: 기간 [from, to) 안에 시작한 활동 중 TSS가 있는 것(FTP 미등록·파워 없음 활동은 빠진다)의 (시작 시각, TSS)를
+    // 시작 시각 순으로 돌려준다. 현지 날짜로 묶어 더하는 일은 서비스(AthleteService.trainingLoad)가 java.time으로 한다.
+    // [왜 SQL에서 날짜로 묶지 않나] 2026-10-24 전에는 여기서 `(started_at at time zone ?)::date`로 날짜를 매겨 더했는데,
+    // PostgreSQL은 Java가 받아들인 시간대 이름을 다르게 읽는 경우가 있었다(TimeZoneTest, docs/ai-verification.md 2026-10-24).
+    // (1) tz 데이터베이스에 없는 고정 오프셋('+09:00'·'UTC+09:00'·'GMT+09:00', Java로는 모두 UTC+9)을 POSIX 규칙(+가
+    // 그리니치 서쪽)으로 읽어 UTC−9로 셌다. (2) 'EET'·'CET' 같은 이름은 서머타임 없는 고정 약어로 읽었다. (3) Java가 받는
+    // 옛 별칭 중 PostgreSQL 이미지가 모르는 이름('US/Eastern'·'ROK' 등)은 오류(500)였다. (1)·(2)는 같은 활동이 FTP
+    // 선택(MetricsService, Java)과 PMC(SQL)에서 서로 다른 날짜가 되는데도 오류 없이 응답돼 알아챌 수 없었다. 이제 이
+    // 저장소의 쿼리는 시간대 이름을 받지 않고, 경계는 서비스가 계산한 순간(OffsetDateTime)으로 바인딩하므로 DB가 시간대를
+    // 해석할 일이 없다.
+    /** 기간 [from, to) 안에 시작한 활동 중 TSS가 있는 것의 (시작 시각, TSS) 목록(시작 시각 순). */
+    fun tssByStart(athleteId: UUID, from: OffsetDateTime, to: OffsetDateTime): List<Pair<OffsetDateTime, Double>> =
         jdbc.sql(
             """
-            select (a.started_at at time zone ?)::date as day, sum(m.tss) as tss
+            select a.started_at, m.tss
             from activity a join activity_metrics m on m.activity_id = a.id
-            where a.athlete_id = ? and m.tss is not null
-              and (a.started_at at time zone ?)::date between ? and ?
-            group by day
+            where a.athlete_id = ? and m.tss is not null and a.started_at >= ? and a.started_at < ?
+            order by a.started_at
             """,
-        ).params(zone.id, athleteId, zone.id, from, to)
-            .query { rs, _ -> rs.getObject("day", java.time.LocalDate::class.java) to rs.getDouble("tss") }
-            .list().toMap()
+        ).params(athleteId, from, to)
+            .query { rs, _ -> rs.getObject("started_at", OffsetDateTime::class.java) to rs.getDouble("tss") }
+            .list()
 
     /** 기간 [from, to) 안에 시작한 파워 활동 수(FTP 추정 근거의 라이딩 수). */
     fun countPowerActivities(athleteId: UUID, from: OffsetDateTime, to: OffsetDateTime): Int =
         jdbc.sql("select count(*) from activity where athlete_id = ? and has_power and started_at >= ? and started_at < ?")
             .params(athleteId, from, to).query(Long::class.java).single().toInt()
 
-    /** 선수의 첫 활동 날짜(현지). 활동이 없으면 null. 훈련 부하 워밍업의 시작점이다. */
-    fun firstActivityDate(athleteId: UUID, zone: java.time.ZoneId): java.time.LocalDate? =
-        jdbc.sql("select min((started_at at time zone ?)::date) from activity where athlete_id = ?")
-            .params(zone.id, athleteId).query(java.time.LocalDate::class.java).optional().orElse(null)
+    // 훈련 부하 워밍업의 시작점. 현지 날짜로 바꾸는 일은 서비스가 java.time으로 한다(2026-10-24 전에는
+    // `min((started_at at time zone ?)::date)`로 SQL이 날짜를 셌다. 이유는 [tssByStart] 주석). 열을 그대로 min으로 읽으므로
+    // (athlete_id, started_at desc) 인덱스를 거꾸로 훑어 한 행만 읽는다(2026-10-24 PostgreSQL 16, 합성 데이터 선수 20명 ×
+    // 활동 516개로 EXPLAIN ANALYZE 확인: Index Only Scan Backward 1행. 날짜 식을 쓰던 전에는 그 선수의 활동 516행을 모두 읽었다).
+    /** 선수의 가장 이른 활동 시작 시각. 활동이 없으면 null. */
+    fun firstStartedAt(athleteId: UUID): OffsetDateTime? =
+        jdbc.sql("select min(started_at) from activity where athlete_id = ?").param(athleteId)
+            .query(OffsetDateTime::class.java).optional().orElse(null)
 
     // 기간 최대 파워 커브: 기간 [from, to) 안 활동들의 mmp jsonb를 jsonb_each로 (키, 값) 행으로 펼쳐 키별
     // 최댓값을 구한다. 값이 null인 구간은 jsonb_typeof = 'number' 조건으로 걸러진다. jsonb 숫자는 text를 거쳐

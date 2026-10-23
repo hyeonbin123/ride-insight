@@ -5,6 +5,10 @@ package com.rideinsight.service
 // [연결] AthleteController와 FtpEstimateService가 부른다. 저장은 AthleteRepository·ActivityRepository,
 // 재계산은 MetricsService, PMC 계산은 metrics.TrainingLoad가 한다. 날짜는 선수 시간대(기본 Asia/Seoul)의 현지
 // 날짜로 센다(2026-10-15 전에는 UTC). 조회 요청은 tz 파라미터로 시간대를 바꿔 볼 수 있다([zone]).
+// [시간대 해석은 Java 한 곳] 현지 날짜와 현지 0시 경계는 모두 이 서비스와 MetricsService가 java.time으로 계산하고, 저장소
+// 쿼리에는 계산한 순간(OffsetDateTime)만 넘긴다. 2026-10-24 전에는 PMC의 날짜 묶음과 워밍업 시작일만 SQL `at time zone`이
+// 셌는데, PostgreSQL이 고정 오프셋 이름 등을 Java와 다르게 읽어 PMC 날짜가 FTP 선택 날짜와 어긋날 수 있었다
+// (ActivityRepository.tssByStart 주석).
 
 import com.rideinsight.metrics.MeanMaximalPower
 import com.rideinsight.metrics.TrainingLoad
@@ -103,13 +107,33 @@ class AthleteService(
         // 부하는 지수 가중 평균이라 조회 시작일 전의 훈련이 남아 있어야 한다. CTL이 조회 시작일에 좌우되지
         // 않도록 선수의 첫 활동부터 조회 전날까지 먼저 계산(워밍업)해 그 마지막 값을 초기값으로 넘긴다.
         // 처음에는 120일만 워밍업해 CTL의 약 6%가 빠졌고, 조회 시작일에 따라 CTL이 최대 6% 달라졌다
-        // (2026-10-10 Codex 2차 검토 지적 4).
-        val firstDay = activities.firstActivityDate(id, zone)
+        // (2026-10-10 Codex 2차 검토 지적 4). 첫 활동의 현지 날짜도 Java가 센다(DB에서는 가장 이른 시작 시각만 읽는다).
+        val firstDay = activities.firstStartedAt(id)?.atZoneSameInstant(zone)?.toLocalDate()
         val warmFrom = if (firstDay != null && firstDay.isBefore(from)) firstDay else from
         // 날짜별 TSS 합은 워밍업 시작일부터 to까지 한 번에 읽는다.
-        val daily = activities.dailyTss(id, warmFrom, to, zone)
+        val daily = dailyTss(id, warmFrom, to, zone)
         val warm = if (warmFrom.isBefore(from)) TrainingLoad.series(warmFrom, from.minusDays(1), daily).lastOrNull() else null
         return TrainingLoad.series(from, to, daily, warm?.ctl ?: 0.0, warm?.atl ?: 0.0)
+    }
+
+    /**
+     * [from]~[to](양 끝 포함) 현지 날짜별 TSS 합(PMC 입력). DB에서는 그 날짜들에 해당하는 순간 범위 [from 현지 0시, to 다음
+     * 날 현지 0시)에 시작한 활동의 (시작 시각, TSS)만 읽고, 날짜는 Java가 `atZoneSameInstant(zone).toLocalDate()`로 매겨
+     * 더한다. 활동에 적용할 FTP를 고르는 날짜(MetricsService.compute)와 같은 식이라 한 활동의 FTP 날짜와 PMC 날짜가 어긋날 수
+     * 없다. 현지 0시는 `LocalDate.atStartOfDay(zone)`로 구한다: 서머타임 전환으로 0시가 없는 날은 그날의 첫 유효 시각이 되고,
+     * 23·25시간인 날도 그날에 속한 순간만 담긴다(TimeZoneTest의 Europe/Berlin 경계 테스트). 반열린 구간이라 다음 날 0시에
+     * 시작한 활동은 다음 날로 가며, 기간 파워 커브·창 안 라이딩 수와 같은 경계 규칙이다. 같은 날 TSS는 시작 시각 순으로
+     * Double로 더한다(2026-10-24 전에는 SQL의 sum(real)이 float4(유효 숫자 약 7자리)로 더해, 하루에 활동이 여럿이면 그
+     * 정밀도만큼 합이 조금 달랐다).
+     */
+    private fun dailyTss(id: UUID, from: LocalDate, to: LocalDate, zone: ZoneId): Map<LocalDate, Double> {
+        val start = from.atStartOfDay(zone).toOffsetDateTime()
+        val end = to.plusDays(1).atStartOfDay(zone).toOffsetDateTime()
+        val byDay = HashMap<LocalDate, Double>()
+        for ((startedAt, tss) in activities.tssByStart(id, start, end)) {
+            byDay.merge(startedAt.atZoneSameInstant(zone).toLocalDate(), tss, Double::plus)
+        }
+        return byDay
     }
 
     // FTP 추정 근거인 '창 안 파워 라이딩 수'. 기간은 [asOf 다음 날 현지 0시 − weeks주, asOf 다음 날 현지 0시)라
