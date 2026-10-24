@@ -66,8 +66,9 @@ class AthleteService(
     private fun zone(athlete: Athlete, tz: String?): ZoneId = tz?.let { parseTimeZone(it, "tz") } ?: ZoneId.of(athlete.timeZone)
 
     /**
-     * 선수의 시간대를 바꾸고 모든 활동의 지표를 다시 계산한다(활동의 현지 날짜가 바뀌면 적용할 FTP가 바뀔 수 있다).
-     * 선수 행을 잠가 업로드·FTP 변경과 겹치지 않게 한다. 정규화한 시간대 이름과 다시 계산한 활동 수를 돌려준다.
+     * 선수의 시간대를 바꾸고 모든 파워 활동의 IF·TSS를 다시 계산한다(활동의 현지 날짜가 바뀌면 적용할 FTP가 바뀔 수 있다.
+     * 재계산 방식은 MetricsService.recomputeFrom). 선수 행을 잠가 업로드·FTP 변경·삭제와 겹치지 않게 하고, 잠금을 상한 안에 못
+     * 얻으면 AthleteBusyException(409). 정규화한 시간대 이름과 다시 계산한 활동 수를 돌려준다.
      */
     @Transactional
     fun setTimeZone(id: UUID, timeZone: String): Pair<String, Int> {
@@ -83,9 +84,10 @@ class AthleteService(
         return athletes.thresholds(id)
     }
 
-    // FTP 변경: 선수 행을 잠근 뒤(같은 선수의 업로드와 겹치지 않게) 이력을 넣거나 같은 날짜 값을 덮어쓰고, 그
-    // 날짜 0시(선수 시간대의 현지 0시) 이후 시작한 활동의 지표를 다시 계산한다. 재계산은 활동 날짜마다 유효한 FTP를 다시
-    // 찾으므로, 더 뒤 날짜의 FTP가 있는 활동은 그 값이 그대로 쓰인다. 다시 계산한 활동 수를 돌려준다.
+    // FTP 변경: 선수 행을 잠근 뒤(같은 선수의 업로드·삭제와 겹치지 않게. 상한 안에 못 얻으면 AthleteBusyException → 409) 이력을
+    // 넣거나 같은 날짜 값을 덮어쓰고, 그 날짜 0시(선수 시간대의 현지 0시) 이후 시작한 파워 활동의 IF·TSS를 다시 계산한다
+    // (MetricsService.recomputeFrom: 샘플 없이, 적용 FTP가 바뀐 행만 씀). 재계산은 활동 날짜마다 유효한 FTP를 다시 찾으므로,
+    // 더 뒤 날짜의 FTP가 있는 활동은 그 값이 그대로 쓰인다. 다시 계산한 활동 수를 돌려준다.
     /** 어떤 날짜부터의 FTP를 정하고, 그 날짜 이후 활동의 TSS를 다시 계산한다. */
     @Transactional
     fun setThreshold(id: UUID, effectiveFrom: LocalDate, ftpWatts: Int): Int {

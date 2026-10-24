@@ -1,10 +1,11 @@
 package com.rideinsight.service
 
 // [파일 역할] 활동 하나의 지표(NP, IF, TSS, 평균·최대 파워, 일, 16구간 MMP)를 저장된 샘플로 계산해
-// activity_metrics에 쓰고, FTP가 바뀌면 영향받는 활동을 다시 계산하는 서비스다.
+// activity_metrics에 쓰고, FTP 이력이나 시간대가 바뀌면 영향받는 활동의 IF·TSS를 다시 계산하는 서비스다.
 // [설계 이유] 계산 자체는 Spring에 의존하지 않는 metrics 패키지의 순수 함수가 하고, 이 서비스는 '그 활동
 // 날짜에 유효한 FTP 찾기 → 순수 함수 호출 → 저장'만 맡는다. 그래서 업로드(ActivityService), FTP
-// 변경(AthleteService), OpenData 가져오기(ImportOpenData)가 같은 계산 경로를 쓴다.
+// 변경(AthleteService), OpenData 가져오기(ImportOpenData)가 같은 계산 경로를 쓴다. 재계산(recomputeFrom)은 FTP에 따라
+// 바뀌는 IF·TSS만 저장된 NP·샘플 수·기록 간격으로 다시 계산한다(2026-10-24. 그 전에는 샘플부터 모든 지표를 다시 계산했다).
 // [연결] 위 세 곳이 computeAndStore·recomputeFrom을 부르고, ActivityService가 rideSamples·parseMmp를 쓴다.
 // JSON 변환에는 Spring이 만든 JsonMapper(Jackson 3) 빈을 주입받아 쓴다.
 
@@ -15,6 +16,7 @@ import com.rideinsight.metrics.RecordingInterval
 import com.rideinsight.metrics.RideSamples
 import com.rideinsight.storage.ActivityRepository
 import com.rideinsight.storage.AthleteRepository
+import com.rideinsight.storage.IntensityUpdate
 import com.rideinsight.storage.MetricsRow
 import com.rideinsight.storage.SampleSeries
 import java.time.OffsetDateTime
@@ -116,19 +118,40 @@ class MetricsService(
     // 선수의 시간대. 선수가 없으면(호출 전에 확인하므로 실제로는 없음) 기본 시간대.
     private fun zoneOf(athleteId: UUID): ZoneId = ZoneId.of(athletes.find(athleteId)?.timeZone ?: DEFAULT_TIME_ZONE)
 
-    // from 이후 시작한 활동을 오래된 순으로 다시 계산한다. 파워가 없거나 샘플이 없는 활동은 건너뛰고, 다시
-    // 계산한 수를 돌려준다. 호출하는 AthleteService.setThreshold의 트랜잭션(선수 행 잠금) 안에서 돈다.
-    /** [from] 이후에 시작한 선수의 모든 활동을 다시 계산한다(FTP 변경 뒤). */
+    /**
+     * [from] 이후에 시작한 선수의 파워 활동(지표 행이 있는 활동)의 IF·TSS를 다시 계산한다(FTP 이력이나 시간대가 바뀐 뒤).
+     * 다시 계산한 활동 수를 돌려준다(값이 바뀐 행 수가 아니다. 적용 FTP가 그대로인 활동도 센다). 호출하는
+     * AthleteService.setThreshold·setTimeZone의 트랜잭션(선수 행 잠금) 안에서 돈다.
+     *
+     * 샘플은 읽지 않는다(2026-10-24). FTP는 [computeWithFtp]에서 IF·TSS 계산에만 쓰이므로 FTP가 바뀌어도 NP·MMP·곡선·평균·
+     * 최대·일은 그대로고, IF·TSS의 입력(NP, 샘플 수, 기록 간격)은 activity·activity_metrics 행에 이미 있다. 그 전에는 활동마다
+     * 샘플 행 전체를 읽어 모든 지표를 다시 계산해 덮어썼다: 활동 516개·샘플 284만 개인 선수의 시간대 변경이 선수 행 잠금을 쥔 채
+     * 8~9초 걸렸고(docs/ai-verification.md 2026-10-24), 그동안 같은 선수의 업로드는 UploadGate 허가를 쥔 채 잠금을 기다렸다.
+     * 적용할 FTP는 활동 시작 시각의 현지 날짜(선수 시간대, java.time)에 유효한 이력으로 [compute]와 같은 식이고, 이력은 한 번만
+     * 읽어 메모리에서 고른다. 적용 FTP가 저장된 ftp_used와 같은 활동은 쓰지 않고(값이 같다), 바뀐 행만 문장 하나로 갱신한다.
+     * 저장된 NP는 real(float4) 열이라 샘플로 계산한 Double NP와 유효 숫자 약 7자리에서 다를 수 있어, 다시 계산한 IF·TSS는
+     * 샘플부터 계산한 값과 상대 1e-7 수준으로 다를 수 있다(ApiIntegrationTest는 상대 1e-6으로 비교). metrics_version은 계산
+     * 정의가 같으므로 그대로다.
+     */
     fun recomputeFrom(athleteId: UUID, from: OffsetDateTime): Int {
-        var n = 0
-        val zone = zoneOf(athleteId) // 활동마다 다시 읽지 않도록 한 번만 읽는다
-        for (a in activities.listFrom(athleteId, from)) {
-            if (!a.hasPower) continue
-            val series = activities.samples(a.id) ?: continue
-            computeAndStore(a.id, athleteId, a.startedAt, series, true, zone)
-            n++
+        val zone = zoneOf(athleteId)
+        val thresholds = athletes.thresholds(athleteId) // 적용일 오름차순
+        val rows = activities.intensityInputsFrom(athleteId, from)
+        val changed = ArrayList<IntensityUpdate>()
+        for (r in rows) {
+            val date = r.startedAt.atZoneSameInstant(zone).toLocalDate()
+            // effective_from ≤ 현지 날짜인 이력 중 가장 최근 것(AthleteRepository.thresholdOn과 같은 규칙).
+            val ftp = thresholds.lastOrNull { !it.effectiveFrom.isAfter(date) }?.ftpWatts
+            if (ftp == r.ftpUsed) continue
+            val np = r.normalizedPower
+            val recInt = r.recIntSecs
+            // [computeWithFtp]와 같은 식. NP가 있으면 기록 간격도 있다(NP는 기록 간격이 있어야 계산된다).
+            val intensity = np?.let { PowerMetrics.intensityFactor(it, ftp?.toDouble()) }
+            val tss = if (np != null && recInt != null) PowerMetrics.trainingStressScore(np, r.sampleCount, recInt, ftp?.toDouble()) else null
+            changed += IntensityUpdate(r.activityId, ftp, intensity, tss)
         }
-        return n
+        activities.updateIntensity(changed)
+        return rows.size
     }
 
     // DB의 mmp jsonb 텍스트 → 구간 키별 Double?(null은 그 구간 값 없음). Jackson이 숫자를 Integer·Double

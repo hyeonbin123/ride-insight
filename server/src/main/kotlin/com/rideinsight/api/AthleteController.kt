@@ -57,8 +57,9 @@ class AthleteController(
         return AthleteResponse.from(athlete, threshold)
     }
 
-    // PUT /api/athletes/{id}/time-zone: 선수 시간대를 바꾸고 모든 활동의 지표를 다시 계산한다(활동의 현지 날짜가
-    // 바뀌면 적용할 FTP가 바뀔 수 있다). 모르는 시간대는 400.
+    // PUT /api/athletes/{id}/time-zone: 선수 시간대를 바꾸고 모든 파워 활동의 IF·TSS를 다시 계산한다(활동의 현지 날짜가
+    // 바뀌면 적용할 FTP가 바뀔 수 있다. 2026-10-24부터 샘플 없이 IF·TSS만, 적용 FTP가 바뀐 행만 쓴다). 모르는 시간대는 400,
+    // 같은 선수의 다른 쓰기 요청이 선수 행을 쥐고 있어 잠금 상한 안에 차례가 오지 않으면 409 athlete_busy.
     @PutMapping("/{id}/time-zone")
     fun setTimeZone(@PathVariable id: UUID, @RequestBody req: TimeZoneRequest): Map<String, Any> {
         val (zone, recomputed) = athletes.setTimeZone(id, req.timeZone)
@@ -71,7 +72,7 @@ class AthleteController(
 
     // PUT /api/athletes/{id}/threshold: effectiveFrom 날짜부터 적용할 FTP를 등록하고(같은 날짜가 있으면
     // 덮어씀), 그 날짜 이후 활동의 IF·TSS를 다시 계산한 개수를 recomputedActivities로 돌려준다(api.md: 그
-    // 날짜 이후 활동의 TSS를 다시 계산한다).
+    // 날짜 이후 활동의 TSS를 다시 계산한다). 선수 행 잠금을 상한 안에 못 얻으면 409 athlete_busy(시간대 변경과 같다).
     @PutMapping("/{id}/threshold")
     fun setThreshold(@PathVariable id: UUID, @Valid @RequestBody req: ThresholdRequest): Map<String, Any> {
         val recomputed = athletes.setThreshold(id, req.effectiveFrom, req.ftpWatts)
@@ -88,7 +89,9 @@ class AthleteController(
         // 업로드 상한이 10 MB라 파일 전체를 바이트 배열로 읽어 디코더에 넘긴다. 원래 파일 이름은 출처
         // 표시용으로 저장된다(200자까지). 디코딩·저장은 UploadGate가 허락한 동시 처리 수(기본 2) 안에서만 하고,
         // 바이트도 차례를 얻은 뒤에 읽는다(기다리는 동안은 multipart 임시 파일에만 있다). 30초 안에 차례가 오지
-        // 않으면 429(2026-10-15, 규칙 변경 12).
+        // 않으면 429(2026-10-15, 규칙 변경 12). 서비스는 디코딩을 마친 뒤에야 선수 행을 잠그고 저장 트랜잭션을 열며, 잠금을
+        // 상한(기본 5초) 안에 못 얻으면 409 athlete_busy로 허가를 바로 돌려준다(2026-10-24. 그 전에는 잠금을 먼저 잡고 디코딩해,
+        // 같은 선수의 재계산이 길면 업로드 두 건이 허가를 쥔 채 상한 없이 기다려 다른 선수의 업로드까지 429가 될 수 있었다).
         val stored = uploads.run { activities.ingestFit(id, file.bytes, file.originalFilename) }
         return ResponseEntity.created(URI.create("/api/activities/${stored.activity.id}")).body(ActivityResponse.from(stored))
     }

@@ -65,6 +65,22 @@ class MetricsRow(
     val curve: List<Pair<Int, Double>>? = null,
 )
 
+/**
+ * FTP·시간대 변경 뒤 IF·TSS만 다시 계산할 때 읽는 입력(활동 하나): 시작 시각(현지 날짜 → 적용할 FTP), 샘플 수와 기록
+ * 간격(TSS의 시간), 저장된 NP, 그리고 지금 저장된 ftp_used(적용 FTP가 바뀌었는지 비교). 샘플은 읽지 않는다.
+ */
+class IntensityInput(
+    val activityId: UUID,
+    val startedAt: OffsetDateTime,
+    val sampleCount: Int,
+    val recIntSecs: Double?,
+    val normalizedPower: Double?,
+    val ftpUsed: Int?,
+)
+
+/** 다시 계산한 활동 하나의 ftp_used·intensity_factor·tss(FTP가 없으면 IF·TSS는 null). */
+class IntensityUpdate(val activityId: UUID, val ftpUsed: Int?, val intensityFactor: Double?, val tss: Double?)
+
 // 같은 선수·같은 시작 시각의 활동이 이미 있을 때 던진다. API에서는 409, ImportOpenData에서는 건너뛴 수로
 // 센다.
 class DuplicateActivityException(message: String) : RuntimeException(message)
@@ -176,10 +192,52 @@ class ActivityRepository(private val jdbc: JdbcClient) {
             """,
         ).params(listOf(athleteId, before, before, limit)).query(::mapActivity).list()
 
-    /** 시작 시각이 [from] 이후(같은 시각 포함)인 활동을 오래된 순으로 돌려준다. FTP 변경 뒤 TSS 재계산 대상이다. */
-    fun listFrom(athleteId: UUID, from: OffsetDateTime): List<ActivityRow> =
-        jdbc.sql("select * from activity where athlete_id = ? and started_at >= ? order by started_at")
-            .params(athleteId, from).query(::mapActivity).list()
+    // IF·TSS 재계산 입력. 지표 행이 있는 활동만(= 파워가 있는 활동. 파워 없는 활동은 지표 행 자체가 없다) 활동 행과 지표 행을
+    // 조인해 한 번에 읽는다. 2026-10-24 전에는 활동 목록을 읽은 뒤 활동마다 샘플 행(배열 여섯 개)을 읽어 모든 지표를 다시
+    // 계산했다(MetricsService.recomputeFrom 주석).
+    /** 시작 시각이 [from] 이후(같은 시각 포함)인 선수의 파워 활동의 IF·TSS 재계산 입력, 시작 시각 순. */
+    fun intensityInputsFrom(athleteId: UUID, from: OffsetDateTime): List<IntensityInput> =
+        jdbc.sql(
+            """
+            select a.id, a.started_at, a.sample_count, a.rec_int_secs, m.normalized_power, m.ftp_used
+            from activity a join activity_metrics m on m.activity_id = a.id
+            where a.athlete_id = ? and a.started_at >= ?
+            order by a.started_at
+            """,
+        ).params(athleteId, from).query { rs, _ ->
+            IntensityInput(
+                activityId = rs.getObject("id", UUID::class.java),
+                startedAt = rs.getObject("started_at", OffsetDateTime::class.java),
+                sampleCount = rs.getInt("sample_count"),
+                recIntSecs = rs.doubleOrNull("rec_int_secs"),
+                normalizedPower = rs.doubleOrNull("normalized_power"),
+                ftpUsed = rs.intOrNull("ftp_used"),
+            )
+        }.list()
+
+    // 여러 지표 행의 ftp_used·intensity_factor·tss·computed_at을 문장 하나로 갱신한다. 행 수만큼 update를 보내는 대신 네 열을
+    // 배열 리터럴로 묶어 unnest로 펼친 가상 테이블과 조인한다(샘플 저장과 같은 PgArrays 방식: 숫자·NULL만 든 리터럴을 ?로
+    // 바인딩하고 SQL에서 형 변환). NP·MMP·곡선·평균·최대·일과 metrics_version은 FTP와 무관해 건드리지 않는다. 바뀐 행 수를
+    // 돌려준다(빈 목록이면 쿼리 없이 0).
+    /** [rows]의 ftp_used·intensity_factor·tss를 갱신하고 computed_at을 now()로 바꾼다. */
+    fun updateIntensity(rows: List<IntensityUpdate>): Int {
+        if (rows.isEmpty()) return 0
+        return jdbc.sql(
+            """
+            update activity_metrics m
+            set ftp_used = v.ftp_used, intensity_factor = v.intensity_factor, tss = v.tss, computed_at = now()
+            from unnest(?::uuid[], ?::integer[], ?::real[], ?::real[]) as v(activity_id, ftp_used, intensity_factor, tss)
+            where m.activity_id = v.activity_id
+            """,
+        ).params(
+            listOf(
+                rows.joinToString(",", "{", "}") { it.activityId.toString() }, // DB에서 읽은 UUID라 다른 문자가 섞이지 않는다
+                PgArrays.literal(rows.map { it.ftpUsed }),
+                PgArrays.literal(rows.map { it.intensityFactor }),
+                PgArrays.literal(rows.map { it.tss }),
+            ),
+        ).update()
+    }
 
     // 샘플 행을 읽어 SampleSeries로. 배열은 텍스트('{1,2,NULL}')로 받아 원시 배열로 직접 풀고, SampleSeries는 그
     // 배열 위의 목록 보기로 만든다. 처음에는 드라이버의 java.sql.Array로 읽어 원소마다 Float·Short 객체가 생기고

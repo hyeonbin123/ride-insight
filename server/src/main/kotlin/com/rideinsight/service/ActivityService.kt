@@ -2,9 +2,10 @@ package com.rideinsight.service
 
 // [파일 역할] 활동(라이딩)의 수집과 조회를 맡는 서비스다. FIT 업로드를 디코딩·검사해 활동·샘플·지표를
 // 저장하고(ingestFit), 상세·목록·시계열·활동 파워 커브·삭제를 처리한다.
-// [설계 이유] 업로드 한 건은 '선수 행 잠금 → 디코딩 → 종목·시각 검사 → 활동·샘플 저장 → 지표 계산·저장'을 한
-// 트랜잭션으로 묶어, 중간에 실패하면 아무것도 남지 않게 한다. 선수 행 잠금은 같은 선수의 FTP 변경과 업로드가
-// 겹쳐 옛 FTP로 계산된 지표가 남는 것을 막는다(Codex 2차 검토 지적 2).
+// [설계 이유] 업로드 한 건은 '디코딩 → 종목·시각 검사 → 저장할 시계열 만들기'(prepare, DB 없음)를 먼저 하고, '선수 행 잠금 →
+// 활동·샘플 저장 → 지표 계산·저장'(store)만 한 트랜잭션으로 묶어 중간에 실패하면 아무것도 남지 않게 한다. 선수 행 잠금은
+// 같은 선수의 FTP 변경과 업로드가 겹쳐 옛 FTP로 계산된 지표가 남는 것을 막는다(Codex 2차 검토 지적 2). 지표 계산·저장이
+// 잠금 뒤에 있으므로 이 보장은 디코딩을 잠금 밖으로 옮긴 뒤(2026-10-24)에도 그대로다. 삭제도 같은 잠금 안에서 한다.
 // [연결] AthleteController(업로드·목록)와 ActivityController(상세·샘플·커브·삭제)가 부른다. 저장은
 // ActivityRepository·AthleteRepository, 지표 계산은 MetricsService가 한다.
 
@@ -23,7 +24,9 @@ import java.time.ZoneOffset
 import java.util.UUID
 import kotlin.math.abs
 import org.springframework.stereotype.Service
+import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionTemplate
 
 // 활동 행과 그 지표(파워가 없으면 null)를 묶은 서비스 결과. 컨트롤러가 ActivityResponse로 바꾼다.
 class StoredActivity(val activity: ActivityRow, val metrics: MetricsRow?)
@@ -46,7 +49,13 @@ class ActivityService(
     private val athletes: AthleteRepository,
     private val activities: ActivityRepository,
     private val metrics: MetricsService,
+    transactionManager: PlatformTransactionManager,
 ) {
+    // 업로드 저장 트랜잭션의 경계([ingestFit]의 store 부분). @Transactional 대신 TransactionTemplate인 이유: 디코딩은 트랜잭션
+    // 밖에서 하고 저장만 묶어야 하는데, 같은 빈 안에서 @Transactional 메서드를 부르면 Spring 프록시를 거치지 않아 트랜잭션이
+    // 열리지 않기 때문이다. 경계를 코드에 드러내 그 함정을 피한다.
+    private val transactions = TransactionTemplate(transactionManager)
+
     companion object {
         // 거절할 종목 코드: 1 running, 5 swimming, 11 walking, 17 hiking. 그 밖의 종목과 종목 미상은
         // 저장한다(블랙리스트 방식, docs/api.md; Codex 2차 검토 지적 15로 문서를 이 정책에 맞춤).
@@ -132,16 +141,29 @@ class ActivityService(
         }
     }
 
-    // FIT 업로드 처리. 입력: 선수 id, 파일 바이트, 원래 파일 이름. 출력: 저장된 활동과 지표. 예외: 없는 선수
-    // 404, 디코딩 실패 400, 처리 상한 초과 413, 거절 종목 422, record 없음·시각 역행 400, 같은 시작 시각 409.
-    // 예외가 나면 @Transactional이 그때까지 쓴 것을 모두 롤백한다. DB가 필요 없는 앞부분(디코딩부터 저장할 시계열
-    // 만들기까지)은 [prepare]에 있다.
-    @Transactional
+    /**
+     * FIT 업로드 처리. 입력: 선수 id, 파일 바이트, 원래 파일 이름. 출력: 저장된 활동과 지표. 예외: 없는 선수 404, 디코딩
+     * 실패 400, 처리 상한 초과 413, 거절 종목 422, record 없음·시각 역행 400, 같은 시작 시각 409 duplicate_activity, 선수 행
+     * 잠금을 상한 안에 못 얻음 409 athlete_busy. 트랜잭션 안에서 예외가 나면 그때까지 쓴 것을 모두 롤백한다.
+     *
+     * 디코딩([prepare])은 트랜잭션·선수 행 잠금 밖에서 하고, 트랜잭션([store])에는 잠금 → 활동·샘플 insert → 지표 계산·저장만
+     * 담는다(2026-10-24). 그 전에는 트랜잭션 첫 문장으로 선수 행을 잠근 뒤 디코딩했다: 같은 선수의 FTP 변경은 업로드의 디코딩
+     * 시간만큼 기다렸고, 반대로 잠금을 기다리는 업로드는 UploadGate 허가(동시 2개)와 DB 커넥션을 쥔 채 상한 없이 기다려 다른
+     * 모든 선수의 업로드를 429로 만들 수 있었다. 컨트롤러가 UploadGate 안에서 부르므로 디코딩·저장의 동시 수(힙 상한)는 그대로다.
+     */
     fun ingestFit(athleteId: UUID, bytes: ByteArray, fileName: String?): StoredActivity {
-        // 선수 행을 select ... for update로 잠가 같은 선수의 업로드·FTP 변경을 한 번에 하나씩 처리한다.
-        // 선수가 없으면 404.
-        if (!athletes.lock(athleteId)) throw NotFoundException("athlete $athleteId not found")
+        // 없는 선수는 디코딩 전에 404(그 전에는 트랜잭션 첫 문장의 잠금이 이 역할을 했다). 선수를 지우는 API는 없어 이 확인이
+        // 뒤에 어긋날 일은 없고, store의 잠금도 선수 없음을 다시 404로 본다.
+        if (!athletes.exists(athleteId)) throw NotFoundException("athlete $athleteId not found")
         val p = prepare(bytes)
+        return transactions.execute { store(athleteId, p, fileName) }
+    }
+
+    // 트랜잭션 안: 선수 행을 select ... for update로 잠가 같은 선수의 업로드·FTP 변경·삭제를 한 번에 하나씩 처리한다(상한 안에
+    // 못 얻으면 AthleteBusyException → 409). 선수가 없으면 404. 지표는 잠금 뒤에 계산해 저장하므로 FTP 변경과 겹쳐도 옛 FTP로
+    // 계산된 지표가 남지 않는다.
+    private fun store(athleteId: UUID, p: PreparedActivity, fileName: String?): StoredActivity {
+        if (!athletes.lock(athleteId)) throw NotFoundException("athlete $athleteId not found")
         val id = activities.insert(
             ActivityRepository.NewActivity(
                 athleteId = athleteId,
@@ -204,8 +226,17 @@ class ActivityService(
         return PowerCurve.points(MetricsService.rideSamples(series)) to stored
     }
 
-    // 삭제. 샘플·지표는 DB cascade로 함께 지워진다. 없으면 404.
+    /**
+     * 삭제. 활동의 선수 행을 먼저 잠가 같은 선수의 업로드 저장·재계산·다른 삭제와 한 줄로 세운다(2026-10-24. 그 전에는 잠금
+     * 없이 바로 지워, FTP·시간대 변경의 재계산이 활동 목록을 읽고 지표를 쓰는 사이에 지워지면 지표 upsert가 FK 위반으로 실패해
+     * 그 요청이 500으로 끝났다. 동시 요청 테스트로 재현했다). 잠금을 상한 안에 못 얻으면 AthleteBusyException(409). 샘플·지표는
+     * DB cascade로 함께 지워진다. 없으면(잠금을 기다리는 사이 다른 요청이 지운 경우 포함) 404. @Transactional이 잠금을
+     * 트랜잭션 끝까지 유지한다(ActivityController가 부르므로 프록시를 거친다).
+     */
+    @Transactional
     fun delete(id: UUID) {
+        val a = activities.find(id) ?: throw NotFoundException("activity $id not found")
+        if (!athletes.lock(a.athleteId)) throw NotFoundException("activity $id not found")
         if (!activities.delete(id)) throw NotFoundException("activity $id not found")
     }
 

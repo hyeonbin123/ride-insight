@@ -18,6 +18,7 @@ import com.rideinsight.service.InvalidActivityException
 import com.rideinsight.service.NotFoundException
 import com.rideinsight.service.TooManyUploadsException
 import com.rideinsight.service.UnsupportedSportException
+import com.rideinsight.storage.AthleteBusyException
 import com.rideinsight.storage.DuplicateActivityException
 // 아래는 Spring MVC·멀티파트가 요청을 해석하는 단계에서 던지는 예외들이다: 본문 파싱 실패, 메서드·미디어 타입
 // 불일치, 요청 파라미터·파트 누락, 경로 변수 타입 불일치, 경로 없음, 업로드 크기 초과. 각각 아래 처리기에서
@@ -82,6 +83,16 @@ class ApiExceptionHandler {
     // unique(athlete_id, started_at) 위반을 ActivityRepository가 이 예외로 바꿔 던진다.
     @ExceptionHandler(DuplicateActivityException::class)
     fun duplicate(e: DuplicateActivityException) = respond(HttpStatus.CONFLICT, "duplicate_activity", e.message ?: "")
+
+    // 같은 선수의 다른 쓰기 요청(업로드 저장, FTP·시간대 변경, 삭제)이 선수 행을 잡고 있어 잠금 대기 상한(기본 5초) 안에
+    // 차례가 오지 않음 → 409 athlete_busy와 Retry-After 헤더(초). 그 선수의 상태(다른 요청이 고치는 중)와 충돌한 것이라 409이고,
+    // 같은 코드의 duplicate_activity와는 error 값으로 구분한다. 서버 전체의 동시 업로드 수가 찬 429와 달리 선수 하나에
+    // 한정된다(2026-10-24, storage/AthleteRepository.lock).
+    @ExceptionHandler(AthleteBusyException::class)
+    fun athleteBusy(e: AthleteBusyException): ResponseEntity<ErrorResponse> =
+        ResponseEntity.status(HttpStatus.CONFLICT)
+            .header(HttpHeaders.RETRY_AFTER, e.retryAfterSeconds.toString())
+            .body(ErrorResponse("athlete_busy", e.message ?: "athlete is busy"))
 
     // 동시에 처리하는 업로드가 꽉 차 대기 상한(기본 30초) 안에 차례가 오지 않음 → 429 too_many_uploads와
     // Retry-After 헤더(초). 서버 오류가 아니라 잠시 뒤 다시 보내면 되는 상태라 4xx다(2026-10-15, 규칙 변경 12,

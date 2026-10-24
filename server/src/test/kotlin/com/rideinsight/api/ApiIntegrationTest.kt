@@ -20,6 +20,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import tools.jackson.databind.JsonNode
 
 /** PostgreSQL 컨테이너를 상대로 docs/api.md의 내용을 처음부터 끝까지(end-to-end) 확인한다. */
 class ApiIntegrationTest : ApiTestBase() {
@@ -226,6 +227,62 @@ class ApiIntegrationTest : ApiTestBase() {
         assertEquals(204, delete("/api/activities/$activityId").status)
         assertEquals(404, get("/api/activities/$activityId").status)
         assertEquals(404, delete("/api/activities/$activityId").status)
+    }
+
+    // 2026-10-24: FTP·시간대 변경 뒤의 재계산은 저장된 NP·샘플 수·기록 간격으로 IF·TSS만 다시 계산하고 적용 FTP가 바뀐 행만
+    // 쓴다(그 전에는 활동마다 샘플 전체를 다시 읽어 NP·MMP·곡선까지 모두 다시 계산해 덮어썼다). 결과 값은 같아야 하므로 이
+    // 테스트는 고치기 전 코드에서도 통과하는 동치 검사다: 변경 전후의 목록에서 NP·MMP는 그대로이고, ftpUsed는 활동의 현지
+    // 날짜에 유효한 FTP, IF·TSS는 이전 값에 FTP 비율을 곱한 기대값(IF ∝ 1/FTP, TSS ∝ 1/FTP²)과 상대 1e-6 안이어야 한다.
+    // IF·TSS·NP는 real(float4) 열이라 절대 오차가 아니라 상대 오차로 비교한다(float4 유효 숫자 약 7자리). recomputedActivities는
+    // '다시 계산한 활동 수'라 적용 FTP가 그대로인 활동도 센다.
+    @Test
+    fun `threshold and time zone changes recompute only IF and TSS and leave NP and MMP untouched`() {
+        val id = createAthlete(ftp = 300)
+        // 2026-02-10~13 매일 01:00Z(서울 10:00, 선수 기본 시간대 Asia/Seoul)에 시작하는 30분 라이딩 4개, 파워는 서로 다르게.
+        val first = Instant.parse("2026-02-10T01:00:00Z").epochSecond
+        val ids = listOf(200, 250, 300, 220).mapIndexed { day, power ->
+            val r = uploadBytes(id, "ride-$day.fit", FitWriter.ride(1_800, power = power, startUnix = first + day * 86_400L).build())
+            assertEquals(201, r.status, r.body.toString())
+            r.body!!.path("id").asString()
+        }
+        fun metricsById(): Map<String, JsonNode> =
+            get("/api/athletes/$id/activities?limit=200").also { assertEquals(200, it.status) }.body!!.path("items")
+                .associate { it.path("id").asString() to it.path("metrics") }
+        fun assertClose(expected: Double, actual: Double, what: String) =
+            assertTrue(abs(actual - expected) <= 1e-6 * abs(expected), "$what: expected $expected, got $actual")
+        // 적용 FTP가 oldFtp → newFtp로 바뀐 활동: NP·MMP 그대로, IF·TSS는 비율대로.
+        fun assertRescaled(before: JsonNode, after: JsonNode, oldFtp: Int, newFtp: Int, what: String) {
+            assertEquals(oldFtp, before.path("ftpUsed").asInt(), what)
+            assertEquals(newFtp, after.path("ftpUsed").asInt(), what)
+            assertEquals(before.path("normalizedPower"), after.path("normalizedPower"), "$what normalizedPower")
+            assertEquals(before.path("mmp"), after.path("mmp"), "$what mmp")
+            val ratio = oldFtp.toDouble() / newFtp
+            assertClose(before.path("intensityFactor").asDouble() * ratio, after.path("intensityFactor").asDouble(), "$what intensityFactor")
+            assertClose(before.path("tss").asDouble() * ratio * ratio, after.path("tss").asDouble(), "$what tss")
+        }
+
+        val before = metricsById()
+        assertEquals(4, before.size)
+        // 02-12부터 FTP 240: 서울 날짜 02-12·02-13의 라이딩 두 개만 다시 계산되고 바뀐다. 02-10·02-11은 그대로다.
+        val set = put("/api/athletes/$id/threshold", """{"effectiveFrom":"2026-02-12","ftpWatts":240}""")
+        assertEquals(200, set.status, set.body.toString())
+        assertEquals(2, set.body!!.path("recomputedActivities").asInt())
+        val afterThreshold = metricsById()
+        for (i in 0..1) assertEquals(before.getValue(ids[i]), afterThreshold.getValue(ids[i]), "ride $i must be untouched")
+        for (i in 2..3) assertRescaled(before.getValue(ids[i]), afterThreshold.getValue(ids[i]), 300, 240, "ride $i after threshold")
+
+        // 시간대를 UTC−12(Etc/GMT+12, tz 데이터베이스의 Etc 이름은 부호가 반대)로 바꾸면 01:00Z는 전날 13:00이다: 02-12 01:00Z
+        // 라이딩은 현지 02-11이 되어 FTP 300으로 돌아가고, 02-13 01:00Z 라이딩은 현지 02-12라 240 그대로다. 모든 파워 활동이
+        // 다시 계산되므로 recomputedActivities는 4다.
+        val zone = put("/api/athletes/$id/time-zone", """{"timeZone":"Etc/GMT+12"}""")
+        assertEquals(200, zone.status, zone.body.toString())
+        assertEquals("Etc/GMT+12", zone.body!!.path("timeZone").asString())
+        assertEquals(4, zone.body!!.path("recomputedActivities").asInt())
+        val afterZone = metricsById()
+        for (i in 0..1) assertEquals(before.getValue(ids[i]), afterZone.getValue(ids[i]), "ride $i must be untouched")
+        assertRescaled(afterThreshold.getValue(ids[2]), afterZone.getValue(ids[2]), 240, 300, "ride 2 after zone change")
+        assertRescaled(before.getValue(ids[2]), afterZone.getValue(ids[2]), 300, 300, "ride 2 back to its original FTP")
+        assertEquals(afterThreshold.getValue(ids[3]), afterZone.getValue(ids[3]), "ride 3 keeps FTP 240")
     }
 
     // 측정 조건 안에서만 오차 안내(2026-10-24, docs/experiments.md 규칙 변경 14): 3단계 오차(dev 31 W·봉인 29 W·편향 −17 W)는
