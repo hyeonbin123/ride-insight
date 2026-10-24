@@ -25,10 +25,22 @@ export function formatNumber(v: number | undefined | null, digits = 1): string {
   return v == null || !Number.isFinite(v) ? "-" : v.toFixed(digits);
 }
 
-// 서버의 ISO 시각을 브라우저의 지역 시간대·언어 형식으로 바꾼다. 해석할 수 없는 문자열은 그대로 보여 준다.
-export function formatDate(iso: string): string {
+// 서버의 ISO 시각을 사람이 읽는 시각으로 바꾼다. 형식은 브라우저의 언어 설정(toLocaleString)을 따르고, 시간대는 timeZone을
+// 주면 그 시간대(선수 시간대), 없으면 브라우저 시간대다. 서버가 2026-10-15부터 PMC 날짜·FTP 적용일·기준일을 선수 시간대로
+// 세므로 목록·상세의 시작 시각도 같은 시간대로 보여야 PMC의 날짜와 맞는다(2026-10-24, 그 전에는 브라우저 시간대만 썼다).
+// 브라우저가 모르는 시간대 이름(예: Java가 정규화해 저장하는 'UTC+09:00')은 RangeError가 나므로 브라우저 시간대로 대신한다.
+// 해석할 수 없는 문자열은 그대로 보여 준다.
+export function formatDate(iso: string, timeZone?: string): string {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+  if (Number.isNaN(d.getTime())) return iso;
+  if (timeZone) {
+    try {
+      return d.toLocaleString(undefined, { timeZone });
+    } catch {
+      // 모르는 시간대 이름: 아래에서 브라우저 시간대로 표시한다
+    }
+  }
+  return d.toLocaleString();
 }
 
 /** MMP 키(GoldenCheetah 이름)에서 '_critical_power'를 떼어 짧은 구간 이름만 남긴다. 예: "20m_critical_power" -> "20m". */
@@ -118,14 +130,27 @@ const ERROR_TEXT: Record<string, string> = {
   duplicate_activity: "같은 시작 시각의 라이딩이 이미 있습니다",
   file_too_large: "파일이 10 MB를 넘습니다",
   fit_limit_exceeded: "파일이 처리 한도(기록 50만 개)를 넘습니다",
+  // 2026-10-24 추가: 둘 다 잠시 뒤 같은 요청을 다시 보내면 되는 응답이라 describeError가 뒤에 Retry-After 초를 덧붙인다.
+  too_many_uploads: "서버가 다른 업로드를 처리하는 중입니다",
+  athlete_busy: "이 선수의 다른 요청(업로드·FTP·시간대 변경·삭제)이 처리 중입니다",
   internal: "서버 오류가 났습니다",
 };
 
-// 오류 객체 → 화면 문장. code·message가 있는 서버 오류(ApiRequestError)면 한국어 설명을 앞에 붙인다.
+// 잠시 뒤 같은 요청을 다시 보내면 되는 오류 코드. 서버는 이 둘에 Retry-After 헤더(초)를 붙인다(docs/api.md): 429
+// too_many_uploads는 서버 전체의 동시 업로드 수가 차서, 409 athlete_busy는 같은 선수의 다른 쓰기 요청이 선수 행 잠금을 쥐고
+// 있어서다. 헤더를 못 받았어도(이전 서버, 헤더를 지우는 프록시) 이 코드면 '잠시 뒤'라고 적는다.
+const RETRYABLE = new Set(["too_many_uploads", "athlete_busy"]);
+
+// 오류 객체 → 화면 문장. code·message가 있는 서버 오류(ApiRequestError)면 한국어 설명을 앞에 붙이고, retryAfterSeconds(Retry-After
+// 헤더, 2026-10-24)가 있으면 'N초 뒤 다시 시도하세요'를, 없어도 다시 보내면 되는 코드면 '잠시 뒤 다시 시도하세요'를 덧붙인다.
+// 모르는 코드는 '코드: 메시지', 그 밖의 예외(네트워크 오류 등)는 메시지만.
 export function describeError(e: unknown): string {
   if (e && typeof e === "object" && "code" in e && "message" in e) {
-    const { code, message } = e as { code: string; message: string };
-    const text = ERROR_TEXT[code];
+    const { code, message, retryAfterSeconds } = e as { code: string; message: string; retryAfterSeconds?: number | null };
+    let wait = "";
+    if (retryAfterSeconds != null && retryAfterSeconds > 0) wait = `${retryAfterSeconds}초 뒤 다시 시도하세요`;
+    else if (RETRYABLE.has(code)) wait = "잠시 뒤 다시 시도하세요";
+    const text = [ERROR_TEXT[code], wait].filter(Boolean).join(". ");
     return text ? `${text} (${code}: ${message})` : `${code}: ${message}`;
   }
   return e instanceof Error ? e.message : String(e);

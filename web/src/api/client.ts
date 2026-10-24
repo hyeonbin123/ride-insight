@@ -20,19 +20,34 @@ import type {
 // ApiExceptionHandler) status(HTTP 상태), code(error 값), message를 함께 보관한다. 화면은 instanceof로 구분해
 // '422 unsupported_sport: ...'처럼 원인을 그대로 보여 준다. 본문이 JSON이 아니면 code는 http_error, 메시지는
 // 상태 코드로 채운다.
+// retryAfterSeconds(2026-10-24 추가): 응답의 Retry-After 헤더(초). 서버는 잠시 뒤 같은 요청을 다시 보내면 되는
+// 429 too_many_uploads(서버 전체 동시 업로드 상한)와 409 athlete_busy(같은 선수의 다른 쓰기 요청이 선수 행 잠금을
+// 쥠)에만 붙인다. 헤더가 없으면 null. 화면(format.ts의 describeError)은 이 값으로 '5초 뒤 다시 시도하세요'라고
+// 적는다. 자동 재시도는 하지 않는다: 화면은 파일을 순서대로 올려 혼자서는 두 응답이 드물고, 사용자가 그 파일을 다시
+// 고르는 쪽이 단순하다.
 export class ApiRequestError extends Error {
   readonly status: number;
   readonly code: string;
+  readonly retryAfterSeconds: number | null;
 
-  constructor(status: number, body: ApiError | null) {
+  constructor(status: number, body: ApiError | null, retryAfterSeconds: number | null = null) {
     super(body?.message ?? `request failed with status ${status}`);
     this.status = status;
     this.code = body?.error ?? "http_error";
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
+// Retry-After 헤더 값 → 초. 서버는 초(음이 아닌 정수)만 보낸다(ApiExceptionHandler의 athleteBusy·tooManyUploads).
+// 그 밖의 값(헤더 없음, 빈 문자열, 음수, RFC 9110이 허용하는 HTTP 날짜 형식)은 null로 두어 화면이 '잠시 뒤'라고
+// 적게 한다. 날짜 형식은 서버가 보내지 않고 nginx도 이 헤더를 바꾸지 않으므로 해석하지 않는다. 앞뒤 공백은 무시한다.
+export function parseRetryAfter(value: string | null): number | null {
+  const v = value?.trim() ?? "";
+  return /^\d+$/.test(v) ? Number(v) : null;
+}
+
 // 실패 응답의 본문을 JSON으로 읽어 ApiRequestError로 바꾼다. 프록시 오류 페이지(HTML)처럼 JSON이 아닌
-// 본문이면 파싱 예외를 삼키고 본문 없이 만든다.
+// 본문이면 파싱 예외를 삼키고 본문 없이 만든다. Retry-After 헤더가 있으면 초로 읽어 함께 담는다.
 async function parseError(res: Response): Promise<ApiRequestError> {
   let body: ApiError | null = null;
   try {
@@ -40,7 +55,7 @@ async function parseError(res: Response): Promise<ApiRequestError> {
   } catch {
     body = null;
   }
-  return new ApiRequestError(res.status, body);
+  return new ApiRequestError(res.status, body, parseRetryAfter(res.headers.get("Retry-After")));
 }
 
 // 공통 요청 함수. 2xx가 아니면 ApiRequestError를 던지고(React Query가 isError·error로 받는다), 204(본문 없음,
@@ -62,8 +77,10 @@ function json(method: string, body: unknown): RequestInit {
 // - createAthlete / getAthlete: 선수 생성(POST /api/athletes), 조회(현재 FTP 포함)
 // - setThreshold: FTP 등록(PUT .../threshold). 서버가 그 날짜 이후 활동의 IF·TSS를 다시 계산하고
 //   개수(recomputedActivities)를 돌려준다
-// - setTimeZone: 선수 시간대 변경(PUT .../time-zone). 서버가 모든 활동의 지표를 다시 계산한다
-// - uploadActivity: FIT 업로드(multipart의 file 파트)
+// - setTimeZone: 선수 시간대 변경(PUT .../time-zone). 서버가 모든 활동의 IF·TSS를 다시 계산한다
+// - uploadActivity: FIT 업로드(multipart의 file 파트). 서버 전체의 동시 처리 수가 차면 429 too_many_uploads.
+//   쓰기 요청(업로드·setThreshold·setTimeZone·deleteActivity)은 같은 선수의 다른 쓰기가 잠금을 쥐고 있으면
+//   409 athlete_busy. 둘 다 Retry-After(초)가 붙고 ApiRequestError.retryAfterSeconds로 읽힌다
 // - listActivities: 최신순 목록, before 커서 페이지네이션
 // - getActivity / getSamples / getActivityPowerCurve / deleteActivity: 활동 상세, 시계열, 파워 커브, 삭제
 // - getAthletePowerCurve / getFtpEstimate: 기간(weeks) 최고 파워 커브와 FTP 추정. asOf(기준일)를 주면

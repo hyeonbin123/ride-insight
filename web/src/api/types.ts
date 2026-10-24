@@ -52,9 +52,11 @@ export interface Metrics {
   mmp: Record<string, number | null>;
 }
 
-// 활동 요약. recIntSecs는 최빈 간격으로 추정한 기록 간격(초), intervalShare는 그 간격의 비율(0.9 미만이면
-// 화면이 '타임스탬프 흔들림'으로 표시). crcValid=false는 CRC가 틀렸지만 저장된 FIT(거절하지 않고 표시).
-// hasPower가 false면 metrics가 없다. device는 FIT file_id의 제조사·제품 번호(숫자 코드).
+// 활동 요약. startedAt은 UTC 시각(ISO)이고 화면은 소유 선수의 timeZone으로 바꿔 보여 준다(format.ts의 formatDate·dateIn).
+// recIntSecs는 최빈 간격으로 추정한 기록 간격(초. DB의 real 열이라 1.26이 1.2599999904632568처럼 올 수 있어 화면이 소수
+// 둘째 자리로 반올림한다), intervalShare는 그 간격의 비율(0.9 미만이면 화면이 '타임스탬프 흔들림'으로 표시). crcValid=false는
+// CRC가 틀렸지만 저장된 FIT(거절하지 않고 표시). hasPower가 false면 metrics가 없다. device는 FIT file_id의 제조사·제품
+// 번호(숫자 코드).
 export interface Activity {
   id: string;
   athleteId: string;
@@ -106,7 +108,7 @@ export interface PowerCurve {
 }
 
 // PMC 하루치: 그날 TSS 합, CTL(42일 지수 가중 평균, 체력), ATL(7일, 피로), TSB(어제 CTL − 어제 ATL, 컨디션).
-// date는 UTC 날짜(yyyy-MM-dd).
+// date는 선수 시간대(Athlete.timeZone)의 현지 날짜(yyyy-MM-dd). 2026-10-15 전에는 UTC 날짜였다(docs/api.md 날짜 기준).
 export interface TrainingLoadDay {
   date: string;
   tss: number;

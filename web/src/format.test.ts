@@ -3,7 +3,7 @@
 // 전체가 달라진다.
 
 import { describe, expect, it } from "vitest";
-import { dateIn, describeError, formatDuration, formatWatts, ftpEstimateNote, isoDate, secsLabel, windowLabel } from "./format";
+import { dateIn, describeError, formatDate, formatDuration, formatWatts, ftpEstimateNote, isoDate, secsLabel, windowLabel } from "./format";
 
 describe("format helpers", () => {
   // 1시간 미만은 m:ss, 이상은 h:mm:ss, 소수 초는 반올림, null은 '-'.
@@ -34,6 +34,41 @@ describe("format helpers", () => {
     expect(dateIn(ride, "UTC")).toBe("2026-10-14");
     expect(dateIn(ride)).toBe(isoDate(ride));
     expect(dateIn(ride, "Mars/Olympus")).toBe("2026-10-14");
+  });
+
+  // 선수 시간대 표시(2026-10-24): formatDate에 시간대를 주면 그 시간대의 현지 시각으로, 없으면 브라우저 시간대로 보여 준다.
+  // 서버가 PMC 날짜·FTP 적용일·기준일을 선수 시간대로 세므로 목록·상세의 시작 시각도 같은 시간대로 보여야 PMC의 날짜와
+  // 맞는다. 브라우저가 모르는 시간대 이름이면 브라우저 시간대로 대신하고, 해석할 수 없는 문자열은 그대로 돌려준다.
+  // 형식은 브라우저 언어(toLocaleString)에 따르므로 같은 함수의 결과와 비교한다.
+  it("formats dates in the athlete's time zone when one is given", () => {
+    const iso = "2026-10-14T21:30:00Z";
+    expect(formatDate(iso, "Asia/Seoul")).toBe(new Date(iso).toLocaleString(undefined, { timeZone: "Asia/Seoul" }));
+    expect(formatDate(iso, "Asia/Seoul")).not.toBe(formatDate(iso, "UTC"));
+    expect(formatDate(iso)).toBe(new Date(iso).toLocaleString());
+    expect(formatDate(iso, "Mars/Olympus")).toBe(new Date(iso).toLocaleString());
+    expect(formatDate("not a date", "Asia/Seoul")).toBe("not a date");
+  });
+
+  // 잠시 뒤 다시 보내면 되는 오류(2026-10-24): 429 too_many_uploads(서버 전체 동시 업로드 상한)와 409 athlete_busy(같은 선수의
+  // 다른 쓰기 요청이 선수 행 잠금을 쥠)는 서버가 Retry-After(초)를 함께 보낸다. 설명 뒤에 그 초를 적고, 헤더가 없으면 '잠시
+  // 뒤'라고 적는다. 다른 코드는 Retry-After가 없으면 전과 같은 문장이다. 고치기 전에는 두 코드의 한국어 설명이 없어 영어
+  // 원문('too_many_uploads: ...')만 나왔고 Retry-After를 읽지 않았다.
+  it("explains retryable errors in Korean with the Retry-After wait", () => {
+    expect(describeError({ code: "too_many_uploads", message: "too many concurrent uploads", retryAfterSeconds: 5 })).toBe(
+      "서버가 다른 업로드를 처리하는 중입니다. 5초 뒤 다시 시도하세요 (too_many_uploads: too many concurrent uploads)",
+    );
+    expect(describeError({ code: "too_many_uploads", message: "too many concurrent uploads", retryAfterSeconds: null })).toBe(
+      "서버가 다른 업로드를 처리하는 중입니다. 잠시 뒤 다시 시도하세요 (too_many_uploads: too many concurrent uploads)",
+    );
+    expect(describeError({ code: "athlete_busy", message: "athlete is busy", retryAfterSeconds: 3 })).toBe(
+      "이 선수의 다른 요청(업로드·FTP·시간대 변경·삭제)이 처리 중입니다. 3초 뒤 다시 시도하세요 (athlete_busy: athlete is busy)",
+    );
+    expect(describeError({ code: "athlete_busy", message: "athlete is busy" })).toBe(
+      "이 선수의 다른 요청(업로드·FTP·시간대 변경·삭제)이 처리 중입니다. 잠시 뒤 다시 시도하세요 (athlete_busy: athlete is busy)",
+    );
+    expect(describeError({ code: "duplicate_activity", message: "exists", retryAfterSeconds: null })).toBe(
+      "같은 시작 시각의 라이딩이 이미 있습니다 (duplicate_activity: exists)",
+    );
   });
 
   // 화면 언어(2026-10-15): FTP 추정 안내는 서버의 숫자로 한국어 문장을 만들고, 숫자가 없는 응답이면 서버 note를 쓴다.
