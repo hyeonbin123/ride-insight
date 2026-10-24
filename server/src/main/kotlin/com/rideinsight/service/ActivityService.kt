@@ -72,6 +72,30 @@ class ActivityService(
         // DB real(float4) 열이 담을 수 있는 가장 큰 절댓값.
         private const val REAL_MAX = Float.MAX_VALUE.toDouble()
 
+        /** 저장하는 출처 파일 이름([ActivityRow.sourceName])의 최대 길이. UTF-16 문자가 아니라 글자(코드포인트) 수다. */
+        const val MAX_SOURCE_NAME_CODE_POINTS = 200
+
+        // ASCII 제어 문자(U+0000~U+001F, U+007F). java.util.regex의 POSIX 클래스 \p{Cntrl}과 같고, 선수 이름 검사
+        // (api/Dtos.kt의 @Pattern)와 같은 범위다.
+        private val CONTROL_CHARS = Regex("""\p{Cntrl}""")
+
+        /**
+         * 업로드 파일 이름 → 저장할 출처 이름. 제어 문자를 지우고 처음 [MAX_SOURCE_NAME_CODE_POINTS]개 코드포인트만 남긴다
+         * (2026-10-24). 그 전에는 `take(200)`으로 UTF-16 문자 200개를 그대로 저장했다: (1) 파일 이름에 NUL(U+0000)이 들어오면
+         * PostgreSQL text 열이 거절해(SQLSTATE 22021) 디코딩을 다 마친 업로드가 500으로 끝났다(2026-10-19 코드 검토 지적). Tomcat 11은
+         * 파트의 `filename`·`filename*`(RFC 5987)·RFC 2047 인코딩 단어를 모두 풀어 NUL이 있으면 요청 해석 단계에서 거절하므로(400),
+         * 서비스까지 NUL이 오는 것은 Tomcat과 Spring이 다른 파라미터를 고를 때다: `filename*=UTF-8''a%00b.fit; filename="ok.fit"`처럼
+         * 둘이 함께 있으면 Tomcat은 뒤에 온 filename을, Spring의 ContentDisposition.parse는 filename*를 고른다(ApiIntegrationTest로
+         * 재현). (2) 200번째 UTF-16 문자가 서로게이트 쌍의 앞 절반(이모지 등)이면 짝 잃은 서로게이트가 '?'로 저장됐다. 이름은 출처
+         * 표시용이라 거절(400) 대신 정리해서 저장한다. 제어 문자만 든 이름은 빈 문자열이 된다(빈 파일 이름은 그 전에도 빈 문자열로
+         * 저장했다).
+         */
+        fun sourceNameOf(fileName: String): String {
+            val cleaned = CONTROL_CHARS.replace(fileName, "")
+            if (cleaned.codePointCount(0, cleaned.length) <= MAX_SOURCE_NAME_CODE_POINTS) return cleaned
+            return cleaned.substring(0, cleaned.offsetByCodePoints(0, MAX_SOURCE_NAME_CODE_POINTS))
+        }
+
         // 목록 보기 위에 조건 보기를 하나 더 씌운다(복사 없음): 조건을 어기는 원소는 null로 보인다. 남는 값이 하나도
         // 없으면 null을 돌려준다(시리즈 없음으로 저장).
         private fun <T : Any> List<T?>.keepIf(keep: (T) -> Boolean): List<T?>? {
@@ -169,7 +193,7 @@ class ActivityService(
                 athleteId = athleteId,
                 startedAt = p.startedAt,
                 source = "fit",
-                sourceName = fileName?.take(200),
+                sourceName = fileName?.let { sourceNameOf(it) },
                 sport = FitProfile.sportName(p.fit.sport),
                 recIntSecs = p.interval?.intervalSecs,
                 intervalShare = p.interval?.modeShare,
@@ -215,13 +239,16 @@ class ActivityService(
 
     // 활동 전 구간 파워 커브(3000 W 가드 없는 best, 로그 간격 300점 이하)와 저장된 16구간 값. 곡선은 업로드 때
     // 계산해 저장한 것을 읽는다(2026-10-15 전에는 요청마다 샘플 전체를 읽어 다시 계산했다, metrics.PowerCurve
-    // 주석). 곡선을 저장하기 전에 올린 활동만 샘플로 계산한다. 파워가 없으면 빈 곡선이다.
+    // 주석). 곡선을 저장하기 전에 올린 활동만 샘플로 계산한다. 파워가 없으면 빈 곡선이다. 16구간 mmp와 곡선 curve는
+    // 지표 행에서 쿼리 하나로 읽는다(2026-10-24. 그 전에는 지표 행 전체(curve 포함)를 읽어 mmp를 꺼낸 뒤 curve만 한 번 더
+    // 읽어, 최대 300점짜리 곡선 JSON을 두 번 전송했다).
     /** 활동 하나의 전 구간 최대 평균 파워 곡선. 지속 시간은 로그 간격 격자다(최대 약 300점). */
     fun powerCurve(id: UUID): Pair<List<Pair<Int, Double>>, Map<String, Double?>> {
         val a = activities.find(id) ?: throw NotFoundException("activity $id not found")
-        val stored = loadMetrics(id)?.mmp ?: emptyMap()
+        val json = activities.mmpAndCurveJson(id)
+        val stored = json?.let { (mmpJson, _) -> metrics.parseMmp(mmpJson) } ?: emptyMap()
         if (!a.hasPower) return emptyList<Pair<Int, Double>>() to stored
-        activities.curveJson(id)?.let { return metrics.parseCurve(it) to stored }
+        json?.second?.let { return metrics.parseCurve(it) to stored }
         val series = activities.samples(id) ?: throw NotFoundException("activity $id has no samples")
         return PowerCurve.points(MetricsService.rideSamples(series)) to stored
     }

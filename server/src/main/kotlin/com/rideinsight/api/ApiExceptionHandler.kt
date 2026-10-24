@@ -9,7 +9,10 @@ package com.rideinsight.api
 // catch-all(Exception)은 다른 처리기가 맞지 않을 때만 쓰이는데, 2026-10-10 OWASP ZAP 1차 스캔에서 Spring의
 // 404·405 예외에 맞는 처리기가 없어 catch-all이 이를 받아 존재하지 않는 경로에 500을 돌려준 버그가 잡혔다.
 // 그래서 라우팅·프로토콜 예외를 따로 4xx로 매핑한다(docs/experiments.md 5단계, docs/ai-verification.md).
-// [연결] ApiIntegrationTest와 TamperedFitTest가 여기서 정한 상태 코드와 error 값을 확인한다.
+// [400 문구] 요청 해석 단계(Spring·Jackson)의 400은 예외 종류별 고정 문구다(2026-10-24, fixedBadRequest). 500처럼 400도
+// 내부 타입·클래스 이름을 응답에 내지 않는다. 컨트롤러·서비스의 입력 검사(BadRequestException) 문구만 그대로 나간다.
+// [연결] ApiIntegrationTest와 TamperedFitTest가 여기서 정한 상태 코드와 error 값을 확인하고, ApiExceptionMappingTest가
+// 예외 → 처리 메서드 매핑을 확인한다.
 
 import com.rideinsight.fit.FitDecodeException
 import com.rideinsight.fit.FitLimitException
@@ -118,18 +121,45 @@ class ApiExceptionHandler {
         return respond(HttpStatus.BAD_REQUEST, "validation", details.ifEmpty { "invalid request body" })
     }
 
-    // 그 밖의 잘못된 요청 → 400 bad_request: 컨트롤러·서비스의 입력 검사(BadRequestException), JSON 본문 파싱
-    // 실패, 경로·쿼리 값의 타입 불일치(UUID가 아닌 id, limit=abc), multipart에 file 파트 없음. 메시지가 여러
-    // 줄이면 첫 줄만 돌려준다. 2026-10-15 전에는 IllegalArgumentException 전체가 여기로 와서 내부 코드의
-    // require() 실패(버그)도 400으로 가려졌다. 이제 IllegalArgumentException은 맨 아래 처리기에서 500 + 로그가
-    // 된다(Errors.kt의 BadRequestException 주석).
-    @ExceptionHandler(
-        BadRequestException::class,
-        HttpMessageNotReadableException::class,
-        MethodArgumentTypeMismatchException::class,
-        MissingServletRequestPartException::class,
-    )
-    fun badRequest(e: Exception) = respond(HttpStatus.BAD_REQUEST, "bad_request", e.message?.lineSequence()?.first() ?: "bad request")
+    // 컨트롤러·서비스가 입력을 검사해 일부러 던지는 BadRequestException → 400 bad_request. 문구는 코드가 직접 쓴 것이라(예:
+    // 'weeks must be between 1 and 104') 그대로 돌려준다. 2026-10-15 전에는 IllegalArgumentException 전체가 여기로 와서 내부
+    // 코드의 require() 실패(버그)도 400으로 가려졌다. 이제 IllegalArgumentException은 맨 아래 처리기에서 500 + 로그가
+    // 된다(Errors.kt의 BadRequestException 주석). ApiExceptionMappingTest가 이 메서드 이름(badRequest)으로 매핑을 확인한다.
+    @ExceptionHandler(BadRequestException::class)
+    fun badRequest(e: BadRequestException) = respond(HttpStatus.BAD_REQUEST, "bad_request", e.message ?: "bad request")
+
+    // 요청을 해석하는 단계에서 Spring·Jackson이 던지는 예외 → 400 bad_request, 예외 종류별 고정 문구(2026-10-24). 그 전에는
+    // 이 예외들도 BadRequestException과 한 처리기에서 메시지 첫 줄을 그대로 돌려줘 'java.lang.String'·'java.util.UUID' 같은
+    // 타입 이름과 요청 DTO 클래스 이름(com.rideinsight.api.ThresholdRequest)이 응답에 드러났다. 500에는 스택·SQL을 숨기면서
+    // 400에는 같은 기준이 없었던 것이다(2026-10-19 코드 검토). 원문은 debug 로그에만 남긴다(기본 로그 수준에서는 보이지
+    // 않는다). 화면(web/src/format.ts)은 error 코드로 안내 문장을 고르므로 문구가 바뀌어도 영향이 없다.
+    // - JSON 본문을 읽을 수 없음: JSON이 아님, 필수 필드 누락(ThresholdRequest.effectiveFrom), 필드 타입 불일치, 본문 없음.
+    @ExceptionHandler(HttpMessageNotReadableException::class)
+    fun unreadableBody(e: HttpMessageNotReadableException) = fixedBadRequest(e, "malformed JSON body")
+
+    // - 경로·쿼리 값의 타입 불일치(UUID가 아닌 id, limit=abc, before=yesterday). e.name은 파라미터 이름이다.
+    @ExceptionHandler(MethodArgumentTypeMismatchException::class)
+    fun typeMismatch(e: MethodArgumentTypeMismatchException) = fixedBadRequest(e, "'${e.name}' has an invalid value")
+
+    // - multipart 요청에 @RequestPart 이름의 파트가 없음(업로드에 file 파트 없음).
+    @ExceptionHandler(MissingServletRequestPartException::class)
+    fun missingPart(e: MissingServletRequestPartException) = fixedBadRequest(e, "multipart part '${e.requestPartName}' is required")
+
+    // - 필수 쿼리 파라미터 누락. 지금 API의 쿼리 파라미터는 모두 선택이거나 기본값이 있어 실제로는 나지 않지만, 생기면 같은 기준이다.
+    @ExceptionHandler(MissingServletRequestParameterException::class)
+    fun missingParameter(e: MissingServletRequestParameterException) = fixedBadRequest(e, "'${e.parameterName}' is required")
+
+    // - multipart 본문 해석 실패. MaxUploadSizeExceededException도 이 예외의 하위 클래스지만 위의 413 처리기가 더 가까운
+    //   타입이라 그쪽으로 간다.
+    @ExceptionHandler(MultipartException::class)
+    fun multipart(e: MultipartException) = fixedBadRequest(e, "malformed multipart request")
+
+    // 고정 문구의 400 응답. 원래 예외(클래스·메시지·원인 스택)는 debug 로그로만 남긴다(logging.level.com.rideinsight.api=DEBUG로
+    // 켠다). 요청 형식 오류의 원인을 찾을 때만 필요하고 응답에는 넣지 않는다.
+    private fun fixedBadRequest(e: Exception, message: String): ResponseEntity<ErrorResponse> {
+        log.debug("400 bad_request '{}'", message, e)
+        return respond(HttpStatus.BAD_REQUEST, "bad_request", message)
+    }
 
     // 존재하지 않는 경로(/, /api, /robots.txt 등) → 404 not_found. 라우팅·프로토콜 오류는 '예상하지 못한
     // 오류'가 아니라 4xx다. 2026-10-10 OWASP ZAP 1차 스캔에서는 이 처리기가 없어, 맨 아래
@@ -157,10 +187,6 @@ class ApiExceptionHandler {
     @ExceptionHandler(HttpMediaTypeNotAcceptableException::class)
     fun notAcceptable(e: HttpMediaTypeNotAcceptableException): ResponseEntity<Void> =
         ResponseEntity.status(HttpStatus.NOT_ACCEPTABLE).build()
-
-    // 필수 쿼리 파라미터 누락과 multipart 해석 오류 → 400 bad_request.
-    @ExceptionHandler(MissingServletRequestParameterException::class, MultipartException::class)
-    fun missing(e: Exception) = respond(HttpStatus.BAD_REQUEST, "bad_request", e.message?.lineSequence()?.first() ?: "bad request")
 
     // 위 처리기에 맞지 않은 모든 예외 → 500 internal. 응답에는 일반 문구만 넣고 상세는 로그로만 남겨
     // 스택·SQL이 응답에 드러나지 않는다(Codex 2차 검토가 정상으로 확인한 항목).

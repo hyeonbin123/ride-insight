@@ -85,6 +85,13 @@ class IntensityUpdate(val activityId: UUID, val ftpUsed: Int?, val intensityFact
 // 센다.
 class DuplicateActivityException(message: String) : RuntimeException(message)
 
+// 활동 상세·목록이 읽는 activity_metrics 열(mapMetrics가 읽는 열 + 행을 찾는 activity_id + 서비스가 해석하는 mmp). curve(전 구간
+// 파워 커브, 최대 300점 jsonb, V2__activity_metrics_curve.sql)와 computed_at은 응답에 쓰지 않아 뺐다(2026-10-24. 그 전에는
+// `select *`라 목록 한 페이지(최대 200행)마다 행 수만큼 curve를 TOAST에서 꺼내 전송하고 버렸다). 곡선은 활동 파워 커브 조회가
+// [ActivityRepository.mmpAndCurveJson]으로 따로 읽는다. 상수 문자열이라 SQL에 이어 붙여도 사용자 입력이 섞이지 않는다.
+private const val METRICS_COLUMNS =
+    "activity_id, metrics_version, ftp_used, normalized_power, intensity_factor, tss, average_power, max_power, work_kj, mmp"
+
 // Spring 빈(@Repository). JdbcClient는 Spring Boot가 DataSource로 만들어 주입한다.
 @Repository
 class ActivityRepository(private val jdbc: JdbcClient) {
@@ -172,10 +179,13 @@ class ActivityRepository(private val jdbc: JdbcClient) {
         ).update()
     }
 
-    /** 저장된 전 구간 파워 커브 JSON. 지표 행이 없거나 곡선을 저장하기 전(2026-10-15 전)의 행이면 null. */
-    fun curveJson(activityId: UUID): String? =
-        jdbc.sql("select curve::text from activity_metrics where activity_id = ?").param(activityId)
-            .query(String::class.java).optional().orElse(null)
+    // 활동 파워 커브 조회가 읽는 두 JSON: 16구간 mmp(표준 구간 값)와 전 구간 curve. 한 쿼리로 읽는다(2026-10-24. 그 전에는
+    // 서비스가 지표 행 전체를 읽어 mmp를 꺼낸 뒤 curve만 따로 한 번 더 읽어, 같은 행의 curve를 두 번 전송했다). jsonb는 ::text로
+    // 받아 서비스(MetricsService.parseMmp·parseCurve)가 해석한다.
+    /** 지표 행의 (mmp JSON, curve JSON). 지표 행이 없으면 null, 곡선을 저장하기 전(2026-10-15 전)의 행이면 curve가 null. */
+    fun mmpAndCurveJson(activityId: UUID): Pair<String, String?>? =
+        jdbc.sql("select mmp::text as mmp, curve::text as curve from activity_metrics where activity_id = ?").param(activityId)
+            .query { rs, _ -> rs.getString("mmp") to rs.getString("curve") }.optional().orElse(null)
 
     // 활동 한 건(없으면 null).
     fun find(id: UUID): ActivityRow? =
@@ -263,19 +273,19 @@ class ActivityRepository(private val jdbc: JdbcClient) {
             )
         }.optional().orElse(null)
 
-    // 지표 행과 mmp JSON 원문을 함께 돌려준다(JSON 해석은 서비스가).
+    // 지표 행과 mmp JSON 원문을 함께 돌려준다(JSON 해석은 서비스가). 열은 METRICS_COLUMNS만 읽는다(curve 제외).
     fun metrics(activityId: UUID): Pair<MetricsRow, String>? =
-        jdbc.sql("select * from activity_metrics where activity_id = ?").param(activityId).query { rs, _ ->
+        jdbc.sql("select $METRICS_COLUMNS from activity_metrics where activity_id = ?").param(activityId).query { rs, _ ->
             mapMetrics(rs) to rs.getString("mmp")
         }.optional().orElse(null)
 
     // 여러 활동의 지표를 쿼리 한 번으로 읽는다(목록 화면에서 활동마다 쿼리를 보내지 않도록). id 목록을 uuid
     // 배열 리터럴 '{a,b,...}'로 만들어 any(?::uuid[])에 바인딩한다. id는 DB에서 읽은 UUID 값이라 리터럴에
-    // 다른 문자가 섞이지 않는다.
+    // 다른 문자가 섞이지 않는다. 열은 METRICS_COLUMNS만 읽는다(curve 제외).
     fun metricsFor(activityIds: Collection<UUID>): Map<UUID, Pair<MetricsRow, String>> {
         if (activityIds.isEmpty()) return emptyMap()
         val literal = activityIds.joinToString(",", "{", "}")
-        return jdbc.sql("select * from activity_metrics where activity_id = any(?::uuid[])").param(literal)
+        return jdbc.sql("select $METRICS_COLUMNS from activity_metrics where activity_id = any(?::uuid[])").param(literal)
             .query { rs, _ -> rs.getObject("activity_id", UUID::class.java) to (mapMetrics(rs) to rs.getString("mmp")) }
             .list().toMap()
     }

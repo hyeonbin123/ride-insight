@@ -34,8 +34,16 @@ import java.util.UUID
 // Float으로 받는다: Double로 검사하면 20.0000001처럼 범위 안이지만 real로 저장할 때 20.0으로 반올림돼 check에
 // 걸리는 값이 검사를 통과하기 때문이다. Float으로 받으면 검사하는 값과 저장되는 값이 같다(Float 범위를 넘는
 // 수는 무한대가 되어 역시 거절된다).
+// 이름은 제어 문자(U+0000~U+001F, U+007F)를 금지한다(2026-10-24). NUL(U+0000)은 공백이 아니라 @NotBlank(Hibernate
+// Validator 9의 String.isBlank)를 통과하고 컨트롤러의 trim()도 지우지 않는데, PostgreSQL의 text 열은 NUL을 담을 수
+// 없어(SQLSTATE 22021) insert에서 실패해 500이 됐다(2026-10-19 코드 검토 지적, ApiIntegrationTest로 재현). 탭·줄바꿈 같은
+// 다른 제어 문자도 이름에 뜻이 없어 함께 거절한다. message를 고정 문구로 둔 것은 @Pattern의 기본 문구("must match
+// \"...\"")가 정규식을 응답에 드러내기 때문이다. \p{Cntrl}은 java.util.regex의 POSIX 클래스 [\x00-\x1F\x7F]이다
+// (UNICODE_CHARACTER_CLASS를 켜지 않았으므로 U+0080~U+009F는 포함하지 않는다. 그 범위는 DB에 저장할 수 있다).
 data class CreateAthleteRequest(
-    @NotBlank @Size(max = 100) val name: String,
+    @NotBlank @Size(max = 100)
+    @Pattern(regexp = """[^\p{Cntrl}]*""", message = "must not contain control characters")
+    val name: String,
     @Pattern(regexp = "M|F") val gender: String? = null,
     @Min(1900) @Max(2100) val birthYear: Int? = null,
     @DecimalMin(value = "20", inclusive = false) @DecimalMax(value = "300", inclusive = false) val weightKg: Float? = null,

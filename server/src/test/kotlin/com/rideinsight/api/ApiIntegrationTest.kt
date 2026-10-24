@@ -20,6 +20,11 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.springframework.core.io.ByteArrayResource
+import org.springframework.http.HttpEntity
+import org.springframework.http.HttpHeaders
+import org.springframework.http.MediaType
+import org.springframework.util.LinkedMultiValueMap
 import tools.jackson.databind.JsonNode
 
 /** PostgreSQL 컨테이너를 상대로 docs/api.md의 내용을 처음부터 끝까지(end-to-end) 확인한다. */
@@ -342,7 +347,11 @@ class ApiIntegrationTest : ApiTestBase() {
         assertEquals(405, delete("/api/athletes").status)
         val id = createAthlete()
         assertEquals(415, call(org.springframework.http.HttpMethod.POST, "/api/athletes/$id/activities", json = "{}").status)
-        assertEquals(400, get("/api/athletes/$id/activities?limit=abc").status)
+        val badLimit = get("/api/athletes/$id/activities?limit=abc")
+        assertEquals(400, badLimit.status)
+        // 2026-10-24: 타입 불일치의 message는 고정 문구다(그 전에는 Spring 메시지 "Method parameter 'limit': Failed to convert
+        // value of type 'java.lang.String' to required type 'int'; ..."의 첫 줄을 그대로 돌려줬다).
+        assertEquals("'limit' has an invalid value", badLimit.body!!.path("message").asString())
         val headers = client.get().uri("/api/athletes/$id").exchange({ _, res -> res.headers }, false)
         assertEquals("nosniff", headers.getFirst("X-Content-Type-Options"))
         assertEquals("no-store", headers.getFirst("Cache-Control"))
@@ -387,5 +396,105 @@ class ApiIntegrationTest : ApiTestBase() {
         val stored = get("/api/activities/${r.body!!.path("id").asString()}")
         assertEquals(200, stored.status)
         assertTrue(stored.body!!.path("metrics").isMissingNode)
+    }
+
+    // 2026-10-24: 제어 문자가 든 선수 이름. NUL(U+0000)은 공백이 아니라 @NotBlank(String.isBlank)를 통과하고 컨트롤러의
+    // trim()도 지우지 않는데, PostgreSQL의 text 열은 NUL을 담을 수 없어(SQLSTATE 22021) insert에서 터져 catch-all 500이
+    // 됐다(2026-10-19 읽기 전용 코드 검토가 지적, 이 테스트로 재현). 이제 이름은 ASCII 제어 문자(U+0000~U+001F, U+007F)를
+    // 금지하는 @Pattern으로 400 validation이고, 메시지는 정규식이 아니라 고정 문구다. JSON 안의 `\u0000`·`\t`는 Jackson이
+    // 실제 문자로 바꾸므로(Kotlin 원시 문자열이라 테스트 소스에는 이스케이프 그대로 적힌다) 서버는 진짜 제어 문자를 받는다.
+    @Test
+    fun `control characters in the athlete name are a 400 validation error, not a 500`() {
+        for (json in listOf("""{"name":"\u0000"}""", """{"name":"ab\u0000cd"}""", """{"name":"a\tb"}""")) {
+            val r = post("/api/athletes", json)
+            assertEquals(400, r.status, "$json: ${r.body}")
+            assertEquals("validation", r.body!!.path("error").asString(), json)
+            assertEquals("name: must not contain control characters", r.body!!.path("message").asString(), json)
+        }
+        // 제어 문자가 아닌 글자(한글·이모지·공백)는 그대로 받는다.
+        val ok = post("/api/athletes", """{"name":"김 라이더 🚴"}""")
+        assertEquals(201, ok.status, ok.body.toString())
+        assertEquals("김 라이더 🚴", ok.body!!.path("name").asString())
+    }
+
+    // 2026-10-24: 업로드 파일 이름에 든 NUL과 긴 이름. 서버의 Tomcat(11.0.24)은 파트의 `filename="..."`, `filename*=...`(RFC 5987
+    // 퍼센트 인코딩), RFC 2047 인코딩 단어(`=?UTF-8?Q?a=00b.fit?=`)를 모두 풀어, 그 이름에 NUL이 있으면 자체 검사(fileupload
+    // Streams.checkFileName)로 요청 해석을 실패시켜 400이 된다(500이 아니다. 2026-10-19 코드 검토와 이 테스트의 첫 초안은
+    // `filename*` 하나로 500이 난다고 봤는데, 실행해 보니 Tomcat이 먼저 거절했다). 서비스까지 NUL이 오는 것은 Tomcat과 Spring이
+    // 다른 파라미터를 고를 때다: `filename*=UTF-8''a%00b.fit; filename="ok.fit"`처럼 둘이 함께 있으면 Tomcat은 뒤에 온 filename을,
+    // Spring의 ContentDisposition.parse는 filename*를 고른다. 그 이름을 그대로 source_name에 넣으면 PostgreSQL이 거절해(SQLSTATE
+    // 22021) 디코딩을 다 마친 업로드가 500으로 끝났다(이 테스트로 재현). 이제 제어 문자를 지운 이름으로 저장한다(201). 긴 이름은
+    // 코드포인트 200개에서 자른다: 그 전의 take(200)은 UTF-16 단위라 이모지 같은 서로게이트 쌍의 가운데를 잘라 짝 잃은
+    // 서로게이트가 '?'로 저장될 수 있었다. 이름은 모두 ASCII로 인코딩해 보내므로 파트 헤더에는 ASCII만 실리고 Tomcat의 파트 헤더
+    // 상한(512바이트) 안이다(NUL·이모지를 헤더에 날로 넣는 경로는 시험하지 않는다).
+    @Test
+    fun `control characters are dropped from the upload file name and long names are cut at 200 code points`() {
+        val id = createAthlete()
+        // Tomcat이 NUL을 거절하는 경로: 요청 해석 실패 → 400 bad_request(고정 문구). 500이 아니어야 한다.
+        val tomcat = uploadWithDisposition(id, "form-data; name=\"file\"; filename*=UTF-8''a%00b.fit", FitWriter.ride(600, startUnix = 1_600_400_000L).build())
+        assertEquals(400, tomcat.status, tomcat.body.toString())
+        assertEquals("bad_request", tomcat.body!!.path("error").asString())
+        assertEquals("malformed multipart request", tomcat.body!!.path("message").asString())
+
+        // Spring만 NUL을 보는 경로: filename*와 filename이 둘 다 있으면 Tomcat은 뒤에 온 filename(NUL 없음)을, Spring은 filename*를
+        // 고른다. 서비스까지 NUL이 온다. 고치기 전에는 500, 이제 제어 문자를 지우고 201.
+        val nul = uploadWithDisposition(id, "form-data; name=\"file\"; filename*=UTF-8''a%00b.fit; filename=\"ok.fit\"", FitWriter.ride(600, startUnix = 1_600_410_000L).build())
+        assertEquals(201, nul.status, nul.body.toString())
+        assertEquals("ab.fit", nul.body!!.path("sourceName").asString())
+
+        // 코드포인트 201개(UTF-16 202문자)인 이름: 200번째 코드포인트가 이모지(서로게이트 쌍)라 UTF-16 200문자로 자르면 쌍이
+        // 갈라진다. 이모지만 퍼센트 인코딩해 RFC 5987 filename*로 보낸다(Tomcat과 Spring이 같은 이름으로 푼다).
+        val emoji = "😀" // U+1F600
+        val encodedEmoji = emoji.toByteArray(Charsets.UTF_8).joinToString("") { "%%%02X".format(it) } // %F0%9F%98%80
+        val long = "a".repeat(199) + encodedEmoji + "b"
+        val cut = uploadWithDisposition(id, "form-data; name=\"file\"; filename*=UTF-8''$long", FitWriter.ride(600, startUnix = 1_600_500_000L).build())
+        assertEquals(201, cut.status, cut.body.toString())
+        val sourceName = cut.body!!.path("sourceName").asString()
+        assertEquals("a".repeat(199) + emoji, sourceName)
+        assertEquals(200, sourceName.codePointCount(0, sourceName.length))
+    }
+
+    // 2026-10-24: 400 bad_request의 message는 예외 종류별 고정 문구다. 그 전에는 Spring·Jackson 예외 메시지의 첫 줄을 그대로
+    // 돌려줘 `java.lang.String`·`java.util.UUID` 같은 타입 이름과 `com.rideinsight.api.ThresholdRequest` 같은 DTO 클래스 이름이
+    // 응답에 드러났다(500에는 스택·SQL을 숨기면서 400에는 같은 기준을 두지 않은 것, 2026-10-19 코드 검토). 컨트롤러·서비스가
+    // 입력 검사로 직접 던지는 BadRequestException의 문구는 그대로다(weeks=0).
+    @Test
+    fun `400 bad_request messages are fixed phrases without Java type or DTO class names`() {
+        val id = createAthlete()
+        val cases = linkedMapOf(
+            "non-UUID path id" to Pair(get("/api/activities/abc"), "'id' has an invalid value"),
+            "limit=abc" to Pair(get("/api/athletes/$id/activities?limit=abc"), "'limit' has an invalid value"),
+            "before=yesterday" to Pair(get("/api/athletes/$id/activities?before=yesterday"), "'before' has an invalid value"),
+            "not json" to Pair(post("/api/athletes", "not json"), "malformed JSON body"),
+            "missing effectiveFrom" to Pair(put("/api/athletes/$id/threshold", """{"ftpWatts":250}"""), "malformed JSON body"),
+            // 파트 이름이 file이 아니면 @RequestPart("file")이 비어 MissingServletRequestPartException이 난다.
+            "missing file part" to Pair(uploadWithDisposition(id, "form-data; name=\"other\"; filename=\"x.fit\"", ByteArray(4)), "multipart part 'file' is required"),
+            "weeks=0" to Pair(get("/api/athletes/$id/ftp-estimate?weeks=0"), "weeks must be between 1 and 104"),
+        )
+        for ((what, case) in cases) {
+            val (r, expected) = case
+            assertEquals(400, r.status, "$what: ${r.body}")
+            assertEquals("bad_request", r.body!!.path("error").asString(), what)
+            val message = r.body!!.path("message").asString()
+            assertEquals(expected, message, what)
+            for (leak in listOf("java.", "com.rideinsight", "Exception")) assertFalse(message.contains(leak), "$what leaks '$leak': $message")
+        }
+    }
+
+    // Content-Disposition 값을 문자열 그대로 넣는 multipart 업로드. ApiTestBase.uploadBytes는 `filename="..."`만 만들기 때문에,
+    // RFC 5987 `filename*`(퍼센트 인코딩)·RFC 2047 인코딩 단어(`=?UTF-8?Q?...?=`, ASCII만으로 NUL·이모지를 넣을 수 있다)와
+    // file이 아닌 파트 이름을 시험할 때 쓴다. 파트에 직접 단 헤더는 FormHttpMessageConverter가 기본 Content-Disposition 위에
+    // 덮어쓴다(ApiTestBase.call과 같은 방식).
+    private fun uploadWithDisposition(athleteId: String, disposition: String, bytes: ByteArray): ApiTestBase.Response {
+        val headers = HttpHeaders()
+        headers.set(HttpHeaders.CONTENT_DISPOSITION, disposition)
+        headers.contentType = MediaType.APPLICATION_OCTET_STREAM
+        val parts = LinkedMultiValueMap<String, Any>()
+        parts.add("file", HttpEntity(ByteArrayResource(bytes), headers))
+        return client.post().uri("/api/athletes/$athleteId/activities").contentType(MediaType.MULTIPART_FORM_DATA).body(parts)
+            .exchange({ _, res ->
+                val text = res.body.readAllBytes().toString(Charsets.UTF_8)
+                ApiTestBase.Response(res.statusCode.value(), if (text.isBlank()) null else mapper.readTree(text))
+            }, false)
     }
 }
