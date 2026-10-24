@@ -128,7 +128,7 @@ export interface ApiError {
 // FTP 추정 응답(GET /athletes/{id}/ftp-estimate). 3단계 측정에서 모델이 채택되지 않아 서비스는 규칙 R1(20분
 // 최대 × 0.95)을 ftpWatts로 돌려준다. rules에는 R1·R2(60분 최대)·R3(CP 모델) 값, ridesInWindow는 기간 안 파워
 // 라이딩 수, note에는 이 규칙의 측정 오차(dev·test MAE, 편향)가 문장으로 들어 있다(docs/experiments.md 3단계
-// 서비스 반영). 대시보드의 FTP 추정 카드가 쓴다.
+// 서비스 반영). 측정 조건 밖이면 note는 오차 대신 이 창은 재지 않았다고 적는다. 대시보드의 FTP 추정 카드가 쓴다.
 export interface FtpEstimate {
   method: string;
   ftpWatts?: number;
@@ -140,7 +140,13 @@ export interface FtpEstimate {
   best60m?: number;
   weeks: number;
   note: string;
+  // 2026-10-24 추가: 이 응답의 weeks·ridesInWindow가 3단계가 오차를 잰 조건(measuredCondition: 6주 창, 창 안 파워 라이딩
+  // 8개 이상) 안인지. 밖이면 서버는 아래 오차 숫자 세 개를 빼고 보낸다(잰 적 없는 12·52주 창이나 라이딩이 적은 창에
+  // 측정 오차를 붙이지 않음, docs/experiments.md 규칙 변경 14). 그 전의 서버 응답에는 두 필드가 없어 선택 필드로 둔다.
+  withinMeasuredRange?: boolean;
+  measuredCondition?: { windowWeeks: number; minRidesInWindow: number };
   // 2026-10-15 추가: note의 측정 오차를 숫자로. 화면은 이 값으로 한국어 안내를 만든다(format.ts의 ftpEstimateNote).
+  // 2026-10-24부터 측정 조건 밖(withinMeasuredRange false)이면 없다.
   devMaeWatts?: number;
   testMaeWatts?: number;
   testBiasWatts?: number;

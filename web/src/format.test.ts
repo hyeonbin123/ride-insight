@@ -52,4 +52,40 @@ describe("format helpers", () => {
     expect(describeError({ code: "teapot", message: "short and stout" })).toBe("teapot: short and stout");
     expect(describeError(new Error("network down"))).toBe("network down");
   });
+
+  // 측정 조건(2026-10-24): 3단계 오차(개발 31 W·봉인 29 W·편향 −17 W)는 6주 창에 파워 라이딩이 8개 이상인 예측 단위로만 잰
+  // 값이다. 서버가 withinMeasuredRange=false로 알리면(52주 창, 라이딩 8개 미만) 오차 숫자 없이 '재지 않았다'는 문장을
+  // 만들고, 조건 안(6주·8개)이면 지금 문장 그대로다. 조건 밖 문장에는 31·29·17이 어디에도 들어가면 안 된다(다른 창의
+  // 오차는 등록된 측정이 아니라 보여 주지 않는다). 고치기 전에는 weeks·라이딩 수와 관계없이 같은 오차 문장을 만들었다.
+  it("drops the measured error outside the measured condition", () => {
+    const outside = {
+      ftpWatts: 250,
+      note: "rule R1 ... this window was not measured",
+      withinMeasuredRange: false,
+      measuredCondition: { windowWeeks: 6, minRidesInWindow: 8 },
+    };
+    const longWindow = ftpEstimateNote({ ...outside, weeks: 52, ridesInWindow: 40 });
+    expect(longWindow).toBe(
+      "규칙 R1: 최근 52주 파워 라이딩 40개의 20분 최고 파워 × 0.95. 선수가 설정한 FTP와의 오차는 6주 창에 파워 라이딩이 8개 이상일 때만 " +
+        "재었고, 이 조건(52주, 라이딩 40개)의 오차는 재지 않았습니다. 학습 모델은 미리 정한 기준(5 W 이상 개선)을 확정하지 못해 쓰지 않습니다.",
+    );
+    expect(longWindow).not.toMatch(/31|29|17/);
+    const fewRides = ftpEstimateNote({ ...outside, weeks: 6, ridesInWindow: 5 });
+    expect(fewRides).toContain("이 조건(6주, 라이딩 5개)의 오차는 재지 않았습니다.");
+    expect(fewRides).not.toMatch(/31|29|17/);
+    expect(
+      ftpEstimateNote({
+        ...outside,
+        withinMeasuredRange: true,
+        weeks: 6,
+        ridesInWindow: 8,
+        devMaeWatts: 31,
+        testMaeWatts: 29,
+        testBiasWatts: -17,
+      }),
+    ).toBe(
+      "규칙 R1: 최근 6주 파워 라이딩 8개의 20분 최고 파워 × 0.95. 선수가 설정한 FTP와 비교하면 평균 31 W(개발 세트), " +
+        "봉인 테스트에서 29 W 차이가 났고 평균 17 W 낮게 추정했습니다. 학습 모델은 미리 정한 기준(5 W 이상 개선)을 확정하지 못해 쓰지 않습니다.",
+    );
+  });
 });

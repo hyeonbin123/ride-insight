@@ -132,7 +132,9 @@ class AthleteController(
     // GET /api/athletes/{id}/ftp-estimate?weeks&asOf: asOf(기본 오늘)까지 최근 weeks주(기본 6주)의 기록으로
     // FTP를 추정한다. 3단계 측정에서 학습 모델이 채택되지 않아(H5 판정 불가) 규칙 R1(20분 최대 × 0.95)을
     // 돌려주고, R2·R3 값과 근거(창 안 파워 라이딩 수, 측정한 오차)를 함께 준다(docs/experiments.md 3단계
-    // 서비스 반영).
+    // 서비스 반영). 측정한 오차(dev MAE 31, 봉인 test MAE 29, 편향 −17 W)는 측정 조건(6주 창, 창 안 파워 라이딩
+    // 8개 이상) 안의 응답에만 넣고, 밖이면 null로 두어 응답에서 빠진다(2026-10-24, 규칙 변경 14. 그 전에는
+    // 12·52주 창이나 라이딩이 적은 창에도 같은 숫자를 돌려줬다).
     @GetMapping("/{id}/ftp-estimate")
     fun ftpEstimate(
         @PathVariable id: UUID,
@@ -143,8 +145,22 @@ class AthleteController(
         val zone = athletes.zone(id, tz)
         val e = ftp.estimate(id, weeks, asOf ?: LocalDate.now(zone), zone)
         return FtpEstimateResponse(
-            e.method, e.ftpWatts, e.rules, e.criticalPowerWPrimeKj, e.windowsUsed, e.ridesInWindow, e.best20m, e.best60m, weeks, e.note,
-            FtpEstimateService.DEV_MAE_WATTS, FtpEstimateService.SEALED_TEST_MAE_WATTS, -FtpEstimateService.SEALED_TEST_BIAS_WATTS,
+            method = e.method,
+            ftpWatts = e.ftpWatts,
+            rules = e.rules,
+            criticalPowerWPrimeKj = e.criticalPowerWPrimeKj,
+            windowsUsed = e.windowsUsed,
+            ridesInWindow = e.ridesInWindow,
+            best20m = e.best20m,
+            best60m = e.best60m,
+            weeks = weeks,
+            note = e.note,
+            withinMeasuredRange = e.withinMeasuredRange,
+            measuredCondition = MeasuredCondition(FtpEstimateService.MEASURED_WINDOW_WEEKS, FtpEstimateService.MEASURED_MIN_RIDES),
+            // 상수는 편향의 크기(17)만 들고 있어 응답에서는 부호를 뒤집는다(음수 = 선수 설정 FTP보다 낮게 추정).
+            devMaeWatts = FtpEstimateService.DEV_MAE_WATTS.takeIf { e.withinMeasuredRange },
+            testMaeWatts = FtpEstimateService.SEALED_TEST_MAE_WATTS.takeIf { e.withinMeasuredRange },
+            testBiasWatts = (-FtpEstimateService.SEALED_TEST_BIAS_WATTS).takeIf { e.withinMeasuredRange },
         )
     }
 

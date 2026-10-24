@@ -14,6 +14,7 @@ import com.rideinsight.metrics.PowerMetrics
 import com.rideinsight.metrics.RecordingInterval
 import com.rideinsight.metrics.RideSamples
 import java.io.File
+import java.time.Instant
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -225,6 +226,51 @@ class ApiIntegrationTest : ApiTestBase() {
         assertEquals(204, delete("/api/activities/$activityId").status)
         assertEquals(404, get("/api/activities/$activityId").status)
         assertEquals(404, delete("/api/activities/$activityId").status)
+    }
+
+    // 측정 조건 안에서만 오차 안내(2026-10-24, docs/experiments.md 규칙 변경 14): 3단계 오차(dev 31 W·봉인 29 W·편향 −17 W)는
+    // 6주 창에 파워 라이딩이 8개 이상인 예측 단위로만 잰 값이다. 라이딩 7개까지는 6주 창이어도 조건 밖(withinMeasuredRange
+    // false, 오차 필드 세 개 없음, note는 재지 않았다고 적음), 8개가 되면 조건 안(세 숫자와 측정 조건), 같은 라이딩으로 12주
+    // 창을 보면 다시 조건 밖이어야 한다. 고치기 전에는 weeks·라이딩 수와 관계없이 세 숫자를 항상 돌려줬다.
+    @Test
+    fun `ftp estimate reports the measured error only inside the measured condition`() {
+        val id = createAthlete(ftp = 300)
+        // 2026-02-10부터 하루 하나씩 30분 250 W 라이딩(01:00Z = 서울 10:00, 선수 기본 시간대 Asia/Seoul). asOf 2026-03-15의
+        // 6주 창은 서울 0시 기준 [02-02, 03-16)이라 모두 창 안이고, 12주 창도 같은 라이딩만 담는다.
+        val first = Instant.parse("2026-02-10T01:00:00Z").epochSecond
+        fun uploadRide(day: Int) {
+            val r = uploadBytes(id, "ride-$day.fit", FitWriter.ride(1_800, power = 250, startUnix = first + day * 86_400L).build())
+            assertEquals(201, r.status, r.body.toString())
+        }
+        fun estimate(weeks: Int) = get("/api/athletes/$id/ftp-estimate?weeks=$weeks&asOf=2026-03-15")
+            .also { assertEquals(200, it.status, it.body.toString()) }.body!!
+        fun assertOutside(body: tools.jackson.databind.JsonNode) {
+            val within = body.path("withinMeasuredRange")
+            assertTrue(within.isBoolean && !within.asBoolean(), "withinMeasuredRange should be false: $body")
+            for (f in listOf("devMaeWatts", "testMaeWatts", "testBiasWatts")) assertTrue(body.path(f).isMissingNode, "$f should be absent: $body")
+            assertTrue(body.path("note").asString().contains("this window was not measured"), body.path("note").asString())
+        }
+
+        for (day in 0 until 7) uploadRide(day)
+        val seven = estimate(6)
+        assertEquals(7, seven.path("ridesInWindow").asInt())
+        assertEquals(237.5, seven.path("ftpWatts").asDouble(), 1e-9) // R1 = 0.95 × 250
+        assertOutside(seven)
+
+        uploadRide(7)
+        val eight = estimate(6)
+        assertEquals(8, eight.path("ridesInWindow").asInt())
+        assertTrue(eight.path("withinMeasuredRange").isBoolean && eight.path("withinMeasuredRange").asBoolean(), eight.toString())
+        assertEquals(6, eight.path("measuredCondition").path("windowWeeks").asInt())
+        assertEquals(8, eight.path("measuredCondition").path("minRidesInWindow").asInt())
+        assertEquals(31, eight.path("devMaeWatts").asInt())
+        assertEquals(29, eight.path("testMaeWatts").asInt())
+        assertEquals(-17, eight.path("testBiasWatts").asInt())
+        assertTrue(eight.path("note").asString().contains("(dev set)"), eight.path("note").asString())
+
+        val twelve = estimate(12)
+        assertEquals(8, twelve.path("ridesInWindow").asInt())
+        assertOutside(twelve)
     }
 
     // ZAP 1차 스캔이 찾은 버그(없는 경로·메서드에 500)의 회귀 테스트: /, /api, /api/nope는 404, DELETE

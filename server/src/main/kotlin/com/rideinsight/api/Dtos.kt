@@ -197,7 +197,11 @@ data class ErrorResponse(val error: String, val message: String)
 // - rules: R1·R2·R3 값, criticalPowerWPrimeKj: CP 모델의 W'(kJ).
 // - windowsUsed: 값이 있는 표준 MMP 구간 수, ridesInWindow: 기간 안 파워 라이딩 수, best20m·best60m:
 //   20분·60분 최대 파워.
-// - note: 규칙과 측정한 오차(dev·봉인 test MAE, 편향)를 적은 설명 문장(docs/experiments.md 규칙 변경 7).
+// - note: 규칙과 측정한 오차(dev·봉인 test MAE, 편향)를 적은 설명 문장(docs/experiments.md 규칙 변경 7). 측정 조건
+//   밖이면 오차 대신 이 창은 재지 않았다는 문장이다(규칙 변경 14).
+// - withinMeasuredRange(2026-10-24 추가): 이 응답의 weeks·ridesInWindow가 3단계가 오차를 잰 조건 안인지
+//   (FtpEstimateService.withinMeasuredRange: 6주 창, 창 안 파워 라이딩 8개 이상). measuredCondition이 그 조건이다.
+//   화면은 이 값을 오차 숫자보다 먼저 본다.
 data class FtpEstimateResponse(
     val method: String,
     val ftpWatts: Double?,
@@ -209,9 +213,18 @@ data class FtpEstimateResponse(
     val best60m: Double?,
     val weeks: Int,
     val note: String,
+    val withinMeasuredRange: Boolean,
+    val measuredCondition: MeasuredCondition,
     // 2026-10-15 추가: note의 수치를 따로 준다(화면이 한국어 문장을 직접 만들도록). R1의 dev MAE, 봉인 test MAE, 봉인
-    // test 편향(음수 = 선수 설정 FTP보다 낮게 추정). 값은 docs/experiments.md 3단계 결과.
-    val devMaeWatts: Int,
-    val testMaeWatts: Int,
-    val testBiasWatts: Int,
+    // test 편향(음수 = 선수 설정 FTP보다 낮게 추정). 값은 docs/experiments.md 3단계 결과. 2026-10-24부터
+    // withinMeasuredRange가 false면 셋 다 null이라 응답에서 빠진다: 12·52주 창이나 라이딩 8개 미만 창의 오차는 잰 적이
+    // 없으므로 측정 오차를 붙이지 않는다.
+    val devMaeWatts: Int?,
+    val testMaeWatts: Int?,
+    val testBiasWatts: Int?,
 )
+
+// FTP 추정 오차를 잰 조건(FtpEstimateService.MEASURED_WINDOW_WEEKS·MEASURED_MIN_RIDES): 창 길이(주)와 창 안 파워 라이딩
+// 최소 수. 응답을 받는 쪽이 어떤 조건에서 잰 오차인지 상수를 따로 알지 않아도 되게 응답에 넣는다(화면의 조건 밖 안내
+// 문장이 이 값을 쓴다).
+data class MeasuredCondition(val windowWeeks: Int, val minRidesInWindow: Int)

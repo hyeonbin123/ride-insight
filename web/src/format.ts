@@ -69,22 +69,40 @@ export function dateIn(d: Date, timeZone?: string): string {
 
 // FTP 추정 카드의 안내 문장(한국어). 서버의 note는 영어 문장이라 화면 언어와 맞지 않아, 2026-10-15부터 서버가
 // 따로 주는 숫자(devMaeWatts 등)로 여기서 문장을 만든다. 숫자가 없는 응답(이전 서버)이면 note를 그대로 쓴다.
+// 2026-10-24부터 서버가 withinMeasuredRange=false로 알리면(측정 조건인 6주 창·창 안 파워 라이딩 8개 이상이 아닌 12·52주
+// 창이나 라이딩이 적은 창) 오차 숫자 없이 '재지 않았다'고 적는다. 이 검사를 숫자 없음 검사보다 먼저 해야 한다: 조건 밖
+// 응답에는 숫자가 없어서, 먼저 보지 않으면 영어 note가 그대로 나간다. 조건 밖 문장에는 어떤 오차 수치도 넣지 않는다(다른
+// 창의 오차는 등록된 측정이 아니다). 조건 수치(6주, 8개)는 서버의 measuredCondition을 그대로 쓴다.
 export function ftpEstimateNote(e: {
   ftpWatts?: number;
   weeks: number;
   ridesInWindow: number;
   note: string;
+  withinMeasuredRange?: boolean;
+  measuredCondition?: { windowWeeks: number; minRidesInWindow: number };
   devMaeWatts?: number;
   testMaeWatts?: number;
   testBiasWatts?: number;
 }): string {
   if (e.ftpWatts == null) return `최근 ${e.weeks}주에 파워가 기록된 20분 이상 라이딩이 없어 추정할 수 없습니다.`;
+  const rule = `규칙 R1: 최근 ${e.weeks}주 파워 라이딩 ${e.ridesInWindow}개의 20분 최고 파워 × 0.95. `;
+  const model = "학습 모델은 미리 정한 기준(5 W 이상 개선)을 확정하지 못해 쓰지 않습니다.";
+  const c = e.measuredCondition;
+  if (e.withinMeasuredRange === false && c) {
+    return (
+      rule +
+      `선수가 설정한 FTP와의 오차는 ${c.windowWeeks}주 창에 파워 라이딩이 ${c.minRidesInWindow}개 이상일 때만 재었고, ` +
+      `이 조건(${e.weeks}주, 라이딩 ${e.ridesInWindow}개)의 오차는 재지 않았습니다. ` +
+      model
+    );
+  }
   if (e.devMaeWatts == null || e.testMaeWatts == null || e.testBiasWatts == null) return e.note;
   const direction = e.testBiasWatts < 0 ? "낮게" : "높게";
   return (
-    `규칙 R1: 최근 ${e.weeks}주 파워 라이딩 ${e.ridesInWindow}개의 20분 최고 파워 × 0.95. ` +
+    rule +
     `선수가 설정한 FTP와 비교하면 평균 ${e.devMaeWatts} W(개발 세트), 봉인 테스트에서 ${e.testMaeWatts} W 차이가 났고 ` +
-    `평균 ${Math.abs(e.testBiasWatts)} W ${direction} 추정했습니다. 학습 모델은 미리 정한 기준(5 W 이상 개선)을 확정하지 못해 쓰지 않습니다.`
+    `평균 ${Math.abs(e.testBiasWatts)} W ${direction} 추정했습니다. ` +
+    model
   );
 }
 
