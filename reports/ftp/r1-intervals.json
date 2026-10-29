@@ -1,0 +1,169 @@
+{
+ "method": "R1 + split conformal interval per rides-in-window bucket (Mondrian)",
+ "level": 0.8,
+ "residual": "L_FTP - R1",
+ "calibrated_on": "train",
+ "checked_on": "dev",
+ "n_train": 4970,
+ "n_dev": 1522,
+ "excluded_no_20m": {
+  "train": 15,
+  "dev": 0
+ },
+ "buckets": [
+  {
+   "name": "8-12",
+   "min_rides": 8,
+   "max_rides": 12,
+   "n_train": 862,
+   "k_lo": 86,
+   "k_hi": 777,
+   "q_lo": -11.294145833333317,
+   "q_hi": 70.23387500000001,
+   "width": 81.52802083333333,
+   "dev": {
+    "n_units": 285,
+    "n_athletes": 84,
+    "coverage": {
+     "point": 0.8,
+     "ci": [
+      0.7276176158471878,
+      0.8666726618705036
+     ],
+     "n_units": 285,
+     "n_athletes": 84
+    }
+   }
+  },
+  {
+   "name": "13-20",
+   "min_rides": 13,
+   "max_rides": 20,
+   "n_train": 1589,
+   "k_lo": 159,
+   "k_hi": 1431,
+   "q_lo": -11.489083333333326,
+   "q_hi": 52.372666666666674,
+   "width": 63.86175,
+   "dev": {
+    "n_units": 495,
+    "n_athletes": 104,
+    "coverage": {
+     "point": 0.7353535353535353,
+     "ci": [
+      0.6538398692810458,
+      0.8057765151515152
+     ],
+     "n_units": 495,
+     "n_athletes": 104
+    }
+   }
+  },
+  {
+   "name": "21-30",
+   "min_rides": 21,
+   "max_rides": 30,
+   "n_train": 1477,
+   "k_lo": 147,
+   "k_hi": 1331,
+   "q_lo": -14.31146014416646,
+   "q_hi": 44.080916666666724,
+   "width": 58.392376810833184,
+   "dev": {
+    "n_units": 424,
+    "n_athletes": 87,
+    "coverage": {
+     "point": 0.7405660377358491,
+     "ci": [
+      0.6585650623885918,
+      0.8127584686492733
+     ],
+     "n_units": 424,
+     "n_athletes": 87
+    }
+   }
+  },
+  {
+   "name": "31+",
+   "min_rides": 31,
+   "max_rides": null,
+   "n_train": 1042,
+   "k_lo": 104,
+   "k_hi": 939,
+   "q_lo": -16.68229166666663,
+   "q_hi": 36.52866666666668,
+   "width": 53.21095833333331,
+   "dev": {
+    "n_units": 318,
+    "n_athletes": 46,
+    "coverage": {
+     "point": 0.6918238993710691,
+     "ci": [
+      0.48262185792349727,
+      0.8371401710759778
+     ],
+     "n_units": 318,
+     "n_athletes": 46
+    }
+   }
+  }
+ ],
+ "dev": {
+  "n_units": 1522,
+  "n_athletes": 133,
+  "n_without_interval": 0,
+  "coverage": {
+   "point": 0.7398160315374507,
+   "ci": [
+    0.6580235007185142,
+    0.8053389775371489
+   ],
+   "n_units": 1522,
+   "n_athletes": 133
+  },
+  "median_width": 63.86174999999997,
+  "fresh": {
+   "point": 0.8669064748201439,
+   "ci": [
+    0.808923000567215,
+    0.9104477611940298
+   ],
+   "n_units": 278,
+   "n_athletes": 54
+  },
+  "stale": {
+   "point": 0.7114147909967846,
+   "ci": [
+    0.6230976856820026,
+    0.7864757289852224
+   ],
+   "n_units": 1244,
+   "n_athletes": 124
+  },
+  "symmetric_dev_mae": {
+   "mae_watts": 30.968541292236303,
+   "half_width_watts": 31,
+   "coverage": {
+    "point": 0.6064388961892248,
+    "ci": [
+     0.5300797183883361,
+     0.678426265953421
+    ],
+    "n_units": 1522,
+    "n_athletes": 133
+   }
+  }
+ },
+ "H14": {
+  "coverage": {
+   "point": 0.7398160315374507,
+   "ci": [
+    0.6580235007185142,
+    0.8053389775371489
+   ],
+   "n_units": 1522,
+   "n_athletes": 133
+  },
+  "verdict": "판정 불가"
+ }
+}
