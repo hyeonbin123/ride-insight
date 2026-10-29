@@ -693,10 +693,12 @@ def main(argv: list[str] | None = None) -> None:
     df = load(a.jsonl)
     result = analyse(df)
     a.out.parent.mkdir(parents=True, exist_ok=True)
+    # 등록된 분석 보고서도 군집 보고서처럼 줄 끝을 LF로 쓴다(newline="\n"). 예전에는 지정하지 않아 Windows에서
+    # CRLF로 쓰였고 reports/parity/의 기존 보고서가 그렇게 커밋돼 있었다. 줄 끝만 다르고 내용·수치는 같다.
     Path(f"{a.out}.json").write_text(
-        json.dumps(result, indent=1, ensure_ascii=False, default=str), encoding="utf-8"
+        json.dumps(result, indent=1, ensure_ascii=False, default=str), encoding="utf-8", newline="\n"
     )
-    Path(f"{a.out}.md").write_text(to_markdown(result, a.jsonl.stem), encoding="utf-8")
+    Path(f"{a.out}.md").write_text(to_markdown(result, a.jsonl.stem), encoding="utf-8", newline="\n")
     print(f"wrote {a.out}.json and {a.out}.md")
 
 

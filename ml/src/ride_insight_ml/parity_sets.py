@@ -107,9 +107,14 @@ def main(argv: list[str] | None = None) -> None:
         unavailable = {x.strip() for x in a.unavailable.read_text(encoding="utf-8").splitlines() if x.strip()}
     dev, sealed, info = build(sample, a.index, a.min_power_rides, a.allow_partial, unavailable)
     a.out_dir.mkdir(parents=True, exist_ok=True)
-    (a.out_dir / "parity_dev.txt").write_text("\n".join(dev) + ("\n" if dev else ""), encoding="utf-8")
+    # 줄 끝은 OS와 무관하게 LF로 쓴다(newline="\n"). 지정하지 않으면 Windows에서 CRLF가 되어, 같은 목록을
+    # 다른 OS에서 다시 만들면 내용이 같아도 `diff`가 모든 줄을 다르다고 본다(저장소의 두 목록이 그렇게 CRLF로
+    # 커밋돼 있었다). 읽는 쪽(Kotlin parity 도구의 readLines + trim)은 두 줄 끝을 모두 견뎌 동작은 같다.
+    (a.out_dir / "parity_dev.txt").write_text(
+        "\n".join(dev) + ("\n" if dev else ""), encoding="utf-8", newline="\n"
+    )
     (a.out_dir / "parity_sealed.txt").write_text(
-        "\n".join(sealed) + ("\n" if sealed else ""), encoding="utf-8"
+        "\n".join(sealed) + ("\n" if sealed else ""), encoding="utf-8", newline="\n"
     )
     print(json.dumps({**info, "dev": len(dev), "sealed": len(sealed)}))
 

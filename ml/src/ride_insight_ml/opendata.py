@@ -4,7 +4,8 @@
 
 * ``manifest``  OSF 프로젝트의 모든 파일을 JSON 매니페스트로 정리한다(OSF API v2)
 * ``sample``    매니페스트에서 선수 표본을 결정적으로 고른다(id의 SHA-256 순서)
-* ``download``  표본 zip을 SHA-256으로 검증하며 받는다(이미 검증된 파일은 건너뜀)
+* ``download``  표본 zip을 SHA-256으로 검증하며 받는다(이미 검증된 파일은 건너뜀, 연결이 120초 멎으면
+  끊고 최대 5번까지 다시 시도)
 * ``inventory`` 받은 선수마다 요약한다(라이딩, 파워 라이딩, 기록 간격, cp_setting 변경 횟수)
 * ``split``     id의 SHA-256으로 선수마다 train/dev/test를 정한다
 
@@ -22,6 +23,8 @@
 # [흐름] manifest(OSF API로 전체 파일 목록) → sample(80 MB 이하 중 해시 순서 앞 800명 + 분할) →
 # download(SHA-256 검증) → inventory(선수별 라이딩·파워·cp_setting 요약) → split(파워 라이딩 수 조건으로
 # 분할표).
+# [줄 끝] 이 파일이 쓰는 JSON(manifest·sample·inventory·split)은 newline="\n"으로 LF로 쓴다. 지정하지 않으면
+# Windows에서 CRLF가 되어, 같은 표본을 다른 OS에서 다시 만들면 내용이 같아도 파일 전체가 바뀐 것으로 보인다.
 # [연결] rides.py가 이 파일의 load_meta, _metric, athlete_id_from_name을 가져다 쓴다. 라이딩과 CSV 짝짓기는
 # rides.py가, CSV 읽기·정리(깨진 행, 결측 파워)는 Kotlin parity 도구의 OpenDataCsv가 한다. docstring이 예전에
 # 가리키던 'preprocess' 모듈은 만들지 않았다.
@@ -122,7 +125,7 @@ def cmd_manifest(out: Path) -> None:
         url = d["links"].get("next")
         print(f"rows={len(rows)}", file=sys.stderr)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(rows, indent=0), encoding="utf-8")
+    out.write_text(json.dumps(rows, indent=0), encoding="utf-8", newline="\n")
     files = [r for r in rows if r["kind"] == "file"]
     print(f"files={len(files)} total_gb={sum(r['size'] for r in files) / 1e9:.1f}")
 
@@ -164,7 +167,7 @@ def cmd_sample(manifest: Path, n: int, max_bytes: int | None, out: Path) -> None
         for f in picked
     ]
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(rows, indent=1), encoding="utf-8")
+    out.write_text(json.dumps(rows, indent=1), encoding="utf-8", newline="\n")
     by_split = collections.Counter(r["split"] for r in rows)
     print(f"picked={len(rows)} bytes={sum(r['size'] for r in rows) / 1e9:.2f}GB splits={dict(by_split)}")
 
@@ -181,10 +184,59 @@ def _file_sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+# DOWNLOAD_TIMEOUT_S: urlopen에 넘기는 소켓 타임아웃(초). 전체 내려받기 시간의 상한이 아니라, 연결하거나 한
+# 번 읽을 때 이 시간 동안 바이트가 하나도 오지 않으면 socket.timeout(TimeoutError)을 내게 하는 값이다.
+# 예전에는 urlretrieve를 timeout 없이 써서, OSF가 응답을 멈추면 예외 없이 영원히 기다렸다(재시도 경로에도
+# 들어가지 않았다). 선수 zip은 최대 80 MB라 정상 전송 중 120초 동안 한 바이트도 안 오는 일은 없다고 보고,
+# _get_json(60초)보다 넉넉하게 잡았다.
+# DOWNLOAD_ATTEMPTS: 한 파일을 시도하는 최대 횟수. _get_json과 같이 5번, 사이에 5·10·15·20초를 기다린다.
+# _DOWNLOAD_CHUNK: 응답을 .part 파일로 옮기는 단위(1 MiB). 메모리에 파일 전체를 올리지 않는다.
+DOWNLOAD_TIMEOUT_S = 120
+DOWNLOAD_ATTEMPTS = 5
+_DOWNLOAD_CHUNK = 1 << 20
+
+
+# url을 path에 1 MiB씩 쓰면서 SHA-256을 함께 계산해 16진 문자열로 돌려준다(한 번만 시도한다). 다 받은 뒤
+# 파일을 다시 읽어 해시를 구하던 방식보다 디스크 읽기가 한 번 적다(표본 12.4 GB를 한 번 덜 읽는다).
+# path는 'wb'로 열어 이전 시도의 조각이 있어도 처음부터 다시 쓴다. 연결 실패·HTTP 오류·타임아웃(멎은 연결)은
+# 예외로 그대로 올린다. 이 함수는 받은 파일을 지우지 않으므로 실패 시 정리는 호출하는 쪽이 한다.
+# 호출 위치: _fetch_with_retries(OpenData zip), fit_samples.main(샘플 FIT, 재시도 없이 timeout 60초).
+def fetch_with_sha256(url: str, path: Path, timeout: float) -> str:
+    """``url``의 응답을 ``path``에 쓰고 그 내용의 SHA-256 16진 문자열을 돌려준다."""
+    h = hashlib.sha256()
+    with urllib.request.urlopen(url, timeout=timeout) as r, path.open("wb") as f:
+        for chunk in iter(lambda: r.read(_DOWNLOAD_CHUNK), b""):
+            f.write(chunk)
+            h.update(chunk)
+    return h.hexdigest()
+
+
+# fetch_with_sha256을 최대 attempts번 시도한다. 실패할 때마다 받다 만 path를 지우고 stderr에 원인을 적은 뒤
+# 5·10·15·20초(_get_json과 같은 간격: 시도 번호 × 5초)를 기다린다. 마지막 실패 뒤에는 기다리지 않고, 마지막
+# 예외를 원인으로 붙인 RuntimeError를 낸다. 해시 비교는 하지 않는다: 끝까지 받았는데 해시가 다르면 다시 받아도
+# 같은 내용일 가능성이 커서, 재시도 대상은 네트워크·전송 실패뿐이다(비교는 cmd_download가 한다).
+def _fetch_with_retries(
+    url: str, path: Path, attempts: int = DOWNLOAD_ATTEMPTS, timeout: float = DOWNLOAD_TIMEOUT_S
+) -> str:
+    last: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            return fetch_with_sha256(url, path, timeout)
+        except Exception as e:  # noqa: BLE001 - 어떤 네트워크 오류든 다시 시도한다(_get_json과 같다)
+            last = e
+            path.unlink(missing_ok=True)
+            print(f"attempt {attempt + 1}/{attempts} failed: {e!r}", file=sys.stderr)
+            if attempt + 1 < attempts:
+                time.sleep(5 * (attempt + 1))
+    raise RuntimeError(f"{attempts} attempts failed, last error: {last!r}") from last
+
+
 # download 하위 명령. 표본 매니페스트의 zip을 차례로 받는다(limit이 있으면 앞 limit명만).
 # - 이미 있고 SHA-256이 맞으면 건너뛴다. 중간에 끊겨도 같은 명령을 다시 돌리면 남은 것만 받는다.
 # - .part 임시 파일로 받은 뒤 해시가 맞을 때만 최종 이름으로 바꾼다. 받다 끊긴 파일이 완성본처럼 남지 않게
 #   하는 원자적 교체다.
+# - 연결이 멎으면 DOWNLOAD_TIMEOUT_S 뒤 끊고 다시 시도한다(_fetch_with_retries). 다섯 번 모두 실패한 파일은
+#   failed로 세고 다음 선수로 넘어간다. 해시는 받으면서 계산한다(fetch_with_sha256).
 # - 실패가 하나라도 있으면 종료 코드 2로 끝내, 자동화에서 '일부만 받은 상태'를 성공으로 오인하지 않게
 #   한다(Codex 1차 검토 지적 3).
 def cmd_download(sample: Path, dest: Path, limit: int | None) -> None:
@@ -207,8 +259,7 @@ def cmd_download(sample: Path, dest: Path, limit: int | None) -> None:
             print(f"stale file moved to {stale.name}", file=sys.stderr)
         tmp = target.with_suffix(".part")
         try:
-            urllib.request.urlretrieve(r["download"], tmp)
-            if _file_sha256(tmp) != r["sha256"]:
+            if _fetch_with_retries(r["download"], tmp) != r["sha256"]:
                 tmp.unlink(missing_ok=True)
                 failed += 1
                 print(f"sha256 mismatch: {r['name']}", file=sys.stderr)
@@ -351,7 +402,7 @@ def cmd_inventory(dest: Path, out: Path, sample: Path | None = None) -> None:
             rows.append({"id": athlete_id_from_name(p.name), "error": repr(e)})
             print(f"bad zip: {p.name}: {e!r}", file=sys.stderr)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(rows, indent=1), encoding="utf-8")
+    out.write_text(json.dumps(rows, indent=1), encoding="utf-8", newline="\n")
     ok = [r for r in rows if "error" not in r]
     print(
         f"athletes={len(rows)} ok={len(ok)} power_rides_total={sum(r['power_rides'] for r in ok)} "
@@ -374,7 +425,7 @@ def cmd_split(inventory: Path, min_power_rides: int, out: Path) -> None:
         "athletes": {r["id"]: split_of(r["id"]) for r in kept},
     }
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(result, indent=1), encoding="utf-8")
+    out.write_text(json.dumps(result, indent=1), encoding="utf-8", newline="\n")
     print(f"kept={len(kept)} {dict(collections.Counter(result['athletes'].values()))}")
 
 
@@ -396,7 +447,13 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--max-bytes", type=int, default=None)
     s.add_argument("--out", type=Path, required=True)
 
-    s = sub.add_parser("download", help="표본 zip을 SHA-256으로 검증하며 내려받는다")
+    s = sub.add_parser(
+        "download",
+        help=(
+            "표본 zip을 SHA-256으로 검증하며 내려받는다. 이미 검증된 파일은 건너뛰고, 연결이 120초 동안 "
+            "멎으면 끊고 다시 시도한다(최대 5번). 실패가 하나라도 있으면 종료 코드 2"
+        ),
+    )
     s.add_argument("--sample", type=Path, required=True)
     s.add_argument("--dest", type=Path, required=True)
     s.add_argument("--limit", type=int, default=None)

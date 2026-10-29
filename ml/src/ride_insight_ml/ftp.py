@@ -263,7 +263,8 @@ def cmd_build(features: Path, index_dir: Path, sample: Path, out: Path) -> None:
         "with_20m": int(units["mmp_20m"].notna().sum()),
         "with_weight": int(units["weight"].notna().sum()),
     }
-    out.with_suffix(".summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
+    # 줄 끝은 OS와 무관하게 LF(newline="\n"). 지정하지 않으면 Windows에서 CRLF가 된다(main의 보고서와 같다).
+    out.with_suffix(".summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8", newline="\n")
     print(
         f"rides={len(rides)} athletes={rides['athlete'].nunique()} units={len(units)} "
         f"by_split={units['split'].value_counts().to_dict()} fresh={int(units['fresh'].sum())} "
@@ -724,10 +725,13 @@ def main(argv: list[str] | None = None) -> None:
         units = pd.read_parquet(a.units)
         r = evaluate(units, a.split, a.adopt)
         a.out.parent.mkdir(parents=True, exist_ok=True)
+        # 보고서의 줄 끝은 OS와 무관하게 LF로 쓴다(newline="\n"). 지정하지 않으면 Windows에서 CRLF가
+        # 되어, 같은 결과를 Linux에서 다시 만들면 수치가 같아도 파일 전체가 바뀐 것으로 보인다
+        # (reports/ftp/의 기존 보고서가 그렇게 CRLF로 커밋돼 있었다). 내용과 수치는 그대로다.
         Path(f"{a.out}.json").write_text(
-            json.dumps(r, indent=1, ensure_ascii=False, default=str), encoding="utf-8"
+            json.dumps(r, indent=1, ensure_ascii=False, default=str), encoding="utf-8", newline="\n"
         )
-        Path(f"{a.out}.md").write_text(to_markdown(r), encoding="utf-8")
+        Path(f"{a.out}.md").write_text(to_markdown(r), encoding="utf-8", newline="\n")
         print(f"wrote {a.out}.json and {a.out}.md")
 
 
