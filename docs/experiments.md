@@ -337,6 +337,32 @@ H11 두 번째 재측정에서 상한 가까운 파일(rich 50만, 6.5 MB) 동�
 - compose 메모리 한도: 서버 컨테이너의 메모리 한도 805,306,368바이트(768 MiB), 그 안에서 JVM이 정한 최대 힙 603,979,776바이트(576 MiB)를 확인했다(`docker inspect`, `java -XX:+PrintFlagsFinal`). 띄운 직후 사용 메모리 231 MiB
 - 단위 테스트(`UploadGateTest`): 상한만큼 들어가고 넘는 요청은 대기 상한 뒤 `TooManyUploadsException`, 실패해도 차례를 돌려줌, 기다리던 요청은 앞의 업로드가 끝나면 들어감. 예외 매핑(`ApiExceptionMappingTest`): 429 + `Retry-After: 5`
 
+### compose 스택의 서버 메모리 (2026-10-30 규칙, 측정 전)
+위 H11·H12는 compose 밖에서 `-Xmx512m -XX:+UseG1GC`로 띄운 bootJar로 쟀다. compose의 서버는 메모리 한도 768 MiB(규칙 변경 12) 안에서 이미지의 `java -XX:MaxRAMPercentage=75 -jar /app/app.jar`로 뜨고 GC를 정하지 않는다. JDK 21은 프로세서가 2개 이상이고 메모리가 1,792 MiB(2 GiB − 256 MiB) 이상일 때만 서버급 기계로 보고 G1을 고르는데, 컨테이너 안에서는 메모리 한도가 그 메모리라서 이 서버는 SerialGC로 뜬다. 2026-10-19 읽기 전용 코드 검토가 지적했고, 같은 이미지(Temurin 21.0.12.1)를 `docker run -m 768m`으로 띄워 확인했다: `UseSerialGC = true {ergonomic}`, `MaxHeapSize = 603979776`(576 MiB), GC 로그 `Using Serial`. 한도에서 최대 힙을 빼면 비힙(메타스페이스·코드 캐시·스레드 스택·GC 자료 구조·네이티브 할당)과 페이지 캐시에 남는 것은 192 MiB인데, 컨테이너 안에서 잰 수치는 띄운 직후 사용 메모리 231 MiB(위 결과 절)뿐이다. 측정 조건(G1, 힙 512 MB)과 배포 조건(Serial, 힙 576 MiB)이 달라 배포 조건을 따로 재고, 결과에 맞춰 GC를 이미지에 명시한다(규칙 변경 17). H11·H12의 판정·수치와 위 절의 576 MiB·231 MiB 기록은 그대로 둔다.
+
+- **질문**: compose로 띄운 서버가 상한 가까운 파일의 업로드 동시 5개와 뒤이은 조회 10건을 처리하는 동안 컨테이너 메모리 한도 안에 머무는가
+- **부하**: H12와 같은 시나리오다. `cd ml && uv run --no-sync python -m ride_insight_ml.load --target http://127.0.0.1:8080 --fit <rich-records-500k.fit> --rounds 1 --uploads 5 --reads 10`. 파일은 `./gradlew fitMemoryProbe`가 만드는 rich 50만(6,500,098바이트, SHA-256 `0cf7c8eb…bb90`, H11·H12와 같은 파일)이다. 서버는 compose의 server 서비스 그대로(한도 768 MiB, 업로드 동시 2개·대기 30초 기본값)이고 DB는 같은 compose의 postgres(볼륨 그대로)다. 웹(nginx)은 이 요청 경로에 없어 띄우지 않는다
+- **판정 (H13)**: 채택한 설정의 실행(아래 절차 3)이 셋을 모두 만족하면 지지, 하나라도 어기면 기각
+  1. 업로드 201×5, 조회 200×10, 5xx·429·연결 오류 0건
+  2. `docker inspect`의 `State.OOMKilled`가 false이고 컨테이너 cgroup의 `memory.events`에서 `oom_kill`이 0
+  3. 컨테이너 최대 메모리 `memory.peak`와 최대 스왑 `memory.swap.peak`의 합이 **724,775,731바이트(한도 805,306,368바이트의 90%, 약 691 MiB) 이하**
+  - 스왑을 더하는 이유: 이 PC의 Docker 가상 머신에는 스왑 4 GiB가 있고 컨테이너의 `memory.swap.max`가 768 MiB라, 한도에 닿으면 바로 OOM 종료되지 않고 스왑으로 밀려나 `memory.peak`만 보면 한도 안에 머문 것처럼 보일 수 있다(스왑이 없는 호스트에서는 같은 상황이 OOM 종료다). 두 최댓값의 시각이 달라도 합은 동시 사용량의 상한이라 보수적이다
+  - `memory.peak`는 컨테이너가 생긴 뒤의 최댓값이고 익명 메모리(JVM)뿐 아니라 페이지 캐시(jar·JDK 파일, 업로드 임시 파일)와 커널 메모리를 포함한다. 그래서 실행마다 server 컨테이너를 새로 만들고(`--force-recreate`), 그 전에 같은 이미지의 일회용 컨테이너에서 `/opt/java/openjdk`와 `/app`의 파일마다 `dd iflag=nocache count=0`으로 페이지 캐시를 비운다. 앞 실행이 읽어 둔 파일 페이지는 새 컨테이너에 다시 매겨지지 않아(이 PC에서 jar를 읽을 때 캐시가 비어 있으면 31 MiB, 차 있으면 0 MiB가 늘었다) 실행 순서가 값에 섞이기 때문이다. 이렇게 하면 실행마다 처음 배포할 때처럼 파일 페이지가 서버 컨테이너에 매겨진다
+- **보고 (판정 없음)**
+  - GC 종류와 최대 힙: 서버 JVM의 GC 로그(`Using ...`, `Heap Max Capacity`)와, 같은 이미지·같은 한도의 일회용 컨테이너에서 ENTRYPOINT와 같은 옵션에 `-XX:+PrintFlagsFinal -version`을 붙인 값(UseSerialGC·UseG1GC·MaxHeapSize와 그 출처)
+  - GC 로그: 정지 횟수(Young·Full)와 정지 시간 합, GC 전 최대, GC 뒤 최대(살아 있는 힙에 가까운 값, 규칙 변경 13), 최대 커밋 힙
+  - 띄운 직후(부하 전)와 부하 뒤의 `memory.current`·`memory.stat`(anon·file 등), 부하 뒤의 `memory.events`(max·oom), JVM 프로세스의 최대 RSS(`/proc/1/status`의 VmHWM)
+  - 응답 시간(p50·p95·최대): 같은 PC의 다른 작업에 좌우되므로 비교에 쓰지 않는다
+  - NMT 요약(채택한 설정으로 한 번 더, 절차 4): `-XX:NativeMemoryTracking=summary -XX:+UnlockDiagnosticVMOptions -XX:+PrintNMTStatistics`. JRE 이미지에 jcmd가 없어 JVM이 끝날 때(`docker compose stop`) 출력한다. NMT는 할당마다 머리 정보를 붙여 메모리를 조금 더 쓰므로 판정 실행에는 켜지 않는다
+- **절차**
+  1. **before**: 지금 이미지 그대로(GC 지정 없음, `-XX:MaxRAMPercentage=75`) 한 번
+  2. **채택**: before가 H13의 세 조건을 모두 지키면 ENTRYPOINT에 `-XX:+UseSerialGC`만 더한다(JVM이 이미 고르는 것을 적어 둠, 동작 불변). 하나라도 어기면 `-XX:+UseSerialGC -XX:MaxRAMPercentage=60`(최대 힙 약 460 MiB, 비힙·캐시 여유 약 300 MiB)으로 바꾼다. 작은 컨테이너에서 G1 전환은 기본 처방으로 삼지 않고(G1은 Serial보다 GC 자료 구조에 네이티브 메모리를 더 쓴다), `-XX:MaxMetaspaceSize`는 사용량을 보기 전에는 두지 않는다(근거 없는 상한은 Metaspace OutOfMemoryError를 부를 수 있다)
+  3. **after**: 채택한 설정으로 이미지를 다시 빌드해 한 번. **H13은 after로 판정한다**. after가 기각이어도 이번에는 설정을 더 바꾸지 않고 기각으로 적는다(다음 설정은 새 규칙을 먼저 등록한 뒤 잰다)
+  4. **nmt (보고만)**: 채택한 설정 + NMT로 한 번
+- **실행 방법**: 측정용 옵션은 커밋하지 않는 compose override 파일에서 server의 `JAVA_TOOL_OPTIONS`로 넣는다: `-Xlog:gc,gc+init:file=/tmp/gc.log:uptime,level,tags`(nmt 실행은 위 NMT 옵션을 더함). 실행마다 `docker compose up -d postgres` → 캐시 비우기 → `docker compose -f compose.yaml -f <override> up -d --force-recreate --no-deps server` → health UP → 부하 전 값 → load.py → 5초 뒤 `docker compose exec server cat /sys/fs/cgroup/memory.peak` 등과 `docker inspect -f '{{.State.OOMKilled}}'` → GC 로그 복사. 값을 다 읽은 뒤 이번에 올린 활동을 API(`DELETE /api/activities/{id}`)로 지운다. 끝나면 `docker compose stop`(볼륨은 지우지 않는다)
+- **조건**: GPU 작업과 다른 Gradle 작업이 없을 때(규칙 변경 8). 같은 PC에서 함께 돌던 컨테이너와 여유 메모리를 실행마다 보고서에 적는다
+- **결과 파일**: `reports/load/2026-10-30-compose-memory-{before,after,nmt}.json`
+
 ### DAST 범위 넓히기와 로컬 배포 하드닝 (2026-10-15; `reports/dast/2026-10-15-stack{1,2}.*`)
 H9 스캔(위)은 서버(8080)의 `/api`·`/actuator`만, HAR 씨앗의 JSON 요청으로만 다뤄 **FIT 업로드와 웹(nginx)이 빠졌다**. 같은 날 로컬 배포를 하드닝하고 범위를 넓혀 다시 쟀다. 판정은 H9와 같은 기준(High·Medium 0건, 진짜 경보는 고치고 다시 스캔)이다. 이 기준을 따로 먼저 커밋하지는 않았다(H9 규칙의 보안 수정 예외를 그대로 따랐다).
 
@@ -363,6 +389,7 @@ H9 스캔(위)은 서버(8080)의 `/api`·`/actuator`만, HAR 씨앗의 JSON 요
 - 한계: 인증이 없다는 한계는 그대로다(Host 검증은 rebinding으로 들어오는 출처만 가린다). compose 네트워크 안에서 `server:8080`으로 직접 부르면 421이다. nginx의 실시간 압축 수준은 기본값(1)이라 번들의 gzip 크기가 Vite가 빌드 때 보고하는 값(208.40 kB)보다 크다
 
 ## 규칙 변경
+17. **2026-10-30, 5단계 추가(compose 스택의 서버 메모리, 측정 전)**: compose 서버의 JVM 실행 조건(SerialGC, 최대 힙 576 MiB)이 업로드 측정 조건(G1, 힙 512 MB)과 달라, 상한 가까운 업로드 동시 5개를 compose 서버 컨테이너 안에서 재는 H13을 등록한다. 결과에 따라 GC를 이미지에 명시하고(기준을 지키면 `-XX:+UseSerialGC`만, 못 지키면 최대 힙 비율도 60%로), 판정은 채택한 설정으로 잰 실행으로 한다. 2026-10-19 읽기 전용 코드 검토의 지적이다. 측정·판정은 5단계 'compose 스택의 서버 메모리'
 16. **2026-10-29, 1단계 봉인 측정 뒤(사후 보고 등록, 판정 영향 없음)**: 1단계 비율 가설(H1~H4)의 구간은 등록한 대로 라이딩 단위였는데, 같은 선수의 라이딩은 기기·내보내기 설정을 공유해 독립이 아니고 봉인 세트의 파워 결측 라이딩도 한 선수에 몰려 있었다. 2026-10-19 읽기 전용 코드 검토가 같은 JSONL로 선수 군집 부트스트랩을 먼저 계산해 봤으므로, 값을 본 뒤의 판정 없는 보고로 1단계 '사후 보고: 선수 군집 부트스트랩' 절을 등록한다. 봉인 판정과 기존 수치는 그대로다. 앞으로 등록하는 비율 가설은 선수 단위 구간으로 판정한다(공통 절)
 15. **2026-10-29, 3단계 측정 뒤(기록만, 측정 영향 없음)**: (1) 3단계 특징 '마지막 라이딩까지 일수'(`days_since_last`)는 구성상 모든 예측 단위에서 0이었다. 기준일이 선수의 실제 파워 라이딩 시각이고 창이 기준일을 포함하므로(기준일 포함 직전 42일) 창의 마지막 라이딩이 곧 기준 라이딩이기 때문이다(규칙의 정의대로 날짜로 세어도 기준일에 라이딩이 있으므로 같다). 그래서 M1·M2의 입력 23열 중 실질 특징은 22개였고 '최근성' 정보는 모델에 들어가지 않았다. 예측 단위 8,093개 전부에서 값이 0이다. 상수 열은 표준화 뒤 0이 되어 M2(Ridge) 계수가 정확히 0이고 LightGBM(M1)은 값이 하나뿐인 열로 분기하지 못한다. 2026-10-19 읽기 전용 코드 검토가 이 열을 빼고 train으로 다시 맞춰 M1의 dev 예측이 같고(최대 차이 0) M2 계수가 0.0임을 확인했으므로(test는 쓰지 않음) 3단계 수치는 그대로다. 측정 코드(`ml/src/ride_insight_ml/ftp.py`의 FEATURES와 단위 생성)는 바꾸지 않았고 지금 동작은 `ml/tests/test_ftp.py`의 특성화 테스트가 고정한다. 다시 정의하거나(예: 기준 라이딩 직전 라이딩까지 일수) 열을 빼는 것, 분산이 0인 특징을 걸러 내는 검사는 다음 측정의 규칙에 먼저 등록한 뒤 한다. (2) 공통 절에 봉인 측정의 커밋 순서를 더했다: dev 보고서와 채택 후보를 먼저 커밋·push한 뒤 봉인 세트를 재고 결과는 별도 커밋으로 올린다. 3단계는 dev 보고서·채택 후보·봉인 test 보고서가 같은 커밋(`a5530a6`)에 들어가 채택 → test 순서가 공개 이력으로 입증되지 않는다(3단계 결과 절). 앞으로의 측정에만 적용하고 지난 결과는 그대로 둔다
 14. **2026-10-24, 3단계 서비스 반영(기록만, 측정 없음)**: 추정 API는 측정 조건(6주 창, 창 안 파워 라이딩 8개 이상) 안에서만 dev·봉인 test 오차를 보여 준다. 조건 밖(12·52주 창, 라이딩 8개 미만)은 오차를 재지 않았다는 안내만 한다. 측정 수치는 그대로다. 이유: 3단계는 창 42일에서 창 안 파워 라이딩 8개 미만인 예측 단위를 빼고 쟀는데(`ml/src/ride_insight_ml/ftp.py`의 WINDOW_DAYS·MIN_RIDES), 서비스는 대시보드의 12·52주 창과 라이딩이 적은 창에도 같은 오차를 붙여 잰 적 없는 추정기가 검증된 것처럼 보였다. 긴 창·적은 라이딩의 오차를 실제로 보여 주려면 'R1 12·26·52주 창, 창 안 라이딩 8개 미만' 규칙을 먼저 등록하고 재야 한다(아직 등록하지 않음)
