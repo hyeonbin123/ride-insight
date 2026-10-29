@@ -1,0 +1,314 @@
+{
+ "date": "2026-10-30",
+ "label": "before",
+ "rule": "docs/experiments.md stage 5 'compose 스택의 서버 메모리' (H13, rule change 17), registered in 448fbdf",
+ "code": "server image built from 448fbdf (the rule commit): ENTRYPOINT java -XX:MaxRAMPercentage=75 -jar, no GC named",
+ "started": "2026-10-30T00:52:16+09:00",
+ "finished": "2026-10-30T00:57:29+09:00",
+ "conditions": "compose server service as committed (mem_limit 768m, upload gate 2 concurrent / 30 s) and the compose postgres with its existing volume; web not started. Measurement-only JVM options through a compose override that is not committed (JAVA_TOOL_OPTIONS below). Before each run the page cache of every file under /opt/java/openjdk and /app was dropped from a throwaway container of the same image (dd iflag=nocache count=0), and the server container was recreated, so memory.peak starts from a cold first start. Load: ml/.../load.py --rounds 1 --uploads 5 --reads 10 against http://127.0.0.1:8080. cgroup values were read 5 s after load.py finished. No GPU job and no busy Gradle process; containers of other projects ran on the same PC during some runs (counts below), so latencies are not compared.",
+ "java_tool_options": "-Xlog:gc,gc+init:file=/tmp/gc.log:uptime,level,tags",
+ "image": {
+  "id": "sha256:4af506a7e49e5c8ebe22ec9c8ef82ae804657f5b488577e8919f2e0f5cc3bd2e",
+  "entrypoint": [
+   "java",
+   "-XX:MaxRAMPercentage=75",
+   "-jar",
+   "/app/app.jar"
+  ],
+  "jdk": "21.0.12.1+1-LTS (release)"
+ },
+ "fit": {
+  "name": "rich-records-500k.fit",
+  "bytes": 6500098,
+  "sha256": "0cf7c8eb56231d7eda9a652c12255f8ec8b8dfa938c03f587940dd79bdd7bb90"
+ },
+ "container": {
+  "memory_limit": 805306368,
+  "memory_swap_limit": 1610612736,
+  "docker_vm_swap": "4 GiB swap partition in the Docker VM (/proc/swaps)"
+ },
+ "page_cache_drop_check": {
+  "jar_bytes_charged_when_reread_after_drop": 32649216,
+  "note": "a throwaway container re-read /app/app.jar after the drop and was charged this much, then the cache was dropped again before the server container started"
+ },
+ "jvm_flags_check": {
+  "how": "docker run --rm -m 768m --entrypoint java <image> <entrypoint JVM options> -XX:+PrintFlagsFinal -version",
+  "jvm_options": [
+   "-XX:MaxRAMPercentage=75"
+  ],
+  "InitialHeapSize": {
+   "value": "12582912",
+   "origin": "ergonomic"
+  },
+  "MaxHeapFreeRatio": {
+   "value": "70",
+   "origin": "default"
+  },
+  "MaxHeapSize": {
+   "value": "603979776",
+   "origin": "ergonomic"
+  },
+  "MaxMetaspaceSize": {
+   "value": "18446744073709551615",
+   "origin": "default"
+  },
+  "MaxRAMPercentage": {
+   "value": "75.000000",
+   "origin": "command line"
+  },
+  "MinHeapFreeRatio": {
+   "value": "40",
+   "origin": "default"
+  },
+  "ReservedCodeCacheSize": {
+   "value": "251658240",
+   "origin": "ergonomic"
+  },
+  "UseG1GC": {
+   "value": "false",
+   "origin": "default"
+  },
+  "UseParallelGC": {
+   "value": "false",
+   "origin": "default"
+  },
+  "UseSerialGC": {
+   "value": "true",
+   "origin": "ergonomic"
+  }
+ },
+ "health_wait_s": 28.7,
+ "load": {
+  "wall_s": 19.5,
+  "phases": [
+   {
+    "phase": "upload-round-1",
+    "n": 5,
+    "concurrency": 5,
+    "p50_ms": 9875.4,
+    "p95_ms": 12353.1,
+    "max_ms": 12971.9,
+    "non_2xx": 0,
+    "connection_errors": 0,
+    "status_counts": {
+     "201": 5
+    }
+   },
+   {
+    "phase": "reads",
+    "n": 10,
+    "concurrency": 10,
+    "p50_ms": 1746.6,
+    "p95_ms": 2613.3,
+    "max_ms": 2613.7,
+    "non_2xx": 0,
+    "connection_errors": 0,
+    "status_counts": {
+     "200": 10
+    }
+   }
+  ],
+  "any_5xx": false,
+  "any_connection_error": false
+ },
+ "state_after_load": {
+  "Status": "running",
+  "OOMKilled": false,
+  "ExitCode": 0,
+  "Restarting": false,
+  "health": "healthy"
+ },
+ "restart_count": 0,
+ "cgroup_ready": {
+  "current": 329064448,
+  "peak": 329285632,
+  "swap_current": 0,
+  "swap_peak": 0,
+  "max": 805306368,
+  "swap_max": 805306368,
+  "events": {
+   "low": 0,
+   "high": 0,
+   "max": 0,
+   "oom": 0,
+   "oom_kill": 0,
+   "oom_group_kill": 0
+  },
+  "swap_events": {
+   "high": 0,
+   "max": 0,
+   "fail": 0
+  },
+  "stat": {
+   "anon": 229810176,
+   "file": 95051776,
+   "kernel": 3215360,
+   "kernel_stack": 540672,
+   "pagetables": 1351680,
+   "sock": 0,
+   "shmem": 0,
+   "file_mapped": 3117056,
+   "file_dirty": 16384,
+   "file_writeback": 0,
+   "anon_thp": 0,
+   "inactive_anon": 229740544,
+   "active_anon": 8192,
+   "inactive_file": 59858944,
+   "active_file": 35192832,
+   "slab_reclaimable": 471152,
+   "slab_unreclaimable": 786568,
+   "slab": 1257720
+  },
+  "jvm_process_status": {
+   "VmHWM": 252686336,
+   "VmRSS": 252686336,
+   "RssAnon": 228347904,
+   "RssFile": 24338432,
+   "RssShmem": 0,
+   "VmSwap": 0,
+   "Threads": 31
+  }
+ },
+ "cgroup_after_load": {
+  "current": 747692032,
+  "peak": 805306368,
+  "swap_current": 0,
+  "swap_peak": 0,
+  "max": 805306368,
+  "swap_max": 805306368,
+  "events": {
+   "low": 0,
+   "high": 0,
+   "max": 296,
+   "oom": 0,
+   "oom_kill": 0,
+   "oom_group_kill": 0
+  },
+  "swap_events": {
+   "high": 0,
+   "max": 0,
+   "fail": 0
+  },
+  "stat": {
+   "anon": 698978304,
+   "file": 43003904,
+   "kernel": 4407296,
+   "kernel_stack": 540672,
+   "pagetables": 2547712,
+   "sock": 0,
+   "shmem": 0,
+   "file_mapped": 3383296,
+   "file_dirty": 20480,
+   "file_writeback": 0,
+   "anon_thp": 0,
+   "inactive_anon": 698933248,
+   "active_anon": 16384,
+   "inactive_file": 1372160,
+   "active_file": 41631744,
+   "slab_reclaimable": 471872,
+   "slab_unreclaimable": 796936,
+   "slab": 1268808
+  },
+  "jvm_process_status": {
+   "VmHWM": 784007168,
+   "VmRSS": 721764352,
+   "RssAnon": 697516032,
+   "RssFile": 24248320,
+   "RssShmem": 0,
+   "VmSwap": 0,
+   "Threads": 31
+  }
+ },
+ "docker_stats": {
+  "what": "docker stats MemUsage (memory.current minus inactive_file), sampled from the host every 1-2 s from 5 s after health UP until 5 s after load.py finished",
+  "max_mib": 706.7,
+  "samples": 13
+ },
+ "gc": {
+  "using": "Serial",
+  "heap_max_capacity": "576M",
+  "jdk": "21.0.12.1+1-LTS (release)",
+  "whole_run": {
+   "events": 149,
+   "young_count": 139,
+   "young_pause_ms_sum": 825.2,
+   "young_pause_ms_max": 72.1,
+   "young_causes": [
+    "Allocation Failure"
+   ],
+   "full_count": 10,
+   "full_pause_ms_sum": 831.3,
+   "full_pause_ms_max": 130.4,
+   "full_causes": [
+    "Allocation Failure",
+    "Metadata GC Threshold"
+   ],
+   "pause_ms_sum": 1656.5,
+   "max_heap_before_gc_mb": 392,
+   "max_heap_after_gc_mb": 358,
+   "max_heap_committed_mb": 473
+  },
+  "load_window": {
+   "events": 67,
+   "young_count": 60,
+   "young_pause_ms_sum": 600.2,
+   "young_pause_ms_max": 72.1,
+   "young_causes": [
+    "Allocation Failure"
+   ],
+   "full_count": 7,
+   "full_pause_ms_sum": 693.2,
+   "full_pause_ms_max": 130.4,
+   "full_causes": [
+    "Allocation Failure"
+   ],
+   "pause_ms_sum": 1293.4,
+   "max_heap_before_gc_mb": 392,
+   "max_heap_after_gc_mb": 358,
+   "max_heap_committed_mb": 473
+  },
+  "max_heap_after_full_gc_mb": 170,
+  "note": "sizes from -Xlog:gc are MiB; load_window = GC events after load.py started; for Serial the max after Full GC is the closer proxy of live heap, a young GC leaves old-generation garbage in place"
+ },
+ "server_log_counts": {
+  "OutOfMemoryError": 0,
+  " ERROR ": 0,
+  "Exception": 0
+ },
+ "activities_uploaded_then_deleted": {
+  "count": 5,
+  "delete_statuses": [
+   204
+  ],
+  "note": "deleted through DELETE /api/activities/{id} after the cgroup values were read; the five athletes created by load.py stay (there is no athlete delete API)"
+ },
+ "h13_values": {
+  "c1_status_codes_ok": true,
+  "c2_not_oom_killed": true,
+  "peak_plus_swap_peak": 805306368,
+  "threshold": 724775731,
+  "c3_within_90pct": false,
+  "all_three": false,
+  "peak_plus_swap_peak_mib": 768.0,
+  "threshold_mib": 691.2,
+  "judged_run": false
+ },
+ "host": [
+  {
+   "when": "before the run",
+   "other_containers_on_this_pc": 0,
+   "host_free_memory_mb": 2425,
+   "host_cpu_load_pct": 57,
+   "gradle_processes_busy": 0,
+   "gpu": "29 %, 1351 MiB"
+  },
+  {
+   "when": "after the run",
+   "other_containers_on_this_pc": 1,
+   "host_free_memory_mb": 2208,
+   "host_cpu_load_pct": 43,
+   "gradle_processes_busy": 0,
+   "gpu": "31 %, 1351 MiB"
+  }
+ ]
+}

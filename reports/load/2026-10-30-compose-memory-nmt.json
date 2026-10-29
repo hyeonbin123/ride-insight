@@ -1,0 +1,400 @@
+{
+ "date": "2026-10-30",
+ "label": "nmt",
+ "rule": "docs/experiments.md stage 5 'compose 스택의 서버 메모리' (H13, rule change 17), registered in 448fbdf",
+ "code": "same image as 'after', with native memory tracking switched on through JAVA_TOOL_OPTIONS (report only, not judged)",
+ "started": "2026-10-30T01:01:21+09:00",
+ "finished": "2026-10-30T01:03:05+09:00",
+ "conditions": "compose server service as committed (mem_limit 768m, upload gate 2 concurrent / 30 s) and the compose postgres with its existing volume; web not started. Measurement-only JVM options through a compose override that is not committed (JAVA_TOOL_OPTIONS below). Before each run the page cache of every file under /opt/java/openjdk and /app was dropped from a throwaway container of the same image (dd iflag=nocache count=0), and the server container was recreated, so memory.peak starts from a cold first start. Load: ml/.../load.py --rounds 1 --uploads 5 --reads 10 against http://127.0.0.1:8080. cgroup values were read 5 s after load.py finished. No GPU job and no busy Gradle process; containers of other projects ran on the same PC during some runs (counts below), so latencies are not compared.",
+ "java_tool_options": "-Xlog:gc,gc+init:file=/tmp/gc.log:uptime,level,tags -XX:NativeMemoryTracking=summary -XX:+UnlockDiagnosticVMOptions -XX:+PrintNMTStatistics",
+ "image": {
+  "id": "sha256:76ad762d892ba1dc95258d5a949bcca90dc815bc14e455b0a5a72c7a93fa81ad",
+  "entrypoint": [
+   "java",
+   "-XX:+UseSerialGC",
+   "-XX:MaxRAMPercentage=60",
+   "-jar",
+   "/app/app.jar"
+  ],
+  "jdk": "21.0.12.1+1-LTS (release)"
+ },
+ "fit": {
+  "name": "rich-records-500k.fit",
+  "bytes": 6500098,
+  "sha256": "0cf7c8eb56231d7eda9a652c12255f8ec8b8dfa938c03f587940dd79bdd7bb90"
+ },
+ "container": {
+  "memory_limit": 805306368,
+  "memory_swap_limit": 1610612736,
+  "docker_vm_swap": "4 GiB swap partition in the Docker VM (/proc/swaps)"
+ },
+ "page_cache_drop_check": {
+  "jar_bytes_charged_when_reread_after_drop": 33665024,
+  "note": "a throwaway container re-read /app/app.jar after the drop and was charged this much, then the cache was dropped again before the server container started"
+ },
+ "jvm_flags_check": {
+  "how": "docker run --rm -m 768m --entrypoint java <image> <entrypoint JVM options> -XX:+PrintFlagsFinal -version",
+  "jvm_options": [
+   "-XX:+UseSerialGC",
+   "-XX:MaxRAMPercentage=60"
+  ],
+  "InitialHeapSize": {
+   "value": "12582912",
+   "origin": "ergonomic"
+  },
+  "MaxHeapFreeRatio": {
+   "value": "70",
+   "origin": "default"
+  },
+  "MaxHeapSize": {
+   "value": "484442112",
+   "origin": "ergonomic"
+  },
+  "MaxMetaspaceSize": {
+   "value": "18446744073709551615",
+   "origin": "default"
+  },
+  "MaxRAMPercentage": {
+   "value": "60.000000",
+   "origin": "command line"
+  },
+  "MinHeapFreeRatio": {
+   "value": "40",
+   "origin": "default"
+  },
+  "ReservedCodeCacheSize": {
+   "value": "251658240",
+   "origin": "ergonomic"
+  },
+  "UseG1GC": {
+   "value": "false",
+   "origin": "default"
+  },
+  "UseParallelGC": {
+   "value": "false",
+   "origin": "default"
+  },
+  "UseSerialGC": {
+   "value": "true",
+   "origin": "command line"
+  }
+ },
+ "health_wait_s": 19.4,
+ "load": {
+  "wall_s": 12.0,
+  "phases": [
+   {
+    "phase": "upload-round-1",
+    "n": 5,
+    "concurrency": 5,
+    "p50_ms": 6889.0,
+    "p95_ms": 8267.3,
+    "max_ms": 8595.3,
+    "non_2xx": 0,
+    "connection_errors": 0,
+    "status_counts": {
+     "201": 5
+    }
+   },
+   {
+    "phase": "reads",
+    "n": 10,
+    "concurrency": 10,
+    "p50_ms": 733.9,
+    "p95_ms": 1411.2,
+    "max_ms": 1412.5,
+    "non_2xx": 0,
+    "connection_errors": 0,
+    "status_counts": {
+     "200": 10
+    }
+   }
+  ],
+  "any_5xx": false,
+  "any_connection_error": false
+ },
+ "state_after_load": {
+  "Status": "running",
+  "OOMKilled": false,
+  "ExitCode": 0,
+  "Restarting": false,
+  "health": "healthy"
+ },
+ "restart_count": 0,
+ "cgroup_ready": {
+  "current": 336850944,
+  "peak": 341225472,
+  "swap_current": 0,
+  "swap_peak": 0,
+  "max": 805306368,
+  "swap_max": 805306368,
+  "events": {
+   "low": 0,
+   "high": 0,
+   "max": 0,
+   "oom": 0,
+   "oom_kill": 0,
+   "oom_group_kill": 0
+  },
+  "swap_events": {
+   "high": 0,
+   "max": 0,
+   "fail": 0
+  },
+  "stat": {
+   "anon": 238223360,
+   "file": 93802496,
+   "kernel": 3010560,
+   "kernel_stack": 540672,
+   "pagetables": 1216512,
+   "sock": 0,
+   "shmem": 0,
+   "file_mapped": 32768,
+   "file_dirty": 24576,
+   "file_writeback": 0,
+   "anon_thp": 0,
+   "inactive_anon": 238145536,
+   "active_anon": 8192,
+   "inactive_file": 63246336,
+   "active_file": 30556160,
+   "slab_reclaimable": 437072,
+   "slab_unreclaimable": 761664,
+   "slab": 1198736
+  },
+  "jvm_process_status": {
+   "VmHWM": 261001216,
+   "VmRSS": 261001216,
+   "RssAnon": 236769280,
+   "RssFile": 24231936,
+   "RssShmem": 0,
+   "VmSwap": 0,
+   "Threads": 31
+  }
+ },
+ "cgroup_after_load": {
+  "current": 774934528,
+  "peak": 807100416,
+  "swap_current": 0,
+  "swap_peak": 0,
+  "max": 805306368,
+  "swap_max": 805306368,
+  "events": {
+   "low": 0,
+   "high": 0,
+   "max": 129,
+   "oom": 0,
+   "oom_kill": 0,
+   "oom_group_kill": 0
+  },
+  "swap_events": {
+   "high": 0,
+   "max": 0,
+   "fail": 0
+  },
+  "stat": {
+   "anon": 683495424,
+   "file": 81350656,
+   "kernel": 4112384,
+   "kernel_stack": 540672,
+   "pagetables": 2277376,
+   "sock": 0,
+   "shmem": 0,
+   "file_mapped": 32768,
+   "file_dirty": 12288,
+   "file_writeback": 0,
+   "anon_thp": 0,
+   "inactive_anon": 683384832,
+   "active_anon": 8192,
+   "inactive_file": 50434048,
+   "active_file": 30916608,
+   "slab_reclaimable": 454672,
+   "slab_unreclaimable": 786560,
+   "slab": 1241232
+  },
+  "jvm_process_status": {
+   "VmHWM": 736051200,
+   "VmRSS": 706269184,
+   "RssAnon": 682037248,
+   "RssFile": 24231936,
+   "RssShmem": 0,
+   "VmSwap": 0,
+   "Threads": 31
+  }
+ },
+ "docker_stats": {
+  "what": "docker stats MemUsage (memory.current minus inactive_file), sampled from the host every 1-2 s from 5 s after health UP until 5 s after load.py finished",
+  "max_mib": 685.0,
+  "samples": 9
+ },
+ "gc": {
+  "using": "Serial",
+  "heap_max_capacity": "462M",
+  "jdk": "21.0.12.1+1-LTS (release)",
+  "whole_run": {
+   "events": 149,
+   "young_count": 138,
+   "young_pause_ms_sum": 910.4,
+   "young_pause_ms_max": 50.7,
+   "young_causes": [
+    "Allocation Failure",
+    "GCLocker Initiated GC"
+   ],
+   "full_count": 11,
+   "full_pause_ms_sum": 1076.2,
+   "full_pause_ms_max": 180.3,
+   "full_causes": [
+    "Allocation Failure",
+    "Metadata GC Threshold"
+   ],
+   "pause_ms_sum": 1986.7,
+   "max_heap_before_gc_mb": 431,
+   "max_heap_after_gc_mb": 431,
+   "max_heap_committed_mb": 433
+  },
+  "load_window": {
+   "events": 68,
+   "young_count": 60,
+   "young_pause_ms_sum": 643.0,
+   "young_pause_ms_max": 50.7,
+   "young_causes": [
+    "Allocation Failure"
+   ],
+   "full_count": 8,
+   "full_pause_ms_sum": 915.4,
+   "full_pause_ms_max": 180.3,
+   "full_causes": [
+    "Allocation Failure"
+   ],
+   "pause_ms_sum": 1558.3,
+   "max_heap_before_gc_mb": 431,
+   "max_heap_after_gc_mb": 431,
+   "max_heap_committed_mb": 433
+  },
+  "max_heap_after_full_gc_mb": 166,
+  "note": "sizes from -Xlog:gc are MiB; load_window = GC events after load.py started; for Serial the max after Full GC is the closer proxy of live heap, a young GC leaves old-generation garbage in place"
+ },
+ "server_log_counts": {
+  "OutOfMemoryError": 0,
+  " ERROR ": 0,
+  "Exception": 0
+ },
+ "activities_uploaded_then_deleted": {
+  "count": 5,
+  "delete_statuses": [
+   204
+  ],
+  "note": "deleted through DELETE /api/activities/{id} after the cgroup values were read; the five athletes created by load.py stay (there is no athlete delete API)"
+ },
+ "h13_values": {
+  "c1_status_codes_ok": true,
+  "c2_not_oom_killed": true,
+  "peak_plus_swap_peak": 807100416,
+  "threshold": 724775731,
+  "c3_within_90pct": false,
+  "all_three": false,
+  "peak_plus_swap_peak_mib": 769.7,
+  "threshold_mib": 691.2,
+  "judged_run": false
+ },
+ "host": [
+  {
+   "when": "before the run",
+   "other_containers_on_this_pc": 1,
+   "host_free_memory_mb": 3016,
+   "host_cpu_load_pct": 46,
+   "gradle_processes_busy": 0,
+   "gpu": "29 %, 1386 MiB"
+  },
+  {
+   "when": "after the run",
+   "other_containers_on_this_pc": 1,
+   "host_free_memory_mb": 2362,
+   "host_cpu_load_pct": 82,
+   "gradle_processes_busy": 0,
+   "gpu": "31 %, 1370 MiB"
+  }
+ ],
+ "nmt_summary_at_exit": {
+  "how": "-XX:NativeMemoryTracking=summary -XX:+UnlockDiagnosticVMOptions -XX:+PrintNMTStatistics, printed when the JVM exited on docker compose stop (after Spring shut down, so threads and pools are gone)",
+  "state_after_stop": {
+   "Status": "exited",
+   "OOMKilled": false,
+   "ExitCode": 143
+  },
+  "lines": [
+   "Native Memory Tracking:",
+   "Total: reserved=1944933239, committed=569578359",
+   "       malloc: 32920439 #233241",
+   "       mmap:   reserved=1912012800, committed=536657920",
+   "-                 Java Heap (reserved=484442112, committed=437596160)",
+   "                            (mmap: reserved=484442112, committed=437596160, peak=468844544)",
+   "-                     Class (reserved=1075306806, committed=10019126)",
+   "                            (classes #14101)",
+   "                            (  instance classes #13192, array classes #909)",
+   "                            (malloc=1564982 #38844) (peak=1565310 #38846)",
+   "                            (mmap: reserved=1073741824, committed=8454144, at peak)",
+   "                            (  Metadata:   )",
+   "                            (    reserved=67108864, committed=55050240)",
+   "                            (    used=54524496)",
+   "                            (    waste=525744 =0.96%)",
+   "                            (  Class space:)",
+   "                            (    reserved=1073741824, committed=8454144)",
+   "                            (    used=8043904)",
+   "                            (    waste=410240 =4.85%)",
+   "-                    Thread (reserved=14728312, committed=1334392)",
+   "                            (threads #13)",
+   "                            (stack: reserved=14680064, committed=1286144, peak=1286144)",
+   "                            (malloc=32216 #94) (peak=81024 #208)",
+   "                            (arena=16032 #28) (peak=930232 #25)",
+   "-                      Code (reserved=255497496, committed=22410520)",
+   "                            (malloc=1864000 #8828) (peak=1903992 #8266)",
+   "                            (mmap: reserved=253632512, committed=20545536, at peak)",
+   "                            (arena=984 #1) (peak=33712 #1)",
+   "-                        GC (reserved=1608874, committed=1457322)",
+   "                            (malloc=23722 #80) (peak=448946 #187)",
+   "                            (mmap: reserved=1585152, committed=1433600, peak=1552384)",
+   "-                  Compiler (reserved=1322904, committed=1322904)",
+   "                            (malloc=61168 #692) (peak=246192 #750)",
+   "                            (arena=1261736 #11) (peak=48933576 #21)",
+   "-                  Internal (reserved=385833, committed=385833)",
+   "                            (malloc=348969 #9581) (peak=377879 #9683)",
+   "                            (mmap: reserved=36864, committed=36864, at peak)",
+   "-                     Other (reserved=10240, committed=10240)",
+   "                            (malloc=10240 #1) (peak=32942888 #17)",
+   "-                    Symbol (reserved=21980030, committed=21980030)",
+   "                            (malloc=19942262 #169847) (at peak)",
+   "                            (arena=2037768 #1) (at peak)",
+   "-    Native Memory Tracking (reserved=3804344, committed=3804344)",
+   "                            (malloc=72488 #1279) (peak=76056 #1333)",
+   "                            (tracking overhead=3731856)",
+   "-        Shared class space (reserved=16777216, committed=12247040, readonly=0)",
+   "                            (mmap: reserved=16777216, committed=12247040, peak=12484608)",
+   "-               Arena Chunk (reserved=1365728, committed=1365728)",
+   "                            (malloc=1365728 #203) (peak=53321432 #1225)",
+   "-                   Tracing (reserved=257, committed=257)",
+   "                            (malloc=257 #5) (peak=305 #6)",
+   "                            (arena=0 #0) (peak=32728 #1)",
+   "-                Statistics (reserved=128, committed=128)",
+   "                            (malloc=128 #2) (at peak)",
+   "-                 Arguments (reserved=135, committed=135)",
+   "                            (malloc=135 #5) (at peak)",
+   "-                    Module (reserved=106272, committed=106272)",
+   "                            (malloc=106272 #2508) (at peak)",
+   "-                 Safepoint (reserved=8192, committed=8192)",
+   "                            (mmap: reserved=8192, committed=8192, at peak)",
+   "-           Synchronization (reserved=89536, committed=89536)",
+   "                            (malloc=89536 #835) (peak=92032 #859)",
+   "-            Serviceability (reserved=17152, committed=17152)",
+   "                            (malloc=17152 #9) (peak=17296 #11)",
+   "-                 Metaspace (reserved=67428368, committed=55369744)",
+   "                            (malloc=319504 #167) (peak=321936 #175)",
+   "                            (mmap: reserved=67108864, committed=55050240, at peak)",
+   "-      String Deduplication (reserved=680, committed=680)",
+   "                            (malloc=680 #8) (at peak)",
+   "-           Object Monitors (reserved=52624, committed=52624)",
+   "                            (malloc=52624 #253) (at peak)",
+   "-                   Unknown (reserved=0, committed=0)",
+   "                            (mmap: reserved=0, committed=0, peak=20480)"
+  ]
+ }
+}
