@@ -271,6 +271,8 @@
   - Tomcat 동작은 라이브러리 바이트코드로 확인했다(tomcat-embed-core 11.0.27, javap): Host가 없는 HTTP/1.0 요청은 `Http11Processor`가 서버 이름을 비워 두고 `Mapper.map`이 엔진의 기본 호스트 이름(localhost)으로 채운다. 응답 버퍼는 8,192바이트이고 `OutputBuffer.close()`가 아직 보내지 않은 응답에 길이를 붙인다. 놀고 있는 keep-alive 연결은 스택에서 60.5초 뒤 닫혔다(nginx 쪽 30초의 근거)
   - 설정 경로: `docker compose run -e RIDEINSIGHT_ALLOWEDHOSTS="localhost,127.0.0.1,[::1],ride.test"`로 띄운 서버가 `Host: ride.test`에 200, `evil.example`에 421을 돌려줬다(임시 컨테이너는 지웠다). compose healthcheck(`wget localhost:8080`)는 그대로 healthy였다
   - ZAP 스택 재스캔(같은 계획, 다른 저장소의 스캔과 겹치지 않게 순서를 지킴): High 0·Medium 0, 경보 목록이 10-15 `stack2`와 같다. 늘어난 ZAP 경고 9건은 Host를 클라우드 메타데이터 이름으로 바꾼 규칙의 요청이 nginx에서 끊긴 것이다
+  - 개발 경로: 스택의 서버(8080)에 Vite 개발 서버(8.3.4, `vite.config.ts`의 `/api` 프록시 그대로)를 붙여 `http://localhost:5173/api/...`를 부르면 200이고(Vite 프록시는 Host `localhost:5173`을 바꾸지 않고 넘긴다), 서버가 gzip으로 보낸 응답도 그대로 지나간다
+  - BREACH류(압축된 응답의 길이로 비밀값을 한 글자씩 맞혀 가는 공격): 비밀값을 되비추는 응답이 없어 해당하지 않는다. HTML 안의 값은 요청마다 바뀌는 CSP nonce뿐이고 API 응답에는 인증 토큰 같은 비밀값이 없다
 - **잡은 실수**
   - (2026-10-15 하드닝, 2026-10-19 읽기 전용 검토가 지적) 그날 개선 후보에 '웹 이미지 nginx를 현재 안정판으로'가 있었지만 커밋(`23fbbb1`)은 CI의 GitHub 액션 버전만 올렸고, 10-15 스택 스캔은 2025-06에 지원이 끝난 가지 위에서 돌았다. 또 포트를 127.0.0.1에만 연 하드닝으로는 DNS rebinding을 막지 못하는데 Host를 보는 곳이 없었다(고치기 전 스택에서 `Host: evil.example`이 두 포트 모두 통과)
   - (이번 구현 중, 실행으로 잡음) 압축 설정 주석에 처음에는 'Spring의 JSON 응답은 길이를 미리 정하지 않아 작은 JSON도 압축된다'고 적었다. 스택에서 재 보니 270·630·1,250·1,932바이트 응답에 Content-Length가 있었고 기본 하한(2KB) 아래라 압축되지 않았다(3,792바이트부터 압축). Tomcat이 버퍼에 다 들어간 응답에 길이를 붙이기 때문이라 주석을 고치고, 계획대로 하한 1KB를 두고 그 경계를 테스트로 묶었다
