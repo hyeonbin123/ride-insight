@@ -1,0 +1,284 @@
+{
+ "report": "gc_implied_recording_interval",
+ "verdict": null,
+ "note": "사후 보고(판정 없음), 개발 세트만. 1단계 판정과 기존 수치는 바꾸지 않는다. 규칙: docs/experiments.md 1단계 '사후 보고: GoldenCheetah 암묵 기록 간격'",
+ "rides": 34332,
+ "athletes": 100,
+ "definition": {
+  "implied_secs": "coggan_tss * 36 / coggan_if ** 2 / samples",
+  "implied_requires": "GC TSS > 0, GC IF > 0, GC TSS not an integer (1e-6), samples >= 1",
+  "same_rel_tol": 0.005,
+  "jitter": "rec_int_share < 0.9",
+  "order": [
+   "no_implied",
+   "jitter_same / jitter_differs",
+   "1s",
+   "non1s_same / non1s_differs"
+  ],
+  "comparison": "agree (rule change 9), 1 W",
+  "mmp_key": "20m_critical_power"
+ },
+ "registered_groups": {
+  "1s": 34246,
+  "other": 86
+ },
+ "categories": {
+  "1s": {
+   "rides": 30652,
+   "athletes": 98,
+   "mode_1s": 30652,
+   "mode_other": 0,
+   "rides_with_bad_rows": 15,
+   "np": {
+    "n": 30652,
+    "agree": 30648,
+    "rate": 0.9998695028056896,
+    "mismatch_1s": 4,
+    "mismatch_other": 0
+   },
+   "mmp_20m": {
+    "n": 30652,
+    "agree": 30646,
+    "rate": 0.9998042542085345,
+    "mismatch_1s": 6,
+    "mismatch_other": 0,
+    "both_absent": 2034
+   },
+   "implied_same": 30600,
+   "pairs": [
+    {
+     "mode": 1.0,
+     "implied": 1.0,
+     "rides": 30600
+    },
+    {
+     "mode": 1.0,
+     "implied": 0.99,
+     "rides": 5
+    },
+    {
+     "mode": 1.0,
+     "implied": 1.01,
+     "rides": 4
+    },
+    {
+     "mode": 1.0,
+     "implied": 0.64,
+     "rides": 3
+    },
+    {
+     "mode": 1.0,
+     "implied": 1.02,
+     "rides": 3
+    }
+   ]
+  },
+  "non1s_same": {
+   "rides": 1,
+   "athletes": 1,
+   "mode_1s": 0,
+   "mode_other": 1,
+   "rides_with_bad_rows": 0,
+   "np": {
+    "n": 1,
+    "agree": 1,
+    "rate": 1.0,
+    "mismatch_1s": 0,
+    "mismatch_other": 0
+   },
+   "mmp_20m": {
+    "n": 1,
+    "agree": 1,
+    "rate": 1.0,
+    "mismatch_1s": 0,
+    "mismatch_other": 0,
+    "both_absent": 1
+   },
+   "implied_same": 1,
+   "pairs": [
+    {
+     "mode": 2.5,
+     "implied": 2.5,
+     "rides": 1
+    }
+   ]
+  },
+  "non1s_differs": {
+   "rides": 46,
+   "athletes": 6,
+   "mode_1s": 0,
+   "mode_other": 46,
+   "rides_with_bad_rows": 0,
+   "np": {
+    "n": 46,
+    "agree": 30,
+    "rate": 0.6521739130434783,
+    "mismatch_1s": 0,
+    "mismatch_other": 16
+   },
+   "mmp_20m": {
+    "n": 46,
+    "agree": 7,
+    "rate": 0.15217391304347827,
+    "mismatch_1s": 0,
+    "mismatch_other": 39,
+    "both_absent": 4
+   },
+   "implied_same": 0,
+   "pairs": [
+    {
+     "mode": 2.0,
+     "implied": 1.0,
+     "rides": 39
+    },
+    {
+     "mode": 10.0,
+     "implied": 1.0,
+     "rides": 2
+    },
+    {
+     "mode": 10000.0,
+     "implied": 1.0,
+     "rides": 2
+    },
+    {
+     "mode": 2.69,
+     "implied": 3.02,
+     "rides": 1
+    },
+    {
+     "mode": 2.69,
+     "implied": 3.03,
+     "rides": 1
+    }
+   ]
+  },
+  "jitter_same": {
+   "rides": 140,
+   "athletes": 13,
+   "mode_1s": 131,
+   "mode_other": 9,
+   "rides_with_bad_rows": 0,
+   "np": {
+    "n": 140,
+    "agree": 140,
+    "rate": 1.0,
+    "mismatch_1s": 0,
+    "mismatch_other": 0
+   },
+   "mmp_20m": {
+    "n": 140,
+    "agree": 140,
+    "rate": 1.0,
+    "mismatch_1s": 0,
+    "mismatch_other": 0,
+    "both_absent": 11
+   },
+   "implied_same": 140,
+   "pairs": [
+    {
+     "mode": 1.0,
+     "implied": 1.0,
+     "rides": 131
+    },
+    {
+     "mode": 2.5,
+     "implied": 2.5,
+     "rides": 3
+    },
+    {
+     "mode": 2.6,
+     "implied": 2.6,
+     "rides": 2
+    },
+    {
+     "mode": 2.1,
+     "implied": 2.1,
+     "rides": 1
+    },
+    {
+     "mode": 2.5,
+     "implied": 2.49,
+     "rides": 1
+    }
+   ]
+  },
+  "jitter_differs": {
+   "rides": 21,
+   "athletes": 3,
+   "mode_1s": 3,
+   "mode_other": 18,
+   "rides_with_bad_rows": 2,
+   "np": {
+    "n": 21,
+    "agree": 20,
+    "rate": 0.9523809523809523,
+    "mismatch_1s": 1,
+    "mismatch_other": 0
+   },
+   "mmp_20m": {
+    "n": 21,
+    "agree": 15,
+    "rate": 0.7142857142857143,
+    "mismatch_1s": 2,
+    "mismatch_other": 4,
+    "both_absent": 7
+   },
+   "implied_same": 0,
+   "pairs": [
+    {
+     "mode": 2.7,
+     "implied": 3.02,
+     "rides": 2
+    },
+    {
+     "mode": 1.0,
+     "implied": 0.99,
+     "rides": 1
+    },
+    {
+     "mode": 1.0,
+     "implied": 1.09,
+     "rides": 1
+    },
+    {
+     "mode": 1.0,
+     "implied": 1.12,
+     "rides": 1
+    },
+    {
+     "mode": 2.2,
+     "implied": 2.3,
+     "rides": 1
+    }
+   ]
+  },
+  "no_implied": {
+   "rides": 3472,
+   "athletes": 37,
+   "mode_1s": 3460,
+   "mode_other": 12,
+   "rides_with_bad_rows": 1,
+   "np": {
+    "n": 3472,
+    "agree": 3463,
+    "rate": 0.9974078341013825,
+    "mismatch_1s": 0,
+    "mismatch_other": 9
+   },
+   "mmp_20m": {
+    "n": 3472,
+    "agree": 3467,
+    "rate": 0.9985599078341014,
+    "mismatch_1s": 0,
+    "mismatch_other": 5,
+    "both_absent": 155
+   },
+   "reasons": {
+    "gc_tss_or_if_absent": 3296,
+    "gc_tss_integer": 175,
+    "no_samples_or_interval": 1
+   }
+  }
+ }
+}
