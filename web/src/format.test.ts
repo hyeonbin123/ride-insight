@@ -49,6 +49,30 @@ describe("format helpers", () => {
     expect(formatDate("not a date", "Asia/Seoul")).toBe("not a date");
   });
 
+  // Java가 정규화한 시간대 이름(2026-10-30): 서버는 선수 시간대를 `ZoneId.of(입력).id`로 저장해 'UTC+9'·'GMT+9'를
+  // 'UTC+09:00'·'GMT+09:00'으로, '+00:00'·'Z'를 'Z'로, 'UT'를 'UT'로 돌려준다. 브라우저 Intl은 이 이름들을 몰라
+  // RangeError를 내고, 고치기 전에는 그 오류를 삼켜 날짜를 UTC 날짜로, 시각을 브라우저 시간대로 대신했다(서버는 같은
+  // 라이딩을 그 오프셋의 현지 날짜로 센다). 앞머리 UTC·GMT·UT를 떼고 'Z'·'UT'를 'UTC'로 바꿔 Intl에 넘겨야 서버와 같은
+  // 날짜·시각이 된다. 시각 비교는 이 PC(KST)와 CI(UTC) 어느 쪽 브라우저 시간대와도 다른 오프셋(−05:00, +05:30)으로 해야
+  // 대체 경로와 구별된다. 초까지 있는 오프셋('+09:00:30')은 Intl이 받지 않아 전처럼 대체한다.
+  it("reads Java's normalized offset names that the browser's Intl does not know", () => {
+    const ride = new Date("2026-10-14T21:30:00Z");
+    expect(dateIn(ride, "UTC+09:00")).toBe("2026-10-15");
+    expect(dateIn(ride, "GMT+09:00")).toBe("2026-10-15");
+    expect(dateIn(ride, "UT+09:00")).toBe("2026-10-15");
+    const lateUtc = new Date("2026-10-15T02:30:00Z");
+    expect(dateIn(lateUtc, "GMT-05:00")).toBe("2026-10-14");
+    expect(dateIn(lateUtc, "UTC-05:00")).toBe("2026-10-14");
+    expect(dateIn(ride, "Z")).toBe("2026-10-14");
+    expect(dateIn(ride, "UT")).toBe("2026-10-14");
+    expect(dateIn(ride, "+09:00:30")).toBe("2026-10-14");
+    const iso = "2026-10-14T21:30:00Z";
+    expect(formatDate(iso, "GMT-05:00")).toBe(new Date(iso).toLocaleString(undefined, { timeZone: "-05:00" }));
+    expect(formatDate(iso, "UTC+05:30")).toBe(new Date(iso).toLocaleString(undefined, { timeZone: "+05:30" }));
+    expect(formatDate(iso, "Z")).toBe(new Date(iso).toLocaleString(undefined, { timeZone: "UTC" }));
+    expect(formatDate(iso, "+09:00:30")).toBe(new Date(iso).toLocaleString());
+  });
+
   // 잠시 뒤 다시 보내면 되는 오류(2026-10-24): 429 too_many_uploads(서버 전체 동시 업로드 상한)와 409 athlete_busy(같은 선수의
   // 다른 쓰기 요청이 선수 행 잠금을 쥠)는 서버가 Retry-After(초)를 함께 보낸다. 설명 뒤에 그 초를 적고, 헤더가 없으면 '잠시
   // 뒤'라고 적는다. 다른 코드는 Retry-After가 없으면 전과 같은 문장이다. 고치기 전에는 두 코드의 한국어 설명이 없어 영어

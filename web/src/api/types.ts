@@ -22,7 +22,8 @@ export interface Athlete {
   weightKg?: number;
   createdAt: string;
   currentThreshold?: Threshold;
-  // 현지 날짜를 셀 시간대(IANA 이름, 기본 Asia/Seoul). 서버는 PMC 날짜·FTP 적용일·기준일을 이 시간대로 센다.
+  // 현지 날짜를 셀 시간대(기본 Asia/Seoul). 서버는 PMC 날짜·FTP 적용일·기준일을 이 시간대로 센다. 값은 Java가 정규화한
+  // 이름이라 IANA 지역 이름 말고도 'UTC+09:00'·'Z' 같은 꼴이 올 수 있다(브라우저 Intl에 넘기기 전에 format.ts가 바꾼다).
   timeZone: string;
 }
 

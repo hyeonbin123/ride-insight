@@ -25,17 +25,30 @@ export function formatNumber(v: number | undefined | null, digits = 1): string {
   return v == null || !Number.isFinite(v) ? "-" : v.toFixed(digits);
 }
 
+// Java가 정규화해 저장한 시간대 이름 → 브라우저 Intl이 받는 이름(2026-10-30). 서버는 선수 시간대를 `ZoneId.of(입력).id`로
+// 저장해(server의 service/Errors.kt parseTimeZone) 'UTC+9'·'GMT-5'·'UT+9'는 'UTC+09:00'·'GMT-05:00'·'UT+09:00'으로, '+00:00'·
+// 'Z'는 'Z'로, 'UT'는 'UT'로 돌려준다(JDK 21로 확인). Intl은 IANA 이름과 '+09:00' 같은 오프셋만 받아 이 이름들에 RangeError를
+// 내고, 그러면 dateIn·formatDate가 UTC 날짜·브라우저 시간대로 대신해 서버와 날짜가 하루 어긋날 수 있었다(Node 24.16 확인).
+// 그래서 오프셋 앞의 UTC·GMT·UT를 떼고('UTC+09:00' → '+09:00'. 두 표기 모두 +가 그리니치 동쪽이라 뜻이 같다) 'Z'·'UT'는
+// 'UTC'로 바꾼다. 서버에서 ZoneId.normalized()로 바꾸는 길은 'UTC'까지 'Z'가 되어 Intl이 다시 실패하므로 쓰지 않았다.
+// 다른 이름(IANA 지역 이름, 'UTC', 'GMT', '+09:00', 'Etc/GMT-9')은 그대로 넘긴다. 초까지 있는 오프셋('+09:00:30')은 Intl이
+// 받지 않아 부르는 쪽이 전처럼 대체한다.
+function intlTimeZone(timeZone: string): string {
+  if (timeZone === "Z" || timeZone === "UT") return "UTC";
+  return timeZone.replace(/^(?:UTC|GMT|UT)(?=[+-])/, "");
+}
+
 // 서버의 ISO 시각을 사람이 읽는 시각으로 바꾼다. 형식은 브라우저의 언어 설정(toLocaleString)을 따르고, 시간대는 timeZone을
 // 주면 그 시간대(선수 시간대), 없으면 브라우저 시간대다. 서버가 2026-10-15부터 PMC 날짜·FTP 적용일·기준일을 선수 시간대로
 // 세므로 목록·상세의 시작 시각도 같은 시간대로 보여야 PMC의 날짜와 맞는다(2026-10-24, 그 전에는 브라우저 시간대만 썼다).
-// 브라우저가 모르는 시간대 이름(예: Java가 정규화해 저장하는 'UTC+09:00')은 RangeError가 나므로 브라우저 시간대로 대신한다.
-// 해석할 수 없는 문자열은 그대로 보여 준다.
+// Java가 정규화한 오프셋 이름('UTC+09:00' 등)은 intlTimeZone으로 바꿔 넘긴다(2026-10-30). 그래도 브라우저가 모르는 이름이면
+// RangeError가 나므로 브라우저 시간대로 대신한다. 해석할 수 없는 문자열은 그대로 보여 준다.
 export function formatDate(iso: string, timeZone?: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   if (timeZone) {
     try {
-      return d.toLocaleString(undefined, { timeZone });
+      return d.toLocaleString(undefined, { timeZone: intlTimeZone(timeZone) });
     } catch {
       // 모르는 시간대 이름: 아래에서 브라우저 시간대로 표시한다
     }
@@ -68,12 +81,18 @@ export function isoDate(d: Date): string {
 
 // Date → 시간대 timeZone의 현지 날짜 'yyyy-MM-dd'. 서버가 2026-10-15부터 PMC·FTP 적용일·기준일을 선수 시간대(기본
 // Asia/Seoul)의 현지 날짜로 세므로, 화면의 '오늘'과 '마지막 라이딩 날짜'도 같은 시간대로 센다. 그 전에는 UTC
-// 날짜라 한국 시각 오전 9시 전에는 전날이 됐다. en-CA 형식이 yyyy-mm-dd라 그대로 쓴다. 시간대가 없거나 브라우저가
-// 모르는 이름이면 UTC 날짜로 대신한다.
+// 날짜라 한국 시각 오전 9시 전에는 전날이 됐다. en-CA 형식이 yyyy-mm-dd라 그대로 쓴다. Java가 정규화한 오프셋 이름은
+// intlTimeZone으로 바꿔 넘긴다(2026-10-30, 그 전에는 'UTC+09:00' 선수의 날짜가 UTC 날짜로 대체됐다). 시간대가 없거나
+// 그래도 브라우저가 모르는 이름이면 UTC 날짜로 대신한다.
 export function dateIn(d: Date, timeZone?: string): string {
   if (!timeZone) return isoDate(d);
   try {
-    return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: intlTimeZone(timeZone),
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(d);
   } catch {
     return isoDate(d);
   }

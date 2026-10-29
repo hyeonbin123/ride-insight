@@ -271,6 +271,20 @@ describe("activity page", () => {
     );
   });
 
+  // Java 정규화 이름(2026-10-30): 'UTC+9'로 시간대를 정한 선수는 서버가 'UTC+09:00'으로 저장해 돌려준다. 브라우저 Intl은
+  // 이 이름을 몰라, 고치기 전에는 기준일이 UTC 날짜(2026-10-14)로 대체됐다. 서버는 같은 라이딩을 +09:00의 현지 날짜
+  // 10-15로 세므로(TimeZoneTest), 화면도 asOf=2026-10-15로 요청해야 이 라이딩이 비교 곡선에 들어간다.
+  it("asks for the comparison curve on the athlete's local date when the zone is a Java offset name", async () => {
+    const best = mockActivityPage(() => Promise.resolve({ ...ATHLETE, timeZone: "UTC+09:00" }));
+    renderActivity();
+
+    await waitFor(() => expect(best).toHaveBeenCalledWith("a1", 6, "2026-10-15"));
+    expect(best).not.toHaveBeenCalledWith("a1", 6, "2026-10-14");
+    expect(screen.getByRole("heading", { level: 5 })).toHaveTextContent(
+      new Date(RIDE.startedAt).toLocaleString(undefined, { timeZone: "+09:00" }),
+    );
+  });
+
   // 기준일의 대체(2026-10-24): 주인 선수 조회가 실패하거나(서버 오류) 응답에 시간대가 없으면(timeZone 필드가 생기기 전의
   // 서버) 비교 커브를 비워 두지 않고 2026-10-24 전과 같은 UTC 날짜(2026-10-14)로 요청한다. '시간대가 올 때까지'만 기다리면
   // 시간대가 없는 응답에서는 비교 곡선이 끝내 나오지 않는다.
