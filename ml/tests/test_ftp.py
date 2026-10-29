@@ -11,6 +11,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from ride_insight_ml import ftp
 
@@ -248,3 +249,198 @@ def test_h7_needs_min_units_per_group():
     r = ftp._h7(target, pred, n=200)
     assert r["diff_stale_minus_fresh"]["point"] == 10.0
     assert r["verdict"] == "지지"
+
+
+# ----------------------------------------------------------------------------- calibrate: R1 80% 예측 구간
+# 아래 테스트는 docs/experiments.md 3단계 'R1 조건부 80% 예측 구간'(규칙 변경 18)의 정의를 고정한다. 규칙은
+# 측정 전에 커밋했고, 여기 값은 모두 손으로 셀 수 있는 합성 단위로 만든다(실제 units.parquet를 읽지 않는다).
+
+
+# split conformal 분위의 순서 통계량 번호: q_lo = r(⌊0.10·(n+1)⌋), q_hi = r(⌈0.90·(n+1)⌉), 1부터 센다. n =
+# 19면 2번째와 18번째, n = 9면 가장 작은 값과 가장 큰 값, n = 100이면 10번째와 91번째다. n = 8이면 ⌊0.9⌋ =
+# 0번째가 되어 정의되지 않으므로 None이어야 한다(규칙: 그 라이딩 수 구간은 구간을 내지 않음). 입력 순서와
+# 무관해야 하므로 섞어서 넣는다. 0.1·(n+1)을 부동소수로 계산하면 경계에서 한 칸 어긋날 수 있어 정수 산술로
+# 구현했는지도 n = 9·19 (0.1·(n+1)이 정확히 정수인 경우)로 확인된다.
+def test_conformal_bounds_are_the_registered_order_statistics():
+    rng = np.random.default_rng(0)
+    r19 = rng.permutation(np.arange(1.0, 20.0))
+    b = ftp.conformal_bounds(r19)
+    assert (b["k_lo"], b["k_hi"], b["q_lo"], b["q_hi"]) == (2, 18, 2.0, 18.0)
+    b = ftp.conformal_bounds(rng.permutation(np.arange(1.0, 10.0)))
+    assert (b["k_lo"], b["k_hi"], b["q_lo"], b["q_hi"]) == (1, 9, 1.0, 9.0)
+    b = ftp.conformal_bounds(rng.permutation(np.arange(1.0, 101.0)))
+    assert (b["k_lo"], b["k_hi"], b["q_lo"], b["q_hi"]) == (10, 91, 10.0, 91.0)
+    assert ftp.conformal_bounds(np.arange(1.0, 9.0)) is None
+    assert ftp.conformal_bounds(np.array([])) is None
+
+
+# 창 안 라이딩 수 구간은 3단계 집단별 보고(breakdown)와 같은 8~12, 13~20, 21~30, 31 이상이다. 경계
+# 값(7·8·12·13· 20·21·30·31)을 고정한다. 8 미만은 측정 조건 밖이라 구간이 없다(None). 서버도 같은 경계를
+# 쓰므로 여기서 어긋나면 서비스가 다른 보정값을 붙이게 된다.
+def test_rides_bucket_boundaries():
+    got = {n: ftp.rides_bucket(n) for n in (0, 7, 8, 12, 13, 20, 21, 30, 31, 500)}
+    assert got == {
+        0: None,
+        7: None,
+        8: "8-12",
+        12: "8-12",
+        13: "13-20",
+        20: "13-20",
+        21: "21-30",
+        30: "21-30",
+        31: "31+",
+        500: "31+",
+    }
+    assert [b[0] for b in ftp.RIDES_BUCKETS] == ["8-12", "13-20", "21-30", "31+"]
+
+
+# 보정·확인용 합성 단위. 모든 단위의 20분 최대가 200 W라 R1 = 190 W이고, 잔차 L_FTP − R1은 라벨 − 190이다.
+# - train: 8~12개 구간 19단위(잔차 1~19 → q_lo 2, q_hi 18), 13~20개 구간 9단위(잔차 −40~+40, 10 W 간격 →
+#   최소·최대), 21~30개 구간 8단위(n < 9라 구간 없음), 31개 이상 0단위(구간 없음), 20분 기록 없는 단위
+#   1개(빠져야 함)
+# - dev: 8~12개 5단위(라벨 192·208은 양 끝이라 포함, 191·209는 밖, 200은 포함 → 3/5), 13~20개 3단위(150은
+#   끝이라 포함, 231은 밖, 190은 포함 → 2/3), 21~30개 2단위·31개 이상 1단위(구간이 없어 포함률에서 빠짐), 20분
+#   기록 없는 단위 1개
+# - test: 라벨이 엉뚱한 단위 4개. 보정·확인에 쓰이면 위 값이 모두 바뀐다
+def _interval_units() -> pd.DataFrame:
+    rows = []
+
+    def add(split, athlete, n_rides, label, fresh=False, mmp_20m=200.0):
+        rows.append(
+            {
+                "athlete": athlete,
+                "split": split,
+                "n_rides": n_rides,
+                "mmp_20m": mmp_20m,
+                "label_ftp": label,
+                "fresh": fresh,
+            }
+        )
+
+    for k in range(1, 20):
+        add("train", f"t{k % 5}", 10, 190.0 + k)
+    for i, k in enumerate(range(-40, 41, 10)):
+        add("train", f"u{i % 3}", 15, 190.0 + k)
+    for k in range(8):
+        add("train", "v0", 25, 190.0 + 3 * k)
+    add("train", "t0", 10, 500.0, mmp_20m=np.nan)
+    # dev 8~12개 구간: 선수 d0 3단위, d1 2단위
+    add("dev", "d0", 9, 192.0, fresh=True)
+    add("dev", "d0", 9, 208.0)
+    add("dev", "d0", 9, 191.0, fresh=True)
+    add("dev", "d1", 9, 209.0)
+    add("dev", "d1", 9, 200.0)
+    # dev 13~20개 구간
+    add("dev", "d1", 20, 150.0, fresh=True)
+    add("dev", "d2", 20, 231.0)
+    add("dev", "d2", 20, 190.0)
+    # dev 구간 없는 라이딩 수(21~30, 31+)와 20분 기록 없는 단위
+    add("dev", "d2", 21, 195.0, fresh=True)
+    add("dev", "d2", 30, 185.0)
+    add("dev", "d0", 40, 250.0)
+    add("dev", "d0", 9, 400.0, mmp_20m=np.nan)
+    for i in range(4):
+        add("test", f"s{i}", 10 + 7 * i, 900.0 - 200 * i)
+    return pd.DataFrame(rows)
+
+
+# 보정 표(train)와 dev 확인 값을 손으로 센 값과 맞춘다. 구간 = [R1 + q_lo, R1 + q_hi]이고 양 끝을
+# 포함한다(라벨 192·208·150이 포함). 포함률 분모는 구간이 있는 dev 단위 8개이고(5 + 3), 구간이 없는 라이딩
+# 수의 dev 단위 3개는 따로 센다. 20분 기록이 없는 단위는 분할마다 빠진 수로 보고한다. 신선/묵은 라벨별 포함률,
+# 폭 중앙값(16 W 5개 + 80 W 3개 → 16), 지금 안내를 대칭 구간 R1 ± (dev MAE 반올림)으로 읽은 포함률도 확인한다:
+# dev 단위 11개의 |오차| 합 201 / 11 = 18.3 → 18 W, |오차| ≤ 18인 단위 7개.
+def test_calibrate_uses_train_per_bucket_and_checks_dev():
+    units = _interval_units()
+    assert ftp.rule_r1(units.iloc[:1]).iloc[0] == 190.0  # 아래 기대값의 전제(R1 = 190 W)
+    r = ftp.calibrate(units)
+    assert r["level"] == 0.8
+    assert r["calibrated_on"] == "train" and r["checked_on"] == "dev"
+    assert r["excluded_no_20m"] == {"train": 1, "dev": 1}
+    assert r["n_train"] == 36 and r["n_dev"] == 11
+    b = {x["name"]: x for x in r["buckets"]}
+    assert list(b) == ["8-12", "13-20", "21-30", "31+"]
+    assert (b["8-12"]["n_train"], b["8-12"]["q_lo"], b["8-12"]["q_hi"], b["8-12"]["width"]) == (
+        19,
+        2.0,
+        18.0,
+        16.0,
+    )
+    assert (b["13-20"]["n_train"], b["13-20"]["q_lo"], b["13-20"]["q_hi"]) == (9, -40.0, 40.0)
+    assert (b["8-12"]["min_rides"], b["8-12"]["max_rides"], b["31+"]["min_rides"], b["31+"]["max_rides"]) == (
+        8,
+        12,
+        31,
+        None,
+    )
+    for name in ("21-30", "31+"):
+        assert b[name]["q_lo"] is None and b[name]["q_hi"] is None
+    assert (b["21-30"]["n_train"], b["31+"]["n_train"]) == (8, 0)
+    assert b["8-12"]["dev"]["coverage"]["point"] == pytest.approx(3 / 5)
+    assert b["8-12"]["dev"]["n_units"] == 5 and b["8-12"]["dev"]["n_athletes"] == 2
+    assert b["13-20"]["dev"]["coverage"]["point"] == pytest.approx(2 / 3)
+    assert b["21-30"]["dev"]["n_units"] == 2 and b["21-30"]["dev"]["coverage"]["point"] is None
+    d = r["dev"]
+    assert d["n_units"] == 8 and d["n_athletes"] == 3 and d["n_without_interval"] == 3
+    assert d["coverage"]["point"] == pytest.approx(5 / 8)
+    assert d["coverage"]["n_athletes"] == 3
+    assert d["median_width"] == 16.0
+    assert d["fresh"]["point"] == pytest.approx(2 / 3)
+    assert d["stale"]["point"] == pytest.approx(3 / 5)
+    assert d["symmetric_dev_mae"]["half_width_watts"] == 18
+    assert d["symmetric_dev_mae"]["coverage"]["point"] == pytest.approx(7 / 11)
+    assert r["H14"]["coverage"] == d["coverage"]
+    assert r["H14"]["verdict"] == ftp._verdict_h14(d["coverage"])
+
+
+# 봉인 test 단위는 읽어도 쓰지 않는다(규칙: test는 3단계에서 한 번 썼다). test 단위를 빼거나 라벨·라이딩 수를
+# 바꿔도 결과가 바이트 단위로 같아야 한다. 결과에 test 단위 수 같은 흔적도 남기지 않는다.
+def test_calibrate_never_uses_test_units():
+    units = _interval_units()
+    base = json.dumps(ftp.calibrate(units), sort_keys=True, default=str)
+    no_test = units[units["split"] != "test"]
+    changed = units.copy()
+    is_test = changed["split"] == "test"
+    changed.loc[is_test, "label_ftp"] = 191.0
+    changed.loc[is_test, "n_rides"] = 9
+    assert json.dumps(ftp.calibrate(no_test), sort_keys=True, default=str) == base
+    assert json.dumps(ftp.calibrate(changed), sort_keys=True, default=str) == base
+    assert '"test"' not in base
+
+
+# H14 판정 경계(dev 참고 판정): 선수 단위 95% 구간이 [76%, 84%] 안이고 80%를 포함하면 '보정 유지', 상한 < 76%
+# 또는 하한 > 84%면 '보정 실패', 그 밖(경계를 걸침, 76~84% 안이지만 80%를 포함하지 않음, 구간 없음)은 '판정
+# 불가'.
+def test_h14_verdict_boundaries():
+    def v(lo, hi):
+        return ftp._verdict_h14({"ci": [lo, hi]})
+
+    assert v(0.77, 0.83) == "보정 유지"
+    assert v(0.76, 0.84) == "보정 유지"
+    assert v(0.80, 0.80) == "보정 유지"
+    assert v(0.70, 0.7599) == "보정 실패"
+    assert v(0.8401, 0.90) == "보정 실패"
+    assert v(0.70, 0.76) == "판정 불가"
+    assert v(0.84, 0.90) == "판정 불가"
+    assert v(0.74, 0.82) == "판정 불가"
+    assert v(0.78, 0.86) == "판정 불가"
+    assert v(0.81, 0.83) == "판정 불가"
+    assert v(0.77, 0.79) == "판정 불가"
+    assert v(None, None) == "판정 불가"
+
+
+# 명령행: calibrate는 --units와 --out만 받아 <out>.json·<out>.md를 쓴다. JSON은 calibrate()의 결과와 같고 줄
+# 끝은 LF다. 분할을 고르는 옵션(--split)은 없어야 한다(봉인 test로 구간을 재는 길을 도구 수준에서 막는다).
+def test_calibrate_cli_writes_reports_and_has_no_split_option(tmp_path: Path):
+    units = _interval_units()
+    p = tmp_path / "units.parquet"
+    units.to_parquet(p, index=False)
+    out = tmp_path / "r1-intervals"
+    ftp.main(["calibrate", "--units", str(p), "--out", str(out)])
+    raw = Path(f"{out}.json").read_bytes()
+    assert b"\r\n" not in raw
+    expected = json.loads(json.dumps(ftp.calibrate(pd.read_parquet(p)), ensure_ascii=False, default=str))
+    assert json.loads(raw.decode("utf-8")) == expected
+    md = Path(f"{out}.md").read_text(encoding="utf-8")
+    assert "H14" in md and "8-12" in md and "개발 세트" in md
+    with pytest.raises(SystemExit):
+        ftp.main(["calibrate", "--units", str(p), "--out", str(out), "--split", "test"])

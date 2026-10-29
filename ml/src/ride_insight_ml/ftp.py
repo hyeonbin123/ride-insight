@@ -5,6 +5,8 @@
 * ``build``     창 특징과 라벨을 붙인 예측 단위(선수, 기준일)를 만든다
 * ``evaluate``  후보를 train으로 맞추고, 한 분할에서 MAE 등을 선수 단위 부트스트랩
                 구간과 함께 보고한다
+* ``calibrate`` R1에 붙일 창 안 라이딩 수 구간별 80% 예측 구간을 train 단위로 보정하고
+                dev 단위로 포함률을 확인한다(봉인 test는 쓰지 않는다)
 
 입력: Kotlin ``parity`` 태스크가 표본 선수마다 쓴 라이딩별 JSONL(라이딩마다 우리 구현의 NP와
 최대 평균 파워 16구간, 그리고 GoldenCheetah의 cp_setting / NP / IF), 라이딩 인덱스 폴더(성별,
@@ -21,6 +23,8 @@
 # GoldenCheetah 메타데이터의 cp_setting·NP·IF. (2) rides.py가 만든 선수별 인덱스 JSON(성별, 출생 연도). (3)
 # 표본 매니페스트(선수별 split).
 # [출력] build: units.parquet와 요약 JSON. evaluate: <out>.json, <out>.md(reports/ftp/dev.*, test.*).
+# calibrate: <out>.json, <out>.md(reports/ftp/r1-intervals.*, docs/experiments.md 3단계 'R1 조건부 80% 예측
+# 구간').
 # [결과 요약] 봉인 test에서 채택 후보 M2(Ridge)는 R1보다 MAE 6.3 W 낮았지만 '5 W 이상' 기준을 구간으로
 # 확정하지 못해(H5 판정 불가) 서비스는 규칙 R1을 쓴다(docs/experiments.md 3단계 결과).
 
@@ -697,8 +701,219 @@ def to_markdown(r: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ----------------------------------------------------------------------------- calibrate: R1 80% 예측 구간
+
+# R1 조건부 80% 예측 구간의 상수. docs/experiments.md 3단계 'R1 조건부 80% 예측 구간'(규칙 변경 18)에 측정
+# 전에 커밋한 값이다.
+# - INTERVAL_TAIL_PCT: 양쪽 꼬리 각각의 비율(%). 10이면 q_lo = r(⌊0.10·(n+1)⌋), q_hi = r(⌈0.90·(n+1)⌉)이고
+#   구간 수준은 80%(INTERVAL_LEVEL)다. 백분율을 정수로 둬서 순서 통계량 번호를 정수 산술로 구한다. 0.1·(n+1)을
+#   부동소수로 계산하면 n+1이 10의 배수일 때 반올림 오차로 한 칸 어긋날 수 있다.
+# - RIDES_BUCKETS: 창 안 파워 라이딩 수 구간(이름, 최소, 최대; 최대가 None이면 위로 열림). 3단계 집단별
+#   보고(breakdown)의 구간과 같다. MIN_RIDES(8) 미만은 측정 조건 밖이라 어느 구간에도 들지 않는다. 서버는 이
+#   이름과 경계를 보고서 JSON에서 그대로 읽는다.
+# - H14_BAND: H14 '보정 유지'의 포함률 범위. dev 포함률의 선수 단위 95% 구간이 이 안에 있고 80%를 포함해야
+#   한다.
+INTERVAL_TAIL_PCT = 10
+INTERVAL_LEVEL = (100 - 2 * INTERVAL_TAIL_PCT) / 100
+RIDES_BUCKETS = (("8-12", 8, 12), ("13-20", 13, 20), ("21-30", 21, 30), ("31+", 31, None))
+H14_BAND = (0.76, 0.84)
+
+
+def rides_bucket(n_rides: int) -> str | None:
+    """창 안 파워 라이딩 수가 속한 구간 이름(RIDES_BUCKETS)을 돌려준다. 8개 미만이면 None."""
+    for name, lo, hi in RIDES_BUCKETS:
+        if n_rides >= lo and (hi is None or n_rides <= hi):
+            return name
+    return None
+
+
+# split conformal의 하·상한. 잔차를 작은 순서로 놓고(1부터 센다) k_lo = ⌊0.10·(n+1)⌋번째와 k_hi =
+# ⌈0.90·(n+1)⌉번째 값을 고른다. 보정 단위와 새 단위가 교환 가능하면 새 단위의 잔차가 k_lo번째보다 작을 확률과
+# k_hi번째보다 클 확률이 각각 10% 이하라, 양 끝을 포함한 구간의 포함률이 80% 이상이 된다(표준 split
+# conformal). n < 9면 k_lo가 0이 되거나 k_hi가 n을 넘어 정의되지 않으므로 None을 돌려준다(규칙: 그 라이딩 수
+# 구간은 구간을 내지 않는다).
+# 입력: 잔차 배열(순서 무관). 출력: {"k_lo", "k_hi", "q_lo", "q_hi"} 또는 None.
+def conformal_bounds(residuals) -> dict | None:
+    """잔차의 split conformal 하·상한 순서 통계량(1부터 센 번호와 값). 정의되지 않으면 None."""
+    r = np.sort(np.asarray(residuals, dtype=float))
+    n = len(r)
+    k_lo = INTERVAL_TAIL_PCT * (n + 1) // 100
+    # ⌈a / b⌉ = −⌊−a / b⌋ (정수 산술)
+    k_hi = -(-(100 - INTERVAL_TAIL_PCT) * (n + 1) // 100)
+    if k_lo < 1 or k_hi > n:
+        return None
+    return {"k_lo": int(k_lo), "k_hi": int(k_hi), "q_lo": float(r[k_lo - 1]), "q_hi": float(r[k_hi - 1])}
+
+
+# H14 판정(dev 참고 판정, 규칙 변경 18). coverage는 athlete_bootstrap 결과(포함률의 선수 단위 95% 구간).
+# 구간이 H14_BAND 안에 있고 80%를 포함하면 '보정 유지', 상한 < 76% 또는 하한 > 84%면 '보정 실패', 그 밖(경계를
+# 걸치거나, 76~84% 안이지만 80%를 포함하지 않거나, 구간이 없음)은 '판정 불가'다.
+def _verdict_h14(coverage: dict) -> str:
+    """dev 포함률의 선수 단위 구간으로 H14를 판정한다."""
+    lo, hi = coverage["ci"]
+    if lo is None or hi is None:
+        return "판정 불가"
+    band_lo, band_hi = H14_BAND
+    if hi < band_lo or lo > band_hi:
+        return "보정 실패"
+    if band_lo <= lo and hi <= band_hi and lo <= INTERVAL_LEVEL <= hi:
+        return "보정 유지"
+    return "판정 불가"
+
+
+# calibrate 하위 명령의 본체. 입력은 build가 만든 예측 단위 표(units.parquet). 3단계와 같이 20분 MMP가 없는
+# 단위를 빼고, train 단위의 잔차 L_FTP − R1로 라이딩 수 구간마다 conformal_bounds를 구한 뒤, dev 단위에 [R1 +
+# q_lo, R1 + q_hi](양 끝 포함)를 붙여 L_FTP가 들어가는 비율(포함률)을 선수 단위 부트스트랩 구간과 함께 잰다.
+# 왜 train으로 보정하나: R1은 학습할 매개변수가 없어 train 단위가 R1을 만드는 데 쓰이지 않았다. 그래서 train은
+# R1에 대해 '처음 보는' 보정 세트가 되고, dev는 보정에 쓰이지 않은 확인 세트가 된다.
+# 봉인 test 단위는 맨 처음에 버린다(3단계에서 한 번 쓴 세트라 이 절에서 쓰지 않는다는 규칙). 분할을 고르는
+# 인자를 두지 않은 것도 같은 이유다. 출력에도 test 단위 수 같은 값을 남기지 않는다.
+# 같은 선수의 단위끼리는 독립이 아니어서 split conformal의 보장이 단위 수준에서 그대로 성립하지 않는다. 그래서
+# 포함률 구간은 선수를 다시 뽑는 athlete_bootstrap으로 낸다(공통 절 규칙 변경 16).
+# 출력 dict: 보정 표(buckets: 이름·경계·train 단위 수·순서 번호·q_lo·q_hi·폭·그 구간의 dev 확인), dev 전체
+# 확인(포함률, 폭 중앙값, 신선/묵은 라벨별 포함률, 지금 안내를 대칭 구간 R1 ± dev MAE로 읽었을 때의 포함률),
+# H14 판정. 서버는 이 JSON의 buckets와 H14를 읽는다(서비스 반영은 '보정 유지'일 때만).
+def calibrate(units: pd.DataFrame, n: int = BOOTSTRAP_N, seed: int = SEED) -> dict:
+    """train 단위로 라이딩 수 구간별 R1 80% 구간을 보정하고 dev 단위로 포함률을 확인한다(test는 쓰지 않음)."""
+    has_20m = units["mmp_20m"].notna()
+    train = units[(units["split"] == "train") & has_20m]
+    dev = units[(units["split"] == "dev") & has_20m]
+    excluded = {s: int(((units["split"] == s) & ~has_20m).sum()) for s in ("train", "dev")}
+    train_bucket = train["n_rides"].map(rides_bucket)
+    dev_bucket = dev["n_rides"].map(rides_bucket)
+    train_resid = train["label_ftp"] - rule_r1(train)
+    dev_r1 = rule_r1(dev)
+    # 구간이 없는 dev 단위(라이딩 수 구간의 train 단위가 9개 미만)는 lo·hi가 NaN으로 남아 포함률에서 빠진다.
+    lo = pd.Series(np.nan, index=dev.index)
+    hi = pd.Series(np.nan, index=dev.index)
+    buckets = []
+    for name, min_rides, max_rides in RIDES_BUCKETS:
+        in_train = train_bucket == name
+        in_dev = dev_bucket == name
+        b = conformal_bounds(train_resid[in_train])
+        entry = {"name": name, "min_rides": min_rides, "max_rides": max_rides, "n_train": int(in_train.sum())}
+        if b is None:
+            entry.update(k_lo=None, k_hi=None, q_lo=None, q_hi=None, width=None)
+        else:
+            entry.update(b, width=b["q_hi"] - b["q_lo"])
+            lo.loc[in_dev] = dev_r1[in_dev] + b["q_lo"]
+            hi.loc[in_dev] = dev_r1[in_dev] + b["q_hi"]
+        buckets.append((entry, in_dev))
+    has = lo.notna()
+    covered = ((dev["label_ftp"] >= lo) & (dev["label_ftp"] <= hi)).astype(float)
+
+    # mask(dev 단위의 부분 집합) 안에서 구간이 있는 단위의 포함률과 선수 단위 95% 구간.
+    def coverage(mask: pd.Series) -> dict:
+        m = mask & has
+        return athlete_bootstrap(covered[m], dev.loc[m, "athlete"], np.mean, n, seed)
+
+    for entry, in_dev in buckets:
+        entry["dev"] = {
+            "n_units": int(in_dev.sum()),
+            "n_athletes": int(dev.loc[in_dev, "athlete"].nunique()),
+            "coverage": coverage(in_dev),
+        }
+    overall = coverage(pd.Series(True, index=dev.index))
+    fresh = dev["fresh"].astype(bool)
+    width = (hi - lo)[has]
+    # 참고(보고만): 지금 안내의 dev MAE를 대칭 구간 R1 ± MAE로 읽었을 때의 포함률. MAE는 같은 dev 단위에서
+    # 다시 재고, 서버가 보여 주는 값처럼 가장 가까운 정수로 반올림한다(0.5는 올림, Kotlin roundToInt와 같음).
+    abs_err = (dev_r1 - dev["label_ftp"]).abs()
+    mae = float(abs_err.mean()) if len(dev) else None
+    half = int(np.floor(mae + 0.5)) if mae is not None else None
+    symmetric = athlete_bootstrap(
+        (abs_err <= half).astype(float) if half is not None else abs_err, dev["athlete"], np.mean, n, seed
+    )
+    return {
+        "method": "R1 + split conformal interval per rides-in-window bucket (Mondrian)",
+        "level": INTERVAL_LEVEL,
+        "residual": "L_FTP - R1",
+        "calibrated_on": "train",
+        "checked_on": "dev",
+        "n_train": int(len(train)),
+        "n_dev": int(len(dev)),
+        "excluded_no_20m": excluded,
+        "buckets": [entry for entry, _ in buckets],
+        "dev": {
+            "n_units": int(has.sum()),
+            "n_athletes": int(dev.loc[has, "athlete"].nunique()),
+            "n_without_interval": int((~has).sum()),
+            "coverage": overall,
+            "median_width": float(width.median()) if len(width) else None,
+            "fresh": coverage(fresh),
+            "stale": coverage(~fresh),
+            "symmetric_dev_mae": {"mae_watts": mae, "half_width_watts": half, "coverage": symmetric},
+        },
+        "H14": {"coverage": overall, "verdict": _verdict_h14(overall)},
+    }
+
+
+# calibrate 결과 dict를 사람이 읽는 Markdown 보고서(reports/ftp/r1-intervals.md)로 만든다. 라이딩 수 구간별
+# 보정 표와 dev 포함률, dev 전체 포함률·폭, 신선/묵은 라벨, 대칭 구간 참고값, H14 판정과 사후 성격·한계
+# 순서다.
+def calibration_to_markdown(r: dict) -> str:
+    def pct(c):
+        if not c or c.get("point") is None:
+            return "-"
+        return f"{c['point'] * 100:.1f}% [{c['ci'][0] * 100:.1f}, {c['ci'][1] * 100:.1f}]"
+
+    def watts(x):
+        return "-" if x is None else f"{x:+.1f}"
+
+    d = r["dev"]
+    sym = d["symmetric_dev_mae"]
+    band = f"[{H14_BAND[0] * 100:.0f}%, {H14_BAND[1] * 100:.0f}%]"
+    median = "-" if d["median_width"] is None else f"{d['median_width']:.1f}"
+    lines = [
+        "# R1 조건부 80% 예측 구간: train 보정, 개발 세트(dev) 확인",
+        "",
+        "- 방법: 창 안 파워 라이딩 수 구간마다 train 잔차(L_FTP − R1)의 split conformal 분위로 "
+        f"구간 [R1 + q_lo, R1 + q_hi]를 만든다(수준 {r['level'] * 100:.0f}%, 양 끝 포함). "
+        "규칙은 docs/experiments.md 3단계 'R1 조건부 80% 예측 구간'",
+        f"- 보정 train 단위 {r['n_train']}개, 확인 dev 단위 {r['n_dev']}개(20분 기록이 없어 뺀 단위 train "
+        f"{r['excluded_no_20m']['train']}개·dev {r['excluded_no_20m']['dev']}개). 봉인 test는 쓰지 않았다",
+        "",
+        "| 창 안 라이딩 수 | train 단위 | q_lo (W) | q_hi (W) | 폭 (W) | dev 단위 (선수) "
+        "| dev 포함률 [95%] |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for b in r["buckets"]:
+        width = "-" if b["width"] is None else f"{b['width']:.1f}"
+        cells = [
+            b["name"],
+            str(b["n_train"]),
+            watts(b["q_lo"]),
+            watts(b["q_hi"]),
+            width,
+            f"{b['dev']['n_units']} ({b['dev']['n_athletes']})",
+            pct(b["dev"]["coverage"]),
+        ]
+        lines.append("| " + " | ".join(cells) + " |")
+    mae = "-" if sym["mae_watts"] is None else f"{sym['mae_watts']:.2f}"
+    lines += [
+        "",
+        f"- dev 전체(구간이 있는 단위 {d['n_units']}개, 선수 {d['n_athletes']}명): "
+        f"포함률 {pct(d['coverage'])}, 구간 폭 중앙값 {median} W. "
+        f"구간이 없는 라이딩 수의 dev 단위 {d['n_without_interval']}개",
+        f"- 신선 라벨 {pct(d['fresh'])}(단위 {d['fresh']['n_units']}개) / "
+        f"묵은 라벨 {pct(d['stale'])}(단위 {d['stale']['n_units']}개)",
+        f"- 참고: 지금 안내의 dev MAE({mae} W)를 대칭 구간 R1 ± {sym['half_width_watts']} W로 읽으면 "
+        f"dev 포함률 {pct(sym['coverage'])}",
+        "",
+        f"- **H14 (dev 참고 판정)**: {r['H14']['verdict']}. 포함률의 선수 단위 95% 구간이 {band} "
+        f"안이고 {r['level'] * 100:.0f}%를 포함하면 '보정 유지', 상한 < {H14_BAND[0] * 100:.0f}% "
+        f"또는 하한 > {H14_BAND[1] * 100:.0f}%면 '보정 실패', 그 밖은 '판정 불가'",
+        "- 사후 성격: dev의 R1 잔차 분포는 2026-10-19 읽기 전용 코드 검토가 먼저 계산해 봤다. "
+        "정식 판정은 처음 보는 선수의 새 봉인 세트에서만 할 수 있다",
+        "- 한계: 포함률은 OpenData(GoldenCheetah 사용자) 선수의 개발 세트 기준이다. "
+        "구간은 선수가 설정해 둔 FTP 값(L_FTP)이 들 범위이지 생리적 FTP의 범위가 아니다",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 # 명령행 진입점. build는 --features(JSONL), --index(rides 인덱스 폴더), --sample(매니페스트), --out(parquet)을
 # 받고, evaluate는 --units, --split(dev/test), --adopt, --out(확장자 없는 경로)을 받아 .json과 .md를 쓴다.
+# calibrate는 --units와 --out만 받는다(분할을 고르는 옵션이 없어 봉인 test로는 돌릴 수 없다).
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -714,9 +929,41 @@ def main(argv: list[str] | None = None) -> None:
         "--adopt", default=None, help="dev에서 고른 채택 후보 이름(봉인 test를 돌릴 때는 반드시 필요)"
     )
     s.add_argument("--out", type=Path, required=True, help="확장자를 뺀 출력 경로(.json과 .md를 쓴다)")
+    # argparse는 help 문자열을 %-서식으로 처리하므로 글자 %는 %%로 쓴다.
+    s = sub.add_parser(
+        "calibrate",
+        help="R1 80%% 예측 구간: train 단위로 보정하고 dev 단위로 확인한다(봉인 test는 쓰지 않는다)",
+        description=(
+            "창 안 파워 라이딩 수 구간(8~12, 13~20, 21~30, 31 이상)마다 train 단위의 잔차 "
+            "L_FTP − R1로 split conformal 80% 구간을 만들고, dev 단위의 포함률을 선수 단위 "
+            "부트스트랩 구간과 함께 잰다(H14, dev 참고 판정). 규칙은 docs/experiments.md 3단계 "
+            "'R1 조건부 80% 예측 구간'. 분할을 고르는 옵션은 일부러 두지 않았다."
+        ),
+    )
+    s.add_argument(
+        "--units",
+        type=Path,
+        required=True,
+        help="build가 만든 예측 단위 parquet(data/features/units.parquet)",
+    )
+    s.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="확장자를 뺀 출력 경로(.json과 .md를 쓴다. 예: ../reports/ftp/r1-intervals)",
+    )
     a = p.parse_args(argv)
     if a.cmd == "build":
         cmd_build(a.features, a.index, a.sample, a.out)
+    elif a.cmd == "calibrate":
+        r = calibrate(pd.read_parquet(a.units))
+        a.out.parent.mkdir(parents=True, exist_ok=True)
+        # evaluate와 같이 줄 끝은 LF, 한국어 판정 문자열은 그대로(ensure_ascii=False) 쓴다.
+        Path(f"{a.out}.json").write_text(
+            json.dumps(r, indent=1, ensure_ascii=False, default=str), encoding="utf-8", newline="\n"
+        )
+        Path(f"{a.out}.md").write_text(calibration_to_markdown(r), encoding="utf-8", newline="\n")
+        print(f"wrote {a.out}.json and {a.out}.md: H14 {r['H14']['verdict']}")
     else:
         # 봉인 test는 dev에서 채택 후보를 먼저 정한 뒤 한 번만 재야 하므로, --adopt 없이 test를 돌리는 것을
         # 막는다. test 결과를 보고 채택 후보를 고르는 일을 도구 수준에서 차단하려는 장치다.
