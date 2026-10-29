@@ -1,0 +1,490 @@
+{
+ "report": "athlete_cluster_bootstrap",
+ "verdict": null,
+ "note": "사후 보고(판정 없음). 1단계 판정과 기존 수치는 바꾸지 않는다. 규칙: docs/experiments.md 1단계 '사후 보고: 선수 군집 부트스트랩'",
+ "rides": 34332,
+ "athletes": 100,
+ "bootstrap": {
+  "n": 2000,
+  "seed": 0,
+  "unit": "athlete"
+ },
+ "comparisons": {
+  "before_rule9": {
+   "H1_np_1s": {
+    "rides": 34246,
+    "athletes": 100,
+    "rate": 0.9998539975471588,
+    "ride_ci": [
+     0.9997079950943176,
+     0.9999707995094318
+    ],
+    "cluster_ci": [
+     0.9995699739997281,
+     1.0
+    ]
+   },
+   "H2_mmp_1s": {
+    "rides": 34246,
+    "athletes": 100,
+    "rate": 0.9995930181627052,
+    "ride_ci": [
+     0.9994159901886351,
+     0.9997463207381884
+    ],
+    "cluster_ci": [
+     0.9990899032589428,
+     0.9998731944844989
+    ],
+    "pairs": 547936
+   },
+   "H3_tss_1s": {
+    "rides": 30786,
+    "athletes": 98,
+    "rate": 0.9987007081140779,
+    "ride_ci": [
+     0.9982784382511531,
+     0.9990904956798545
+    ],
+    "cluster_ci": [
+     0.9965622961804116,
+     0.9999310894600654
+    ]
+   },
+   "H4_np_other": {
+    "rides": 86,
+    "athletes": 9,
+    "rate": 0.7093023255813954,
+    "ride_ci": [
+     0.6162790697674418,
+     0.8023255813953488
+    ],
+    "per_athlete": [
+     {
+      "athlete": "a909f19d-5739-44fc-88b7-277ef78bfcec",
+      "rides": 38,
+      "agree": 27,
+      "rate": 0.7105263157894737
+     },
+     {
+      "athlete": "255352f9-2efe-419e-98a8-4e147916a511",
+      "rides": 34,
+      "agree": 34,
+      "rate": 1.0
+     },
+     {
+      "athlete": "5ca1341d-c4c0-41a4-a13e-121c4adb4edd",
+      "rides": 3,
+      "agree": 0,
+      "rate": 0.0
+     },
+     {
+      "athlete": "2ab8d935-396d-4fe9-99e2-97b516d61825",
+      "rides": 2,
+      "agree": 0,
+      "rate": 0.0
+     },
+     {
+      "athlete": "771b83e6-3278-4d79-bdaa-7c66ba5d30d8",
+      "rides": 2,
+      "agree": 0,
+      "rate": 0.0
+     },
+     {
+      "athlete": "7e30b7bd-60bf-49f6-93ac-8ccc38baabaa",
+      "rides": 2,
+      "agree": 0,
+      "rate": 0.0
+     },
+     {
+      "athlete": "c1af1c04-b81e-43be-a9ab-1e7507e53e2f",
+      "rides": 2,
+      "agree": 0,
+      "rate": 0.0
+     },
+     {
+      "athlete": "d650625e-d98c-4e79-8a9b-5f93932c017c",
+      "rides": 2,
+      "agree": 0,
+      "rate": 0.0
+     },
+     {
+      "athlete": "8ceb0137-7082-4434-820c-e5cd0753e357",
+      "rides": 1,
+      "agree": 0,
+      "rate": 0.0
+     }
+    ]
+   },
+   "mismatch_concentration": {
+    "H1_np_1s": {
+     "total": 5,
+     "top": [
+      {
+       "athlete": "8cddf98c-2cd3-4749-8fc1-4b6c6920ce8d",
+       "mismatches": 4,
+       "share": 0.8,
+       "rides": 274,
+       "rate": 0.9854014598540146
+      },
+      {
+       "athlete": "50a1304c-1319-4128-8dd6-d254b02004f1",
+       "mismatches": 1,
+       "share": 0.2,
+       "rides": 961,
+       "rate": 0.9989594172736732
+      }
+     ]
+    },
+    "H2_mmp_1s": {
+     "total": 223,
+     "top": [
+      {
+       "athlete": "8cddf98c-2cd3-4749-8fc1-4b6c6920ce8d",
+       "mismatches": 116,
+       "share": 0.5201793721973094,
+       "rides": 274,
+       "rate": 0.9735401459854015
+      },
+      {
+       "athlete": "d2d044dc-8740-4be4-8ce8-2555e497adb7",
+       "mismatches": 16,
+       "share": 0.07174887892376682,
+       "rides": 1423,
+       "rate": 0.9992972593113141
+      },
+      {
+       "athlete": "30f19d5e-5f78-4364-90e7-61aa07770096",
+       "mismatches": 14,
+       "share": 0.06278026905829596,
+       "rides": 162,
+       "rate": 0.9945987654320988
+      }
+     ]
+    },
+    "H3_tss_1s": {
+     "total": 40,
+     "top": [
+      {
+       "athlete": "255352f9-2efe-419e-98a8-4e147916a511",
+       "mismatches": 28,
+       "share": 0.7,
+       "rides": 1068,
+       "rate": 0.9737827715355806
+      },
+      {
+       "athlete": "8cddf98c-2cd3-4749-8fc1-4b6c6920ce8d",
+       "mismatches": 8,
+       "share": 0.2,
+       "rides": 77,
+       "rate": 0.8961038961038961
+      },
+      {
+       "athlete": "50a1304c-1319-4128-8dd6-d254b02004f1",
+       "mismatches": 2,
+       "share": 0.05,
+       "rides": 956,
+       "rate": 0.997907949790795
+      }
+     ]
+    },
+    "H4_np_other": {
+     "total": 25,
+     "top": [
+      {
+       "athlete": "a909f19d-5739-44fc-88b7-277ef78bfcec",
+       "mismatches": 11,
+       "share": 0.44,
+       "rides": 38,
+       "rate": 0.7105263157894737
+      },
+      {
+       "athlete": "5ca1341d-c4c0-41a4-a13e-121c4adb4edd",
+       "mismatches": 3,
+       "share": 0.12,
+       "rides": 3,
+       "rate": 0.0
+      },
+      {
+       "athlete": "2ab8d935-396d-4fe9-99e2-97b516d61825",
+       "mismatches": 2,
+       "share": 0.08,
+       "rides": 2,
+       "rate": 0.0
+      }
+     ]
+    }
+   },
+   "without_top_athlete": {
+    "H1_np_1s": {
+     "excluded": "8cddf98c-2cd3-4749-8fc1-4b6c6920ce8d",
+     "rides": 33972,
+     "athletes": 99,
+     "rate": 0.9999705639938773,
+     "cluster_ci": [
+      0.9999068708699015,
+      1.0
+     ]
+    },
+    "H2_mmp_1s": {
+     "excluded": "8cddf98c-2cd3-4749-8fc1-4b6c6920ce8d",
+     "rides": 33972,
+     "athletes": 99,
+     "rate": 0.9998031467090546,
+     "cluster_ci": [
+      0.9997039816348118,
+      0.9998859081754103
+     ]
+    },
+    "H3_tss_1s": {
+     "excluded": "255352f9-2efe-419e-98a8-4e147916a511",
+     "rides": 29718,
+     "athletes": 97,
+     "rate": 0.9995962043206138,
+     "cluster_ci": [
+      0.9988829862421716,
+      0.9999670581514962
+     ]
+    }
+   }
+  },
+  "current": {
+   "H1_np_1s": {
+    "rides": 34246,
+    "athletes": 100,
+    "rate": 0.9998539975471588,
+    "ride_ci": [
+     0.9997079950943176,
+     0.9999707995094318
+    ],
+    "cluster_ci": [
+     0.9995699739997281,
+     1.0
+    ]
+   },
+   "H2_mmp_1s": {
+    "rides": 34246,
+    "athletes": 100,
+    "rate": 0.9998120218419669,
+    "ride_ci": [
+     0.9996787946037493,
+     0.9999233487122584
+    ],
+    "cluster_ci": [
+     0.9994698075875881,
+     0.9999980986915127
+    ],
+    "pairs": 547936
+   },
+   "H3_tss_1s": {
+    "rides": 30786,
+    "athletes": 98,
+    "rate": 0.9987007081140779,
+    "ride_ci": [
+     0.9982784382511531,
+     0.9990904956798545
+    ],
+    "cluster_ci": [
+     0.9965622961804116,
+     0.9999310894600654
+    ]
+   },
+   "H4_np_other": {
+    "rides": 86,
+    "athletes": 9,
+    "rate": 0.7093023255813954,
+    "ride_ci": [
+     0.6162790697674418,
+     0.8023255813953488
+    ],
+    "per_athlete": [
+     {
+      "athlete": "a909f19d-5739-44fc-88b7-277ef78bfcec",
+      "rides": 38,
+      "agree": 27,
+      "rate": 0.7105263157894737
+     },
+     {
+      "athlete": "255352f9-2efe-419e-98a8-4e147916a511",
+      "rides": 34,
+      "agree": 34,
+      "rate": 1.0
+     },
+     {
+      "athlete": "5ca1341d-c4c0-41a4-a13e-121c4adb4edd",
+      "rides": 3,
+      "agree": 0,
+      "rate": 0.0
+     },
+     {
+      "athlete": "2ab8d935-396d-4fe9-99e2-97b516d61825",
+      "rides": 2,
+      "agree": 0,
+      "rate": 0.0
+     },
+     {
+      "athlete": "771b83e6-3278-4d79-bdaa-7c66ba5d30d8",
+      "rides": 2,
+      "agree": 0,
+      "rate": 0.0
+     },
+     {
+      "athlete": "7e30b7bd-60bf-49f6-93ac-8ccc38baabaa",
+      "rides": 2,
+      "agree": 0,
+      "rate": 0.0
+     },
+     {
+      "athlete": "c1af1c04-b81e-43be-a9ab-1e7507e53e2f",
+      "rides": 2,
+      "agree": 0,
+      "rate": 0.0
+     },
+     {
+      "athlete": "d650625e-d98c-4e79-8a9b-5f93932c017c",
+      "rides": 2,
+      "agree": 0,
+      "rate": 0.0
+     },
+     {
+      "athlete": "8ceb0137-7082-4434-820c-e5cd0753e357",
+      "rides": 1,
+      "agree": 0,
+      "rate": 0.0
+     }
+    ]
+   },
+   "mismatch_concentration": {
+    "H1_np_1s": {
+     "total": 5,
+     "top": [
+      {
+       "athlete": "8cddf98c-2cd3-4749-8fc1-4b6c6920ce8d",
+       "mismatches": 4,
+       "share": 0.8,
+       "rides": 274,
+       "rate": 0.9854014598540146
+      },
+      {
+       "athlete": "50a1304c-1319-4128-8dd6-d254b02004f1",
+       "mismatches": 1,
+       "share": 0.2,
+       "rides": 961,
+       "rate": 0.9989594172736732
+      }
+     ]
+    },
+    "H2_mmp_1s": {
+     "total": 103,
+     "top": [
+      {
+       "athlete": "8cddf98c-2cd3-4749-8fc1-4b6c6920ce8d",
+       "mismatches": 80,
+       "share": 0.7766990291262136,
+       "rides": 274,
+       "rate": 0.9817518248175182
+      },
+      {
+       "athlete": "30f19d5e-5f78-4364-90e7-61aa07770096",
+       "mismatches": 14,
+       "share": 0.13592233009708737,
+       "rides": 162,
+       "rate": 0.9945987654320988
+      },
+      {
+       "athlete": "8c2a4c0c-1612-466f-a1e5-6c582c9e1f9c",
+       "mismatches": 8,
+       "share": 0.07766990291262135,
+       "rides": 944,
+       "rate": 0.9994703389830508
+      }
+     ]
+    },
+    "H3_tss_1s": {
+     "total": 40,
+     "top": [
+      {
+       "athlete": "255352f9-2efe-419e-98a8-4e147916a511",
+       "mismatches": 28,
+       "share": 0.7,
+       "rides": 1068,
+       "rate": 0.9737827715355806
+      },
+      {
+       "athlete": "8cddf98c-2cd3-4749-8fc1-4b6c6920ce8d",
+       "mismatches": 8,
+       "share": 0.2,
+       "rides": 77,
+       "rate": 0.8961038961038961
+      },
+      {
+       "athlete": "50a1304c-1319-4128-8dd6-d254b02004f1",
+       "mismatches": 2,
+       "share": 0.05,
+       "rides": 956,
+       "rate": 0.997907949790795
+      }
+     ]
+    },
+    "H4_np_other": {
+     "total": 25,
+     "top": [
+      {
+       "athlete": "a909f19d-5739-44fc-88b7-277ef78bfcec",
+       "mismatches": 11,
+       "share": 0.44,
+       "rides": 38,
+       "rate": 0.7105263157894737
+      },
+      {
+       "athlete": "5ca1341d-c4c0-41a4-a13e-121c4adb4edd",
+       "mismatches": 3,
+       "share": 0.12,
+       "rides": 3,
+       "rate": 0.0
+      },
+      {
+       "athlete": "2ab8d935-396d-4fe9-99e2-97b516d61825",
+       "mismatches": 2,
+       "share": 0.08,
+       "rides": 2,
+       "rate": 0.0
+      }
+     ]
+    }
+   },
+   "without_top_athlete": {
+    "H1_np_1s": {
+     "excluded": "8cddf98c-2cd3-4749-8fc1-4b6c6920ce8d",
+     "rides": 33972,
+     "athletes": 99,
+     "rate": 0.9999705639938773,
+     "cluster_ci": [
+      0.9999068708699015,
+      1.0
+     ]
+    },
+    "H2_mmp_1s": {
+     "excluded": "8cddf98c-2cd3-4749-8fc1-4b6c6920ce8d",
+     "rides": 33972,
+     "athletes": 99,
+     "rate": 0.9999576857411986,
+     "cluster_ci": [
+      0.9998943269077816,
+      1.0
+     ]
+    },
+    "H3_tss_1s": {
+     "excluded": "255352f9-2efe-419e-98a8-4e147916a511",
+     "rides": 29718,
+     "athletes": 97,
+     "rate": 0.9995962043206138,
+     "cluster_ci": [
+      0.9988829862421716,
+      0.9999670581514962
+     ]
+    }
+   }
+  }
+ }
+}

@@ -3,12 +3,17 @@
 # 방향을 확인한다.
 # [왜 중요한가] 판정 코드가 틀리면 봉인 세트 결과(H1~H4)를 그대로 믿을 수 없다. 규칙 변경 2·3처럼 측정 중에
 # 바뀐 비교 규칙이 코드에 정확히 반영됐는지를 여기서 고정한다.
+# 파일 끝의 묶음은 선수 군집 부트스트랩 사후 보고(판정 없음, 규칙 변경 16)를 본다: 군집 구간이 선수에 몰린
+# 불일치를 반영하는지, 고르게 흩어진 불일치에서는 라이딩 단위 구간과 비슷한지, 보고 모드가 등록된 분석과 기존
+# 보고서 파일을 바꾸지 않는지.
 # MMP_KEYS 상수는 현재 어느 테스트에서도 쓰지 않는다.
 
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
+import pytest
 
 from ride_insight_ml import parity
 
@@ -154,3 +159,179 @@ def _write(lines):
     p = Path(tempfile.mkdtemp(dir=".pytest-tmp" if Path(".pytest-tmp").exists() else None)) / "x.jsonl"
     p.write_text("\n".join(json.dumps(x) for x in lines), encoding="utf-8")
     return p
+
+
+# ---- 선수 군집 부트스트랩 사후 보고(판정 없음, 규칙 변경 16) ----
+# 규칙: docs/experiments.md 1단계 '사후 보고: 선수 군집 부트스트랩'.
+
+
+# 선수 2명 중 한 명은 모든 라이딩이 일치하고 다른 한 명은 모두 어긋나면, 선수를 복원 추출할 때 같은 선수만 두
+# 번 뽑히는 경우가 각각 1/4이라 2.5%·97.5% 분위수가 0과 1에 놓인다. 즉 선수 군집 구간은 [0, 1] 양 끝에 닿아야
+# 한다. 같은 마스크의 라이딩 단위 구간은 라이딩 100개를 독립으로 보므로 0.5 근처에 좁게 머문다(군집을 무시하면
+# 구간이 얼마나 좁아지는지 보여 주는 극단적인 경우).
+def test_cluster_interval_reaches_both_ends_with_two_athletes():
+    mask = pd.Series([True] * 50 + [False] * 50)
+    athletes = pd.Series(["good"] * 50 + ["bad"] * 50)
+    cluster = parity.cluster_bootstrap_rate(mask, athletes)
+    assert cluster["n"] == 100 and cluster["athletes"] == 2
+    assert cluster["rate"] == 0.5
+    assert cluster["ci"] == [0.0, 1.0]
+    ride = parity.bootstrap_rate(mask)
+    assert 0.35 < ride["ci"][0] < 0.5 < ride["ci"][1] < 0.65
+
+
+# 불일치가 선수와 상관없이 고르게 흩어져 있으면(선수 100명 × 라이딩 30개, 불일치 확률 10%를 seed 고정 난수로
+# 배정) 선수 군집 구간의 폭은 라이딩 단위 구간과 비슷해야 한다. 군집 효과가 없는 데이터에서 군집 부트스트랩이
+# 구간을 공연히 넓히거나 좁히지 않는다는 확인이다. 점 추정(일치율)은 두 방법이 같다.
+def test_cluster_interval_is_close_to_ride_interval_when_mismatches_are_spread():
+    rng = np.random.default_rng(1)
+    athletes = pd.Series([f"a{i % 100:03d}" for i in range(3000)])
+    mask = pd.Series(rng.random(3000) >= 0.1)
+    ride = parity.bootstrap_rate(mask)
+    cluster = parity.cluster_bootstrap_rate(mask, athletes)
+    assert cluster["athletes"] == 100
+    assert cluster["rate"] == ride["rate"]
+    ratio = (cluster["ci"][1] - cluster["ci"][0]) / (ride["ci"][1] - ride["ci"][0])
+    assert 0.75 < ratio < 1.33
+
+
+# 선수 군집 구간은 선수별 일치율의 평균이 아니라 뽑힌 선수의 라이딩을 합쳐 센다(규칙의 '일치 수 합 / 라이딩 수
+# 합'). 라이딩 1,000개가 모두 일치하는 선수 한 명과 라이딩 1개가 어긋나는 선수 19명이면, 큰 선수가 두세 번
+# 뽑힌 재표집의 비율이 합으로는 99% 넘게(3,000/3,017 등), 선수별 평균으로는 15% 이하(3/20)라 상한이 크게
+# 갈린다. 큰 선수가 한 번도 안 뽑힐 확률은 약 36%라 하한은 0이다. 라이딩 단위로 뽑으면 하한이 0이 될 수 없다.
+def test_cluster_interval_pools_the_rides_of_drawn_athletes():
+    mask = pd.Series([True] * 1000 + [False] * 19)
+    athletes = pd.Series(["big"] * 1000 + [f"s{i:02d}" for i in range(19)])
+    cluster = parity.cluster_bootstrap_rate(mask, athletes)
+    assert cluster["rate"] == parity.bootstrap_rate(mask)["rate"] == 1000 / 1019
+    assert cluster["ci"][0] == 0.0
+    assert cluster["ci"][1] > 0.99
+
+
+# 보고 전용 비교 함수(규칙 변경 9 전, 봉인 측정 때의 agree)는 우리 쪽의 결측만 '없음'으로 본다. 그래서 둘 다
+# 0인 쌍과 '우리 0·GC 없음'인 쌍은 불일치이고, 우리 0과 GC 0.5 W는 둘 다 값으로 보아 차이 1 W 이하라 일치다.
+# 현재 함수는 이 세 쌍을 반대로 센다(docs/experiments.md '사후 수정 재측정 계획'의 '바뀐 것').
+def test_agree_before_rule9_counts_our_zero_as_a_value():
+    ours = pd.Series([0.0, 0.0, None, 0.0, 250.0, 0.0])
+    theirs = pd.Series([0.0, None, 0.0, 250.0, 0.0, 0.5])
+    assert parity.agree_before_rule9(ours, theirs, 1.0).tolist() == [False, False, True, False, False, True]
+    assert parity.agree(ours, theirs, 1.0).tolist() == [True, True, True, False, False, False]
+
+
+# 군집 보고용 합성 세트. 'good' 선수는 1초 라이딩 40개가 모두 일치하고, 'bad' 선수는 1초 라이딩 10개 모두 우리
+# NP가 2 W 높고(H1 불일치, 그 NP로 다시 계산한 TSS도 0.5 넘게 어긋나 H3 불일치) 20분 MMP가 3 W 높다(H2는 2구간
+# 중 1구간 불일치). 1초가 아닌 5초 라이딩은 good 3개(일치)와 bad 1개(NP 불일치).
+def _two_athlete_lines():
+    lines = [_line("good", i, 1.0, 201.0, 201.0, tss_gc=64.6416) for i in range(40)]
+    lines += [_line("bad", i, 1.0, 203.0, 201.0, tss_gc=64.6416, mmp_ours_20m=253.0) for i in range(10)]
+    lines += [_line("good", 40 + i, 5.0, 201.0, 201.0, tss_gc=64.6416) for i in range(3)]
+    lines.append(_line("bad", 10, 5.0, 203.0, 201.0, tss_gc=64.6416))
+    return lines
+
+
+def _write_jsonl(path: Path, lines) -> Path:
+    path.write_text("\n".join(json.dumps(x) for x in lines), encoding="utf-8")
+    return path
+
+
+# 선수 2명 합성 세트의 군집 보고: 선수 군집 구간이 양 끝에 닿고(H1·H3 [0, 1]), 불일치가 모두 한 선수에 있으며
+# (비율 1.0), 그 선수를 빼면 일치율 1.0이고, H4 그 외 그룹은 구간 대신 선수별 표(라이딩 수가 많은 순서)가
+# 나온다. 이 세트에는 0 값이 없어 두 비교 함수의 결과가 같아야 한다.
+def test_cluster_report_on_two_athletes(tmp_path: Path):
+    report = parity.cluster_report(parity.load(_write_jsonl(tmp_path / "t.jsonl", _two_athlete_lines())))
+    assert report["report"] == "athlete_cluster_bootstrap" and report["verdict"] is None
+    assert (report["rides"], report["athletes"]) == (54, 2)
+    current = report["comparisons"]["current"]
+    h1 = current["H1_np_1s"]
+    assert (h1["rides"], h1["athletes"], h1["rate"], h1["cluster_ci"]) == (50, 2, 0.8, [0.0, 1.0])
+    assert h1["ride_ci"][1] - h1["ride_ci"][0] < 0.3
+    h2 = current["H2_mmp_1s"]
+    assert (h2["rides"], h2["pairs"], h2["rate"]) == (50, 100, 0.9)
+    h3 = current["H3_tss_1s"]
+    assert (h3["rides"], h3["rate"], h3["cluster_ci"]) == (50, 0.8, [0.0, 1.0])
+    concentration = current["mismatch_concentration"]
+    assert concentration["H1_np_1s"] == {
+        "total": 10,
+        "top": [{"athlete": "bad", "mismatches": 10, "share": 1.0, "rides": 10, "rate": 0.0}],
+    }
+    assert concentration["H2_mmp_1s"]["total"] == 10
+    assert concentration["H2_mmp_1s"]["top"][0]["rate"] == 0.5
+    without = current["without_top_athlete"]["H1_np_1s"]
+    assert without == {"excluded": "bad", "rides": 40, "athletes": 1, "rate": 1.0, "cluster_ci": [1.0, 1.0]}
+    h4 = current["H4_np_other"]
+    assert (h4["rides"], h4["athletes"], h4["rate"]) == (4, 2, 0.75)
+    assert "cluster_ci" not in h4
+    assert h4["per_athlete"] == [
+        {"athlete": "good", "rides": 3, "agree": 3, "rate": 1.0},
+        {"athlete": "bad", "rides": 1, "agree": 0, "rate": 0.0},
+    ]
+    assert report["comparisons"]["before_rule9"] == current
+
+
+# 두 비교 함수를 모두 낸다: 1초 MMP가 양쪽 모두 3000 W 가드로 0인 라이딩 하나는 현재 함수로는 일치, 봉인 측정
+# 때의 함수로는 불일치 쌍 1개다(규칙 변경 9). 봉인 표와 맞출 값은 before_rule9 쪽이다. 불일치가 없으면 뺄
+# 선수도 없다(excluded None).
+def test_cluster_report_keeps_the_sealed_run_comparison_function(tmp_path: Path):
+    guarded = _line("a", 0, 1.0, 201.0, 201.0, tss_gc=64.6416)
+    guarded["ours"]["mmp"]["1s_critical_power"] = 0.0
+    guarded["gc"]["mmp"]["1s_critical_power"] = 0.0
+    lines = [guarded] + [_line("a", i, 1.0, 201.0, 201.0, tss_gc=64.6416) for i in range(1, 4)]
+    report = parity.cluster_report(parity.load(_write_jsonl(tmp_path / "t.jsonl", lines)))
+    current = report["comparisons"]["current"]
+    assert current["H2_mmp_1s"]["rate"] == 1.0
+    assert current["mismatch_concentration"]["H2_mmp_1s"] == {"total": 0, "top": []}
+    assert current["without_top_athlete"]["H2_mmp_1s"] == {"excluded": None}
+    before = report["comparisons"]["before_rule9"]
+    assert before["H2_mmp_1s"]["rate"] == 7 / 8
+    assert before["mismatch_concentration"]["H2_mmp_1s"]["total"] == 1
+
+
+# --cluster-report 실행은 <out>.json·<out>.md 두 파일만 새로 만들고, 같은 폴더의 기존 분석
+# 보고서(sealed.json)와 JSONL을 바꾸지 않으며 기존 분석 보고서(sealed.md)를 새로 만들지도 않는다(봉인 기록을
+# 덮어쓰지 않는다).
+def test_cluster_report_cli_writes_only_the_cluster_files(tmp_path: Path):
+    jsonl = _write_jsonl(tmp_path / "sealed.jsonl", _two_athlete_lines())
+    (tmp_path / "sealed.json").write_text("recorded", encoding="utf-8")
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+    parity.main(["--jsonl", str(jsonl), "--out", str(tmp_path / "sealed-cluster"), "--cluster-report"])
+    after = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+    assert set(after) - set(before) == {"sealed-cluster.json", "sealed-cluster.md"}
+    assert {name: after[name] for name in before} == before
+    report = json.loads(after["sealed-cluster.json"].decode("utf-8"))
+    assert report["comparisons"]["current"]["H1_np_1s"]["cluster_ci"] == [0.0, 1.0]
+    md = after["sealed-cluster.md"].decode("utf-8")
+    assert "판정 없음" in md and "선수 군집" in md and "H4" in md
+    assert "\r\n" not in md
+
+
+# --out 이름이 -cluster로 끝나지 않으면 군집 보고 모드는 아무것도 쓰지 않고 끝난다. 실수로 '--out
+# .../sealed'를 주면 봉인 기록(sealed.json/md)을 덮어쓰게 되기 때문이다. 오류 문장까지 보는 것은, 옵션을
+# 모르는 옛 코드도 argparse 오류(SystemExit)로 끝나서 종료만 보면 이 거부를 확인할 수 없기 때문이다.
+def test_cluster_report_cli_refuses_an_out_name_without_the_cluster_suffix(tmp_path: Path, capsys):
+    jsonl = _write_jsonl(tmp_path / "sealed.jsonl", _two_athlete_lines())
+    (tmp_path / "sealed.json").write_text("recorded", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        parity.main(["--jsonl", str(jsonl), "--out", str(tmp_path / "sealed"), "--cluster-report"])
+    assert "ending in -cluster" in capsys.readouterr().err
+    assert (tmp_path / "sealed.json").read_text(encoding="utf-8") == "recorded"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["sealed.json", "sealed.jsonl"]
+
+
+# 군집 보고를 만들어도 등록된 분석(analyse)의 H1~H4 수치·판정은 같다: 보고가 입력 표를 바꾸지 않고, 보고의
+# 현재 비교 함수 쪽 라이딩 단위 값(n·일치율·구간)이 analyse와 같으며(두 코드의 가설 대상 라이딩 선택이 같다는
+# 확인), 옵션 없이 실행한 기본 출력도 analyse 결과 그대로이고 군집 보고 파일을 만들지 않는다.
+def test_cluster_report_leaves_the_registered_analysis_unchanged(tmp_path: Path):
+    jsonl = _write_jsonl(tmp_path / "dev.jsonl", _two_athlete_lines())
+    df = parity.load(jsonl)
+    registered = parity.analyse(df)
+    report = parity.cluster_report(df)
+    assert parity.analyse(df) == registered
+    current = report["comparisons"]["current"]
+    for key in ("H1_np_1s", "H2_mmp_1s", "H3_tss_1s", "H4_np_other"):
+        assert current[key]["rides"] == registered[key]["n"]
+        assert current[key]["rate"] == registered[key]["rate"]
+        assert current[key]["ride_ci"] == registered[key]["ci"]
+    parity.main(["--jsonl", str(jsonl), "--out", str(tmp_path / "dev")])
+    written = json.loads((tmp_path / "dev.json").read_text(encoding="utf-8"))
+    assert written == json.loads(json.dumps(registered, ensure_ascii=False, default=str))
+    assert not (tmp_path / "dev-cluster.json").exists()

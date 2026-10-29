@@ -2,6 +2,10 @@
 
 사용법: ``python -m ride_insight_ml.parity --jsonl ../reports/parity/dev.jsonl --out ../reports/parity/dev``
 실행하면 ``<out>.json``(모든 수치)과 ``<out>.md``(요약 표)를 쓴다.
+
+선수 군집 부트스트랩 사후 보고(판정 없음)는 ``--cluster-report``를 붙이고 ``--out``을 ``-cluster``로
+끝나는 이름으로 준다(예: ``--out ../reports/parity/sealed-cluster``). 이때는 등록된 분석을 쓰지 않고 군집
+보고만 쓴다.
 """
 
 # [파일 역할] 1단계(지표 구현의 정확성) 판정 스크립트. Kotlin parity 도구(ParityTool.kt)가 라이딩마다 '우리
@@ -11,13 +15,16 @@
 # 대조해 수치로 보이려는 것이다. 판정 기준(1 W, TSS 0.5, 99%)은 측정 전에 docs/experiments.md 1단계에 적었다.
 # [흐름] load(JSONL → 표, 파생 열: GC 임계값, GC 임계값으로 다시 계산한 TSS, 정수 TSS, 흔들림, 간격 그룹) →
 # analyse(가설별 일치 여부 → 부트스트랩 → 판정, 보고 항목) → to_markdown.
+# 사후 보고(판정 없음): load → cluster_report(선수 군집 부트스트랩, 두 비교 함수) → cluster_to_markdown. 판정
+# 코드(agree·bootstrap_rate·verdict_at_least·analyse)는 쓰기만 하고 고치지 않는다(규칙 변경 16).
 # [결과] 봉인 세트(선수 100명, 라이딩 32,907개)에서 H1 NP 99.61%, H2 MMP 99.65%, H3 TSS 99.97% 지지, H4
-# 기각(reports/parity/sealed.md).
+# 기각(reports/parity/sealed.md). 선수 군집 사후 보고는 docs/experiments.md 1단계 '사후 보고' 절.
 
 from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 # numpy: 부트스트랩 재표집(seed 0 Generator)과 조건부 계산(np.where). pandas: 라이딩 표 처리.
@@ -331,13 +338,358 @@ def to_markdown(r: dict, title: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ---- 사후 보고: 선수 군집 부트스트랩 (판정 없음, docs/experiments.md 1단계, 규칙 변경 16) ----
+# 등록 규칙의 구간은 라이딩을 서로 독립으로 다시 뽑는다. 같은 선수의 라이딩은 기기·내보내기 설정을 공유해
+# 불일치가 선수에 몰릴 수 있으므로(봉인 세트에서 CSV 파워 열이 빈 라이딩), 같은 JSONL에서 선수 단위로 다시
+# 뽑은 구간, 불일치의 선수 집중, 불일치가 가장 많은 선수를 뺀 민감도를 따로 낸다. 이 묶음은 판정을 하지 않고
+# 위의 판정 코드도 고치지 않는다: 위 함수는 그대로 불러 쓰고, 봉인 측정 때의 비교 함수는 보고 전용으로 따로
+# 둔다.
+
+
+# 봉인 측정 때(규칙 변경 9 전: 봉인 측정 커밋 0c0fd3b부터 f82d784까지)의 비교 함수. 봉인 결과 표와 같은
+# 비교로 군집 구간을 내려고 보고에서만 쓴다(analyse는 현재 agree만 쓴다). 현재 agree와 다른 점은 하나다: 우리
+# 쪽은 결측(None/NaN)만 '없음'으로 보고 0은 값으로 본다. 그래서 (우리 0, GC 0)·(우리 0, GC 없음)은 불일치이고,
+# (우리 0, GC 0 초과 1 W 이하)는 둘 다 값이라 일치다(docs/experiments.md '사후 수정 재측정 계획'의 '바뀐 것').
+def agree_before_rule9(ours: pd.Series, theirs: pd.Series, tol: float) -> pd.Series:
+    """규칙 변경 9 전의 행별 일치 여부. GC 쪽은 결측과 0을, 우리 쪽은 결측만 '없음'으로 본다."""
+    o = pd.to_numeric(ours, errors="coerce")
+    t = pd.to_numeric(theirs, errors="coerce")
+    t_absent = t.isna() | (t == 0.0)
+    o_absent = o.isna()
+    both_absent = t_absent & o_absent
+    both_present = ~t_absent & ~o_absent
+    return both_absent | (both_present & ((o - t).abs() <= tol))
+
+
+# 선수 군집 부트스트랩 95% 구간. 선수(군집)를 복원 추출하고 뽑힌 선수의 값 합 / 라이딩 수 합을 n번 구해
+# 2.5%·97.5% 분위수를 낸다. 호출 위치: _cluster_block, _without_top_athlete, tests/test_parity.py.
+# - mask: 라이딩마다 일치 여부(bool), 또는 H2처럼 라이딩별 일치 비율(16쌍 중 일치 비율). 라이딩마다 쌍 수가
+#   같으므로 '비율 합 / 라이딩 수 합'은 '일치 쌍 합 / 쌍 수 합'과 같다
+# - athletes: mask와 같은 순서·길이의 선수 id. 선수 순서는 id를 정렬한 순서(np.unique)로 고정해, JSONL 줄
+#   순서가 바뀌어도 같은 seed면 같은 구간이 나온다
+# - 같은 선수가 두 번 뽑히면 그 선수의 라이딩도 두 번 센다(선수별 비율의 평균이 아니라 합으로 모으므로
+#   라이딩이 많은 선수의 비중이 크다). 점 추정(rate)은 전체 값 합 / 라이딩 수라 라이딩 단위 bootstrap_rate의
+#   rate와 같다
+# - 재표집 행렬이 (n × 선수 수)라 선수 100명이면 메모리·시간이 거의 들지 않는다(라이딩 단위는 n × 라이딩 수)
+# 입력이 비면 rate None. 길이가 다르면 값과 선수가 어긋난 것이므로 ValueError.
+def cluster_bootstrap_rate(
+    mask: pd.Series, athletes: pd.Series, n: int = BOOTSTRAP_N, seed: int = SEED
+) -> dict:
+    values = mask.to_numpy(dtype=float)
+    ids = athletes.to_numpy().astype(str)
+    if len(values) != len(ids):
+        raise ValueError(f"mask has {len(values)} rows but athletes has {len(ids)}")
+    if len(values) == 0:
+        return {"n": 0, "athletes": 0, "rate": None, "ci": [None, None]}
+    unique, codes = np.unique(ids, return_inverse=True)
+    sums = np.bincount(codes, weights=values, minlength=len(unique))
+    counts = np.bincount(codes, minlength=len(unique)).astype(float)
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, len(unique), size=(n, len(unique)))
+    rates = sums[idx].sum(axis=1) / counts[idx].sum(axis=1)
+    return {
+        "n": int(len(values)),
+        "athletes": int(len(unique)),
+        "rate": float(sums.sum() / counts.sum()),
+        "ci": [float(np.quantile(rates, 0.025)), float(np.quantile(rates, 0.975))],
+    }
+
+
+# 가설마다 대상 라이딩을 고른다: MMP 구간 키, 1초 라이딩(H1·H2), 1초가 아닌 라이딩(H4), H3 대상(GC 임계값이
+# 있고 GC TSS가 정수가 아니며 0·결측이 아닌 1초 라이딩). analyse의 선택과 같아야 하지만 analyse는 판정 코드라
+# 고치지 않고 같은 선택을 여기 다시 적었다. 둘이 같은지는 tests/test_parity.py의
+# test_cluster_report_leaves_the_registered_analysis_unchanged와, 실제 JSONL에서 수정 전 비교 함수의 라이딩
+# 단위 값이 기존 보고서와 같은지(docs/experiments.md 결과 절)로 확인한다. 한쪽을 바꾸면 다른 쪽도 바꿔야 한다.
+def _hypothesis_rows(df: pd.DataFrame) -> tuple[list[str], pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    mmp_keys = [c[len("mmp_gc_") :] for c in df.columns if c.startswith("mmp_gc_")]
+    one_s = df[df["interval_group"] == "1s"]
+    other = df[df["interval_group"] != "1s"]
+    tss_gc_present = pd.to_numeric(one_s["tss_gc"], errors="coerce").fillna(0.0) != 0.0
+    with_cp = one_s[one_s["thr_gc"].notna() & ~one_s["tss_gc_integer"] & tss_gc_present]
+    return mmp_keys, one_s, other, with_cp
+
+
+# 선수별 집계 표(선수 id 순서): 라이딩 수(rides), 일치 값 합(agree, H2는 라이딩별 일치 비율의 합), 불일치 수
+# (mismatches, H2는 불일치 쌍 수).
+def _per_athlete_counts(values: pd.Series, mismatches: pd.Series, athletes: pd.Series) -> pd.DataFrame:
+    table = pd.DataFrame(
+        {
+            "athlete": athletes.to_numpy().astype(str),
+            "value": values.to_numpy(dtype=float),
+            "mismatches": mismatches.to_numpy(dtype=float),
+        }
+    )
+    grouped = table.groupby("athlete").agg(
+        rides=("value", "size"), agree=("value", "sum"), mismatches=("mismatches", "sum")
+    )
+    return grouped.reset_index()
+
+
+# 불일치의 선수 집중: 전체 불일치 수와 불일치가 많은 선수 top명(수가 같으면 id 순서로 앞). 선수마다 불일치 수,
+# 전체 불일치 중 비율(share), 그 가설의 라이딩 수(rides), 그 선수 안의 일치율(rate)을 적는다. 불일치가 없는
+# 선수는 넣지 않는다.
+def _mismatch_concentration(per_athlete: pd.DataFrame, top: int = 3) -> dict:
+    total = float(per_athlete["mismatches"].sum())
+    ranked = per_athlete[per_athlete["mismatches"] > 0].sort_values(
+        ["mismatches", "athlete"], ascending=[False, True]
+    )
+    return {
+        "total": int(round(total)),
+        "top": [
+            {
+                "athlete": row.athlete,
+                "mismatches": int(round(row.mismatches)),
+                "share": float(row.mismatches / total),
+                "rides": int(row.rides),
+                "rate": float(row.agree / row.rides),
+            }
+            for row in ranked.head(top).itertuples(index=False)
+        ],
+    }
+
+
+# 민감도: 불일치가 가장 많은 선수 한 명(_mismatch_concentration의 첫 선수)을 뺀 일치율과 선수 군집 구간.
+# 불일치가 없으면 뺄 선수가 없어 {"excluded": None}만 돌려준다.
+def _without_top_athlete(
+    values: pd.Series, athletes: pd.Series, concentration: dict, n: int, seed: int
+) -> dict:
+    if not concentration["top"]:
+        return {"excluded": None}
+    excluded = concentration["top"][0]["athlete"]
+    keep = athletes.to_numpy().astype(str) != excluded
+    rest = cluster_bootstrap_rate(values[keep], athletes[keep], n, seed)
+    return {
+        "excluded": excluded,
+        "rides": rest["n"],
+        "athletes": rest["athletes"],
+        "rate": rest["rate"],
+        "cluster_ci": rest["ci"],
+    }
+
+
+# 비교 함수 하나(agree 또는 agree_before_rule9)로 낸 보고 한 묶음.
+# - H1~H3: 일치율, 라이딩 단위 구간(등록 규칙, analyse와 같은 bootstrap_rate 호출), 선수 군집 구간,
+#   라이딩·선수 수. H2는 쌍 수(pairs)도 적는다
+# - H4(1초가 아닌 라이딩): 일치율과 라이딩 단위 구간에 선수별 표(per_athlete, 라이딩 수가 많은 순서)를 붙이고
+#   군집 구간은 내지 않는다. 봉인 세트는 이 그룹의 선수가 16명이고 한 명이 라이딩의 74%라 군집 구간에 정보가
+#   거의 없다
+# - mismatch_concentration: 가설마다 불일치의 선수 집중(H2는 불일치 쌍)
+# - without_top_athlete: H1~H3마다 불일치가 가장 많은 선수를 뺀 일치율과 선수 군집 구간
+def _cluster_block(
+    df: pd.DataFrame, agree_fn: Callable[[pd.Series, pd.Series, float], pd.Series], n: int, seed: int
+) -> dict:
+    mmp_keys, one_s, other, with_cp = _hypothesis_rows(df)
+    np_1s = agree_fn(one_s["np_ours"], one_s["np_gc"], TOL_WATTS)
+    tss = agree_fn(with_cp["tss_ours_thr"], with_cp["tss_gc"], TOL_TSS)
+    np_other = agree_fn(other["np_ours"], other["np_gc"], TOL_WATTS)
+    # 라이딩 × 구간 일치 표. 라이딩별 일치 비율(H2의 재표집 값, analyse의 ride_mmp_rate와 같음)과 라이딩별
+    # 불일치 쌍 수를 만든다.
+    per_ride_mmp = pd.concat(
+        [agree_fn(one_s[f"mmp_ours_{k}"], one_s[f"mmp_gc_{k}"], TOL_WATTS) for k in mmp_keys], axis=1
+    )
+    if per_ride_mmp.empty:
+        mmp_rate = pd.Series(dtype=float)
+        mmp_mismatches = pd.Series(dtype=float)
+    else:
+        mmp_rate = per_ride_mmp.mean(axis=1)
+        mmp_mismatches = (~per_ride_mmp).sum(axis=1)
+    targets = {
+        "H1_np_1s": (np_1s, ~np_1s, one_s["athlete"]),
+        "H2_mmp_1s": (mmp_rate, mmp_mismatches, one_s["athlete"]),
+        "H3_tss_1s": (tss, ~tss, with_cp["athlete"]),
+        "H4_np_other": (np_other, ~np_other, other["athlete"]),
+    }
+    block: dict = {}
+    concentration: dict = {}
+    without: dict = {}
+    for key, (values, mismatches, athletes) in targets.items():
+        ride = bootstrap_rate(values, n, seed)
+        per_athlete = _per_athlete_counts(values, mismatches, athletes)
+        entry = {
+            "rides": ride["n"],
+            "athletes": int(len(per_athlete)),
+            "rate": ride["rate"],
+            "ride_ci": ride["ci"],
+        }
+        concentration[key] = _mismatch_concentration(per_athlete)
+        if key == "H4_np_other":
+            ordered = per_athlete.sort_values(["rides", "athlete"], ascending=[False, True])
+            entry["per_athlete"] = [
+                {
+                    "athlete": row.athlete,
+                    "rides": int(row.rides),
+                    "agree": int(round(row.agree)),
+                    "rate": float(row.agree / row.rides),
+                }
+                for row in ordered.itertuples(index=False)
+            ]
+        else:
+            entry["cluster_ci"] = cluster_bootstrap_rate(values, athletes, n, seed)["ci"]
+            without[key] = _without_top_athlete(values, athletes, concentration[key], n, seed)
+        block[key] = entry
+    block["H2_mmp_1s"]["pairs"] = int(per_ride_mmp.size)
+    block["mismatch_concentration"] = concentration
+    block["without_top_athlete"] = without
+    return block
+
+
+# 군집 보고 전체: 데이터 크기, 부트스트랩 설정, 두 비교 함수의 묶음(before_rule9 = 봉인 측정 때, current =
+# 현재). verdict는 늘 None이다(판정 없음). 호출 위치: main(--cluster-report), tests/test_parity.py.
+def cluster_report(df: pd.DataFrame, n: int = BOOTSTRAP_N, seed: int = SEED) -> dict:
+    return {
+        "report": "athlete_cluster_bootstrap",
+        "verdict": None,
+        "note": (
+            "사후 보고(판정 없음). 1단계 판정과 기존 수치는 바꾸지 않는다. "
+            "규칙: docs/experiments.md 1단계 '사후 보고: 선수 군집 부트스트랩'"
+        ),
+        "rides": int(len(df)),
+        "athletes": int(df["athlete"].nunique()),
+        "bootstrap": {"n": n, "seed": seed, "unit": "athlete"},
+        "comparisons": {
+            "before_rule9": _cluster_block(df, agree_before_rule9, n, seed),
+            "current": _cluster_block(df, agree, n, seed),
+        },
+    }
+
+
+# 군집 보고 Markdown의 가설 이름(기존 보고서 표와 같은 이름).
+CLUSTER_LABELS = {
+    "H1_np_1s": "H1 NP (1초, ≤1 W)",
+    "H2_mmp_1s": "H2 MMP (1초, 16구간, ≤1 W)",
+    "H3_tss_1s": "H3 TSS (1초, GC 임계값, 정수·부재 TSS 제외, ≤0.5)",
+    "H4_np_other": "H4 NP (1초 아님)",
+}
+
+
+# 군집 보고를 Markdown(reports/parity/*-cluster.md)으로 만든다. 비교 함수마다 가설 표(일치율, 라이딩 단위
+# 구간, 선수 군집 구간, 라이딩·선수 수), 불일치의 선수 집중, 불일치가 가장 많은 선수를 뺀 민감도, H4 1초가
+# 아닌 라이딩의 선수별 일치율. 선수 id는 기존 보고서처럼 앞 8자만 쓴다(JSON에는 전체 id). 비율은 기존
+# 보고서처럼 소수 둘째 자리 백분율이라 99.995% 이상은 100.00으로 보인다(정확한 값은 JSON).
+def cluster_to_markdown(r: dict, title: str) -> str:
+    def pct(x):
+        return "-" if x is None else f"{x * 100:.2f}%"
+
+    def ci(c):
+        return "-" if c[0] is None else f"[{c[0] * 100:.2f}, {c[1] * 100:.2f}]"
+
+    sections = [
+        ("before_rule9", "봉인 측정 때 비교 함수 (규칙 변경 9 전, 기존 봉인 결과 표와 같은 비교)"),
+        ("current", "현재 비교 함수 (규칙 변경 9 뒤)"),
+    ]
+    lines = [
+        f"# 선수 군집 부트스트랩 사후 보고: {title} (판정 없음)",
+        "",
+        f"- 라이딩 {r['rides']}개, 선수 {r['athletes']}명. "
+        f"부트스트랩 {r['bootstrap']['n']}회, seed {r['bootstrap']['seed']}",
+        "- 판정 없음. 1단계 판정과 기존 수치(`reports/parity/`의 기존 보고서, docs/experiments.md 표)는 "
+        "바꾸지 않는다. 규칙: docs/experiments.md 1단계 '사후 보고: 선수 군집 부트스트랩'",
+        "- 라이딩 단위 구간: 등록 규칙(라이딩을 서로 독립으로 다시 뽑음, 기존 보고서와 같은 계산). "
+        "선수 군집 구간: 선수를 복원 추출하고 뽑힌 선수의 일치 수 합 / 라이딩 수 합"
+        "(H2는 일치 쌍 합 / 쌍 수)",
+    ]
+    for key, heading in sections:
+        b = r["comparisons"][key]
+        lines += [
+            "",
+            f"## {heading}",
+            "",
+            "| 가설 | 일치율 | 라이딩 단위 95% 구간 | 선수 군집 95% 구간 | 라이딩 / 선수 |",
+            "|---|---|---|---|---|",
+        ]
+        for h in ("H1_np_1s", "H2_mmp_1s", "H3_tss_1s"):
+            e = b[h]
+            size = f"{e['rides']} / {e['athletes']}" + (f" (쌍 {e['pairs']})" if "pairs" in e else "")
+            lines.append(
+                f"| {CLUSTER_LABELS[h]} | {pct(e['rate'])} | {ci(e['ride_ci'])} "
+                f"| {ci(e['cluster_ci'])} | {size} |"
+            )
+        e = b["H4_np_other"]
+        lines.append(
+            f"| {CLUSTER_LABELS['H4_np_other']} | {pct(e['rate'])} | {ci(e['ride_ci'])} "
+            f"| 구간 대신 선수별 표(아래) | {e['rides']} / {e['athletes']} |"
+        )
+        lines += [
+            "",
+            "### 불일치의 선수 집중 (H2는 불일치 쌍)",
+            "",
+            "| 가설 | 불일치 | 불일치가 많은 선수: 불일치 수 (전체 중 비율), 그 선수의 라이딩 수·일치율 |",
+            "|---|---|---|",
+        ]
+        for h in ("H1_np_1s", "H2_mmp_1s", "H3_tss_1s", "H4_np_other"):
+            c = b["mismatch_concentration"][h]
+            tops = "; ".join(
+                f"{t['athlete'][:8]} {t['mismatches']} ({t['share'] * 100:.1f}%), "
+                f"라이딩 {t['rides']}·일치율 {t['rate'] * 100:.1f}%"
+                for t in c["top"]
+            )
+            lines.append(f"| {CLUSTER_LABELS[h]} | {c['total']} | {tops or '-'} |")
+        lines += [
+            "",
+            "### 불일치가 가장 많은 선수를 뺀 민감도",
+            "",
+            "| 가설 | 뺀 선수 | 일치율 | 선수 군집 95% 구간 | 라이딩 / 선수 |",
+            "|---|---|---|---|---|",
+        ]
+        for h in ("H1_np_1s", "H2_mmp_1s", "H3_tss_1s"):
+            w = b["without_top_athlete"][h]
+            if w["excluded"] is None:
+                lines.append(f"| {CLUSTER_LABELS[h]} | - (불일치 없음) | - | - | - |")
+            else:
+                lines.append(
+                    f"| {CLUSTER_LABELS[h]} | {w['excluded'][:8]} | {pct(w['rate'])} | {ci(w['cluster_ci'])} "
+                    f"| {w['rides']} / {w['athletes']} |"
+                )
+        lines += [
+            "",
+            "### H4 1초가 아닌 라이딩의 선수별 일치율",
+            "",
+            "| 선수 | 라이딩 | 일치 | 일치율 |",
+            "|---|---|---|---|",
+        ]
+        for p in b["H4_np_other"]["per_athlete"]:
+            lines.append(f"| {p['athlete'][:8]} | {p['rides']} | {p['agree']} | {pct(p['rate'])} |")
+    return "\n".join(lines) + "\n"
+
+
 # 명령행 진입점. --jsonl을 분석해 --out.json(모든 수치)과 --out.md(요약)를 쓴다. 보고서 제목은 JSONL 파일
-# 이름(dev, sealed 등)이다.
+# 이름(dev, sealed 등)이다. --cluster-report면 등록된 분석 대신 선수 군집 사후 보고만 쓴다.
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--jsonl", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True, help="확장자를 뺀 출력 경로(.json과 .md를 쓴다)")
+    p.add_argument(
+        "--cluster-report",
+        action="store_true",
+        help=(
+            "등록된 분석(H1~H4 판정) 대신 선수 군집 부트스트랩 사후 보고(판정 없음)만 쓴다. "
+            "두 비교 함수(봉인 측정 때인 규칙 변경 9 전 함수와 현재 함수)로 라이딩 단위·선수 군집 구간, "
+            "불일치의 선수 집중, 불일치가 가장 많은 선수를 뺀 민감도, H4 1초가 아닌 라이딩의 선수별 표를 "
+            "낸다. 기존 보고서를 덮어쓰지 않도록 --out 이름은 -cluster로 끝나야 한다"
+            "(예: ../reports/parity/sealed-cluster)"
+        ),
+    )
     a = p.parse_args(argv)
+    if a.cluster_report:
+        # --out 이름이 -cluster로 끝날 때만 쓴다. '--out ../reports/parity/sealed'처럼 기존 분석 보고서 이름을
+        # 주면 봉인 기록(sealed.json/md)을 덮어쓰게 되므로 JSONL을 읽기 전에 거부한다(p.error는 사용법과
+        # 오류를 stderr에 쓰고 종료 코드 2로 끝낸다). 오류 문장은 이 파일의 다른 실행 메시지처럼 영어로 둔다.
+        if not a.out.name.endswith("-cluster"):
+            p.error(
+                f"--cluster-report needs an --out name ending in -cluster (got {a.out.name!r}) "
+                "so that the registered reports are never overwritten"
+            )
+        report = cluster_report(load(a.jsonl))
+        a.out.parent.mkdir(parents=True, exist_ok=True)
+        # 새 보고서는 줄 끝을 LF로 쓴다(newline="\n"). 그냥 write_text면 Windows에서 CRLF가 된다.
+        Path(f"{a.out}.json").write_text(
+            json.dumps(report, indent=1, ensure_ascii=False, default=str), encoding="utf-8", newline="\n"
+        )
+        Path(f"{a.out}.md").write_text(
+            cluster_to_markdown(report, a.jsonl.stem), encoding="utf-8", newline="\n"
+        )
+        print(f"wrote {a.out}.json and {a.out}.md (athlete-cluster report, no verdict)")
+        return
     df = load(a.jsonl)
     result = analyse(df)
     a.out.parent.mkdir(parents=True, exist_ok=True)
