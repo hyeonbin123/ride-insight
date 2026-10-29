@@ -7,6 +7,8 @@
                 구간과 함께 보고한다
 * ``calibrate`` R1에 붙일 창 안 라이딩 수 구간별 80% 예측 구간을 train 단위로 보정하고
                 dev 단위로 포함률을 확인한다(봉인 test는 쓰지 않는다)
+* ``baseline``  라벨 지속성 기준선 P0(같은 선수의 28일 이상 앞선 가장 최근 단위의 L_FTP)를
+                dev 단위에서 R1과 같은 단위로 비교해 보고한다(판정 없음, 봉인 test는 거부한다)
 
 입력: Kotlin ``parity`` 태스크가 표본 선수마다 쓴 라이딩별 JSONL(라이딩마다 우리 구현의 NP와
 최대 평균 파워 16구간, 그리고 GoldenCheetah의 cp_setting / NP / IF), 라이딩 인덱스 폴더(성별,
@@ -24,7 +26,8 @@
 # 표본 매니페스트(선수별 split).
 # [출력] build: units.parquet와 요약 JSON. evaluate: <out>.json, <out>.md(reports/ftp/dev.*, test.*).
 # calibrate: <out>.json, <out>.md(reports/ftp/r1-intervals.*, docs/experiments.md 3단계 'R1 조건부 80% 예측
-# 구간').
+# 구간'). baseline: <out>.json, <out>.md(reports/ftp/dev-persistence.*, docs/experiments.md 3단계 '사후
+# 보고: 라벨 지속성 기준선 P0').
 # [결과 요약] 봉인 test에서 채택 후보 M2(Ridge)는 R1보다 MAE 6.3 W 낮았지만 '5 W 이상' 기준을 구간으로
 # 확정하지 못해(H5 판정 불가) 서비스는 규칙 R1을 쓴다(docs/experiments.md 3단계 결과).
 
@@ -911,9 +914,223 @@ def calibration_to_markdown(r: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ----------------------------------------------------------------------------- baseline: 라벨 지속성 P0
+
+# 라벨 지속성 기준선의 상수. docs/experiments.md 3단계 '사후 보고: 라벨 지속성 기준선 P0'(규칙 변경 20)에
+# 도구보다 먼저 커밋한 값이다.
+# - P0_MIN_GAP_DAYS: P0의 단위는 기준일이 이 일수(날짜 차이, 경계 포함) 이상 앞서야 한다. '적어도 4주 전에
+#   설정돼 있던 값'이라는 뜻이다. 3단계 기준일 간격(STEP_DAYS)도 28일이라 이 데이터에서는 같은 선수의 바로
+#   앞 단위가 곧 P0의 단위가 되지만, 서로 다른 규칙이라 상수를 따로 둔다(한쪽을 바꿔도 다른 쪽은 그대로).
+# - PERSISTENCE_SPLITS: 이 보고가 받는 분할. 봉인 test는 3단계에서 한 번 썼으므로 받지 않고, P0는 학습할
+#   것이 없어 train도 쓰지 않는다.
+# - PERSISTENCE_OUT_SUFFIX: --out 이름이 이것으로 끝나야 한다. reports/ftp/dev.*·test.* 같은 3단계 기록을
+#   이 명령이 덮어쓰지 않게 하려는 것이다.
+P0_MIN_GAP_DAYS = 28
+PERSISTENCE_SPLITS = ("dev",)
+PERSISTENCE_OUT_SUFFIX = "-persistence"
+
+
+# 선수마다 단위의 위치(0부터 센 행 번호)를 기준일 순서로 정렬해, (위치 배열, 그 순서의 기준일 배열)을
+# 하나씩 내보낸다. previous_unit_labels와 _previous_closer_than_gap이 같은 순서를 쓰게 하려는 도우미다.
+# 인덱스 이름표가 아니라 위치로 다뤄 인덱스가 겹치거나 섞여 있어도 결과를 원래 행에 정확히 되돌린다. 같은
+# 기준일끼리는 입력 순서를 지킨다(안정 정렬).
+def _by_athlete_in_date_order(units: pd.DataFrame):
+    dates = pd.to_datetime(units["ref_date"]).to_numpy()
+    for pos in units.groupby("athlete", sort=False).indices.values():
+        pos = pos[np.argsort(dates[pos], kind="stable")]
+        yield pos, dates[pos]
+
+
+# 단위마다 P0 = 같은 선수의 단위 중 기준일이 min_gap_days일 이상 앞선 단위 가운데 기준일이 가장 늦은 단위의
+# L_FTP를 구한다. 그런 단위가 없으면 NaN(선수의 첫 단위가 그렇다).
+# 입력: athlete·ref_date('YYYY-MM-DD')·label_ftp 열이 있는 단위 표. 분할은 호출하는 쪽이 먼저 거른다.
+# 출력: 입력 인덱스에 맞춘 float Series(행 순서와 무관하다).
+# 방법: 선수마다 정렬한 기준일 배열에서 '기준일 − min_gap_days' 이하인 마지막 위치를 이분 탐색
+# (np.searchsorted, side="right")으로 찾는다. 같은 선수 안에서만 찾으므로 다른 선수의 단위는 P0가 될 수 없다.
+# 같은 선수의 기준일이 같은 단위가 여럿이면 정렬 순서의 뒤쪽 단위를 고르지만, build_units의 기준일은 28일
+# 이상 떨어져 있어 실제 데이터에서는 그런 일이 없다.
+def previous_unit_labels(units: pd.DataFrame, min_gap_days: int = P0_MIN_GAP_DAYS) -> pd.Series:
+    """같은 선수의 단위 중 기준일이 ``min_gap_days``일 이상 앞선 가장 최근 단위의 L_FTP(없으면 NaN)."""
+    labels = units["label_ftp"].to_numpy(dtype=float)
+    out = np.full(len(units), np.nan)
+    gap = np.timedelta64(min_gap_days, "D")
+    for pos, dates in _by_athlete_in_date_order(units):
+        k = np.searchsorted(dates, dates - gap, side="right") - 1
+        out[pos] = np.where(k >= 0, labels[pos][np.maximum(k, 0)], np.nan)
+    return pd.Series(out, index=units.index)
+
+
+# 같은 선수의 바로 앞 단위(기준일 순서)가 min_gap_days일보다 가까운 단위를 True로 표시한다(선수의 첫 단위는
+# False). 이런 단위는 P0를 그보다 앞 단위에서 가져오거나 P0가 없게 된다. 보고의 이 수가 0이면 이 데이터의 P0는
+# '바로 앞 단위의 L_FTP'(2026-10-19 읽기 전용 코드 검토가 먼저 계산할 때 쓴 정의)와 같다.
+def _previous_closer_than_gap(units: pd.DataFrame, min_gap_days: int = P0_MIN_GAP_DAYS) -> pd.Series:
+    out = np.zeros(len(units), dtype=bool)
+    gap = np.timedelta64(min_gap_days, "D")
+    for pos, dates in _by_athlete_in_date_order(units):
+        out[pos[1:]] = (dates[1:] - dates[:-1]) < gap
+    return pd.Series(out, index=units.index)
+
+
+# baseline 하위 명령의 본체. 입력은 build가 만든 예측 단위 표(units.parquet)다.
+# 1) 받은 표에서 split(dev만 허용) 단위만 남긴다. 봉인 test와 train 단위는 여기서 버려 P0의 단위로도 쓰이지
+#    않는다(분할이 선수 단위라 dev 선수의 단위는 모두 dev에 있다). dev가 아닌 분할은 ValueError로 거부한다.
+# 2) 남은 dev 단위 전체에서 P0를 구한다. 20분 MMP가 없는 단위도 L_FTP는 있으므로 P0의 단위가 될 수 있다.
+# 3) 평가 단위는 3단계 dev 평가(evaluate)와 같이 20분 MMP가 있는 단위다. 그래서 모든 평가 단위에서 R1이
+#    정의되고, 'R1 MAE(평가 단위 전체)'가 reports/ftp/dev.json의 R1 MAE와 같은 계산이 된다.
+# 4) P0가 있는 단위에서 P0와 R1의 MAE·중앙값 절대 오차·편향, 짝지은 차이 P0 − R1(paired_mae_difference),
+#    신선/묵은 라벨별 MAE, L_FTP가 P0와 다른 단위의 비율을 낸다. 구간은 모두 athlete_bootstrap(선수 단위
+#    재표집, 2,000회, seed 0)이다.
+# 판정은 없다(verdict None). P0는 3단계 후보(candidates)에 넣지 않는다. 넣으면 'dev MAE 최소 = 채택 후보'
+# 규칙이 설정값을 그대로 내는 P0를 고르게 되는데, P0는 설정값이 없는 처음 보는 선수에게 쓸 수 없어 FTP 추정
+# 방법이 아니다. 입력 표는 바꾸지 않는다(evaluate 결과에 영향 없음).
+def persistence_baseline(
+    units: pd.DataFrame, split: str = "dev", n: int = BOOTSTRAP_N, seed: int = SEED
+) -> dict:
+    """dev 단위에서 라벨 지속성 기준선 P0를 R1과 같은 단위로 비교해 보고한다(판정 없음)."""
+    if split not in PERSISTENCE_SPLITS:
+        raise ValueError(
+            f"the persistence baseline runs on {', '.join(PERSISTENCE_SPLITS)} only, not {split!r} "
+            "(the sealed test split was used once in stage 3, and P0 has nothing to learn from train)"
+        )
+    pool = units[units["split"] == split]
+    p0_all = previous_unit_labels(pool)
+    closer_all = _previous_closer_than_gap(pool)
+    has_20m = pool["mmp_20m"].notna()
+    target = pool[has_20m]
+    r1 = rule_r1(target)
+    p0 = p0_all[has_20m]
+    has = p0.notna()
+    u = target[has]
+    p0u, r1u = p0[has], r1[has]
+
+    # 한 예측의 MAE(선수 단위 구간).
+    def mae(pred: pd.Series, frame: pd.DataFrame) -> dict:
+        return athlete_bootstrap((pred - frame["label_ftp"]).abs(), frame["athlete"], np.mean, n, seed)
+
+    # 한 예측의 MAE·중앙값 절대 오차·편향(예측 − L_FTP 평균). 3단계 summarize와 같은 지표다(MAPE·적용
+    # 비율은 이 보고에 등록하지 않아 뺐다).
+    def errors(pred: pd.Series, frame: pd.DataFrame) -> dict:
+        err = pred - frame["label_ftp"]
+        return {
+            "mae": athlete_bootstrap(err.abs(), frame["athlete"], np.mean, n, seed),
+            "median_ae": athlete_bootstrap(err.abs(), frame["athlete"], np.median, n, seed),
+            "bias": athlete_bootstrap(err, frame["athlete"], np.mean, n, seed),
+        }
+
+    # 신선/묵은 라벨(3단계 정의, build_units의 fresh)로 나눈 P0·R1 MAE.
+    fresh = u["fresh"].astype(bool)
+    groups = {}
+    for name, mask in (("fresh", fresh), ("stale", ~fresh)):
+        g = u[mask]
+        groups[name] = {
+            "n_units": int(len(g)),
+            "n_athletes": int(g["athlete"].nunique()),
+            "p0_mae": mae(p0u[mask], g),
+            "r1_mae": mae(r1u[mask], g),
+        }
+    # L_FTP − P0가 0이 아니면 '라벨이 P0와 다름'. 라벨은 반올림한 정수 임계값이거나 cp_setting이라 그대로
+    # 비교한다. 0보다 크면 설정값을 올린 것, 작으면 내린 것이다.
+    change = u["label_ftp"] - p0u
+    labels_per_athlete = target.groupby("athlete")["label_ftp"].nunique()
+    return {
+        "method": "P0 = L_FTP of the same athlete's latest unit at least 28 days earlier",
+        "split": split,
+        "min_gap_days": P0_MIN_GAP_DAYS,
+        "n_units": int(len(target)),
+        "n_athletes": int(target["athlete"].nunique()),
+        "excluded_no_20m": int((~has_20m).sum()),
+        "with_p0": {
+            "n_units": int(has.sum()),
+            "n_athletes": int(u["athlete"].nunique()),
+            "share": float(has.mean()) if len(has) else 0.0,
+        },
+        "n_without_p0": int((~has).sum()),
+        "n_previous_closer_than_min_gap": int(closer_all[has_20m].sum()),
+        "p0": errors(p0u, u),
+        "r1": errors(r1u, u),
+        "paired_mae_p0_minus_r1": paired_mae_difference(p0u, r1u, u, n, seed),
+        "fresh": groups["fresh"],
+        "stale": groups["stale"],
+        "label_differs": {
+            "share": athlete_bootstrap((change != 0).astype(float), u["athlete"], np.mean, n, seed),
+            "n_units": int((change != 0).sum()),
+            "n_up": int((change > 0).sum()),
+            "n_down": int((change < 0).sum()),
+        },
+        "athletes_single_label": {
+            "n_athletes": int((labels_per_athlete == 1).sum()),
+            "of": int(len(labels_per_athlete)),
+        },
+        "r1_all_units_mae": mae(r1, target),
+        "verdict": None,
+    }
+
+
+# persistence_baseline 결과 dict를 사람이 읽는 Markdown 보고서(reports/ftp/dev-persistence.md)로 만든다.
+# 정의와 단위 수, P0·R1 표(MAE·중앙값 AE·편향과 신선/묵은 라벨 MAE), 짝지은 차이, 라벨이 P0와 다른 단위,
+# 한 값인 선수, 3단계 dev 보고서와 같은 R1 MAE, 판정 없음과 한계 순서다. 1 W보다 작은 차이도 읽을 수 있게
+# 수치는 소수 둘째 자리까지 쓴다(3단계 보고서는 첫째 자리).
+def persistence_to_markdown(r: dict) -> str:
+    def ci(d):
+        if not d or d.get("point") is None:
+            return "-"
+        return f"{d['point']:.2f} [{d['ci'][0]:.2f}, {d['ci'][1]:.2f}]"
+
+    def pct(d):
+        if not d or d.get("point") is None:
+            return "-"
+        return f"{d['point'] * 100:.1f}% [{d['ci'][0] * 100:.1f}, {d['ci'][1] * 100:.1f}]"
+
+    w, f, s, d = r["with_p0"], r["fresh"], r["stale"], r["label_differs"]
+    single = r["athletes_single_label"]
+    gap = r["min_gap_days"]
+    lines = [
+        "# 라벨 지속성 기준선 P0: 개발 세트(dev) 사후 보고 (판정 없음)",
+        "",
+        f"- P0 = 같은 선수의 단위 중 기준일이 {gap}일 이상 앞선 가장 최근 단위의 L_FTP(선수가 전에 "
+        "설정해 둔 값). 규칙은 docs/experiments.md 3단계 '사후 보고: 라벨 지속성 기준선 P0'",
+        f"- 평가 단위 {r['n_units']}개(선수 {r['n_athletes']}명, 20분 기록이 없어 뺀 단위 "
+        f"{r['excluded_no_20m']}개). P0가 있는 단위 {w['n_units']}개(선수 {w['n_athletes']}명, "
+        f"{w['share'] * 100:.1f}%), 없는 단위 {r['n_without_p0']}개, 바로 앞 단위가 {gap}일보다 가까운 "
+        f"단위 {r['n_previous_closer_than_min_gap']}개. 봉인 test는 쓰지 않았다",
+        "",
+        f"| 방법 (P0가 있는 단위 {w['n_units']}개) | MAE (W) [95%] | 중앙값 AE (W) [95%] | 편향 (W) [95%] "
+        "| MAE 신선 / 묵은 라벨 (W) |",
+        "|---|---|---|---|---|",
+    ]
+    for name, key in (("P0 전 설정값", "p0"), ("R1 20분×0.95", "r1")):
+        m = r[key]
+        cells = [
+            name,
+            ci(m["mae"]),
+            ci(m["median_ae"]),
+            ci(m["bias"]),
+            f"{ci(f[f'{key}_mae'])} / {ci(s[f'{key}_mae'])}",
+        ]
+        lines.append("| " + " | ".join(cells) + " |")
+    lines += [
+        "",
+        f"- 짝지은 MAE 차이 P0 − R1: {ci(r['paired_mae_p0_minus_r1'])} W",
+        f"- 신선 라벨 단위 {f['n_units']}개(선수 {f['n_athletes']}명) / 묵은 라벨 단위 {s['n_units']}개"
+        f"(선수 {s['n_athletes']}명)",
+        f"- L_FTP가 P0와 다른 단위 {d['n_units']}개, 비율 {pct(d['share'])}. 그중 P0보다 높은 단위 "
+        f"{d['n_up']}개, 낮은 단위 {d['n_down']}개",
+        f"- 평가 단위의 L_FTP가 모두 한 값인 선수 {single['n_athletes']}명 / {single['of']}명",
+        f"- 참고: 평가 단위 전체의 R1 MAE {ci(r['r1_all_units_mae'])} W(3단계 dev 보고서와 같은 단위·같은 "
+        "계산)",
+        "",
+        "- 판정 없음: 2026-10-19 읽기 전용 코드 검토가 같은 개발 세트로 이 기준선을 먼저 계산해 봤다"
+        "(값을 본 뒤의 보고)",
+        "- 한계: P0는 FTP 추정 방법이 아니다. 설정값이 없는 처음 보는 선수에게 쓸 수 없고 수행력이 바뀌어도 "
+        "따라가지 않는다. 3단계의 후보·수치·판정과 서비스는 그대로다",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 # 명령행 진입점. build는 --features(JSONL), --index(rides 인덱스 폴더), --sample(매니페스트), --out(parquet)을
 # 받고, evaluate는 --units, --split(dev/test), --adopt, --out(확장자 없는 경로)을 받아 .json과 .md를 쓴다.
-# calibrate는 --units와 --out만 받는다(분할을 고르는 옵션이 없어 봉인 test로는 돌릴 수 없다).
+# calibrate는 --units와 --out만 받는다(분할을 고르는 옵션이 없어 봉인 test로는 돌릴 수 없다). baseline은
+# --units, --split(dev만 받는다), --out(이름이 -persistence로 끝나야 한다)을 받는다.
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -952,9 +1169,55 @@ def main(argv: list[str] | None = None) -> None:
         required=True,
         help="확장자를 뺀 출력 경로(.json과 .md를 쓴다. 예: ../reports/ftp/r1-intervals)",
     )
+    s = sub.add_parser(
+        "baseline",
+        help="라벨 지속성 기준선 P0를 dev 단위에서 R1과 함께 보고한다(판정 없음, 봉인 test는 거부한다)",
+        description=(
+            "P0 = 같은 선수의 단위 중 기준일이 28일 이상 앞선 가장 최근 단위의 L_FTP(선수가 전에 설정해 "
+            "둔 값). 20분 MMP가 있는 dev 단위에서 P0와 R1의 MAE·중앙값 절대 오차·편향, 짝지은 차이 "
+            "P0 − R1, 신선/묵은 라벨별 MAE, L_FTP가 P0와 다른 단위의 비율을 선수 단위 부트스트랩 구간과 "
+            "함께 쓴다. 판정은 없다. 규칙은 docs/experiments.md 3단계 '사후 보고: 라벨 지속성 기준선 P0'. "
+            "P0는 3단계 후보에 넣지 않으므로 evaluate의 결과는 바뀌지 않는다."
+        ),
+    )
+    s.add_argument(
+        "--units",
+        type=Path,
+        required=True,
+        help="build가 만든 예측 단위 parquet(data/features/units.parquet)",
+    )
+    s.add_argument(
+        "--split",
+        choices=list(PERSISTENCE_SPLITS),
+        required=True,
+        help="평가할 분할. dev만 받는다(봉인 test는 3단계에서 한 번 썼으므로 거부한다)",
+    )
+    s.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="확장자를 뺀 출력 경로. 이름이 -persistence로 끝나야 한다(예: ../reports/ftp/dev-persistence)",
+    )
     a = p.parse_args(argv)
     if a.cmd == "build":
         cmd_build(a.features, a.index, a.sample, a.out)
+    elif a.cmd == "baseline":
+        # 3단계 기록(reports/ftp/dev.*·test.* 등)을 덮어쓰지 않게, --out 이름이 -persistence로 끝나지 않으면
+        # 단위 파일을 읽기 전에 거부한다(p.error는 사용법과 오류를 stderr에 쓰고 종료 코드 2로 끝낸다).
+        # 봉인 test는 --split의 choices가 먼저 막는다.
+        if not a.out.name.endswith(PERSISTENCE_OUT_SUFFIX):
+            p.error(
+                f"baseline: --out must end in {PERSISTENCE_OUT_SUFFIX} (got {a.out.name!r}) "
+                "so that the stage 3 reports are not overwritten"
+            )
+        r = persistence_baseline(pd.read_parquet(a.units), a.split)
+        a.out.parent.mkdir(parents=True, exist_ok=True)
+        # evaluate·calibrate와 같이 줄 끝은 LF, 한국어 문자열은 그대로(ensure_ascii=False) 쓴다.
+        Path(f"{a.out}.json").write_text(
+            json.dumps(r, indent=1, ensure_ascii=False, default=str), encoding="utf-8", newline="\n"
+        )
+        Path(f"{a.out}.md").write_text(persistence_to_markdown(r), encoding="utf-8", newline="\n")
+        print(f"wrote {a.out}.json and {a.out}.md (no verdict)")
     elif a.cmd == "calibrate":
         r = calibrate(pd.read_parquet(a.units))
         a.out.parent.mkdir(parents=True, exist_ok=True)

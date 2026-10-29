@@ -444,3 +444,192 @@ def test_calibrate_cli_writes_reports_and_has_no_split_option(tmp_path: Path):
     assert "H14" in md and "8-12" in md and "개발 세트" in md
     with pytest.raises(SystemExit):
         ftp.main(["calibrate", "--units", str(p), "--out", str(out), "--split", "test"])
+
+
+# ----------------------------------------------------------------------------- baseline: 라벨 지속성 P0
+# 아래 테스트는 docs/experiments.md 3단계 '사후 보고: 라벨 지속성 기준선 P0'(규칙 변경 20)의 정의를
+# 고정한다. 규칙은 도구보다 먼저 커밋했고, 값은 모두 손으로 셀 수 있는 합성 단위로 만든다(실제
+# units.parquet를 읽지 않는다).
+
+
+# 지속성 기준선용 합성 단위(baseline이 쓰는 열만). R1 = 0.95 × mmp_20m이고 날짜는 기준일(ref_date)이다.
+# - dev d0: 1/1(라벨 245, 첫 단위라 P0 없음), 1/29(250, 정확히 28일 뒤 → P0 = 245), 2/26(260·신선,
+#   28일 이상 앞선 단위 중 가장 늦은 1/29 → P0 = 250. 더 오래된 1/1의 245가 아니다)
+# - dev d1: 1/10(300, P0 없음), 2/6(300, 바로 앞 단위가 27일 전이라 건너뛰고 그 앞이 없어 P0 없음),
+#   3/6(300, P0 = 300). 행 순서를 일부러 섞어 넣는다(도구가 기준일로 정렬해야 한다)
+# - dev d2: 4/1(210, 20분 MMP 없음 → 평가에서 빠지지만 P0의 단위는 된다), 5/1(200·신선, P0 = 210).
+#   다른 선수 d0의 2/26 단위가 35일 앞서지만 선수가 달라 4/1의 P0는 없다
+# - train·test 단위: 라벨이 엉뚱해 쓰이면 값이 바뀐다. train의 d0 2019-12-01과 test의 d1 2020-01-05는
+#   dev 선수와 id가 같아, 분할을 먼저 거르지 않으면 d0 1/1(111)과 d1 2/6(999)에 P0가 생긴다
+def _persistence_units() -> pd.DataFrame:
+    rows = []
+
+    def add(split, athlete, ref_date, label, mmp_20m, fresh=False):
+        rows.append(
+            {
+                "athlete": athlete,
+                "split": split,
+                "ref_date": ref_date,
+                "label_ftp": label,
+                "mmp_20m": mmp_20m,
+                "fresh": fresh,
+            }
+        )
+
+    add("dev", "d1", "2020-03-06", 300.0, 300.0)
+    add("dev", "d0", "2020-01-01", 245.0, 250.0)
+    add("dev", "d0", "2020-01-29", 250.0, 260.0)
+    add("dev", "d1", "2020-01-10", 300.0, 300.0)
+    add("dev", "d0", "2020-02-26", 260.0, 280.0, fresh=True)
+    add("dev", "d1", "2020-02-06", 300.0, 300.0)
+    add("dev", "d2", "2020-04-01", 210.0, np.nan)
+    add("dev", "d2", "2020-05-01", 200.0, 220.0, fresh=True)
+    add("train", "t0", "2020-01-01", 100.0, 300.0)
+    add("train", "t0", "2020-02-01", 500.0, 300.0)
+    add("train", "d0", "2019-12-01", 111.0, 300.0)
+    add("test", "s0", "2020-01-01", 900.0, 300.0)
+    add("test", "s0", "2020-02-01", 50.0, 300.0)
+    add("test", "d1", "2020-01-05", 999.0, 300.0)
+    return pd.DataFrame(rows)
+
+
+# P0의 단위 고르기: 같은 선수의 단위 중 기준일이 28일 이상 앞선(경계 포함) 단위 가운데 가장 늦은 것. 첫
+# 단위, 바로 앞 단위가 27일 전뿐인 단위, 다른 선수의 단위만 앞선 단위는 P0가 없다. 결과는 입력 인덱스에 맞춰
+# 돌려주므로 행을 섞어도 같은 단위에 같은 값이 붙어야 한다. 27일과 28일의 경계는 두 단위로 따로 확인한다.
+def test_previous_unit_label_needs_28_days_and_stays_within_the_athlete():
+    units = _persistence_units()
+    dev = units[units["split"] == "dev"]
+    p0 = ftp.previous_unit_labels(dev)
+    assert p0.index.equals(dev.index)
+    got = {
+        (a, d): (None if pd.isna(v) else float(v))
+        for a, d, v in zip(dev["athlete"], dev["ref_date"], p0, strict=True)
+    }
+    assert got == {
+        ("d0", "2020-01-01"): None,
+        ("d0", "2020-01-29"): 245.0,
+        ("d0", "2020-02-26"): 250.0,
+        ("d1", "2020-01-10"): None,
+        ("d1", "2020-02-06"): None,
+        ("d1", "2020-03-06"): 300.0,
+        ("d2", "2020-04-01"): None,
+        ("d2", "2020-05-01"): 210.0,
+    }
+    shuffled = dev.iloc[np.random.default_rng(0).permutation(len(dev))]
+    assert ftp.previous_unit_labels(shuffled).reindex(dev.index).equals(p0)
+    two = pd.DataFrame(
+        {"athlete": ["x", "x"], "ref_date": ["2020-01-01", "2020-01-28"], "label_ftp": [250.0, 260.0]}
+    )
+    assert ftp.previous_unit_labels(two).isna().all()  # 27일 차이: P0 없음
+    two.loc[1, "ref_date"] = "2020-01-29"
+    p = ftp.previous_unit_labels(two)  # 28일 차이: 경계를 포함한다
+    assert np.isnan(p.iloc[0]) and p.iloc[1] == 250.0
+
+
+# 보고 값을 손으로 센 값과 맞춘다. 평가 단위 = 20분 MMP가 있는 dev 단위 7개(선수 3명, d2 4/1은 빠짐),
+# 그중 P0가 있는 단위 4개(d0 1/29·2/26, d1 3/6, d2 5/1).
+# - P0 − L_FTP = −5, −10, 0, +10 → MAE 6.25, 중앙값 AE 7.5, 편향 −1.25
+# - R1 − L_FTP = 247 − 250, 266 − 260, 285 − 300, 209 − 200 = −3, +6, −15, +9 → MAE 8.25, 중앙값 AE
+#   7.5, 편향 −0.75. 짝지은 차이 P0 − R1 = (2 + 4 − 15 + 1) / 4 = −2
+# - 신선(d0 2/26, d2 5/1): P0 10, R1 7.5 / 묵은(d0 1/29, d1 3/6): P0 2.5, R1 9
+# - L_FTP ≠ P0인 단위 3개(오름 2: d0의 두 단위, 내림 1: d2), 비율 0.75
+# - 평가 단위의 L_FTP가 한 값인 선수 2명(d1은 모두 300, d2는 평가 단위가 하나)
+# - 평가 단위 전체 R1 MAE = (7.5 + 3 + 6 + 15 + 15 + 15 + 9) / 7. 3단계 평가와 같은 계산(summarize)이라
+#   구간까지 같아야 한다
+def test_persistence_baseline_reports_p0_and_r1_on_the_same_units():
+    units = _persistence_units()
+    r = ftp.persistence_baseline(units, "dev")
+    assert r["split"] == "dev" and r["min_gap_days"] == 28 and r["verdict"] is None
+    assert (r["n_units"], r["n_athletes"], r["excluded_no_20m"]) == (7, 3, 1)
+    w = r["with_p0"]
+    assert (w["n_units"], w["n_athletes"]) == (4, 3) and w["share"] == pytest.approx(4 / 7)
+    assert r["n_without_p0"] == 3 and r["n_previous_closer_than_min_gap"] == 1
+    p0, r1 = r["p0"], r["r1"]
+    assert (p0["mae"]["point"], p0["median_ae"]["point"], p0["bias"]["point"]) == pytest.approx(
+        (6.25, 7.5, -1.25)
+    )
+    assert (r1["mae"]["point"], r1["median_ae"]["point"], r1["bias"]["point"]) == pytest.approx(
+        (8.25, 7.5, -0.75)
+    )
+    assert (p0["mae"]["n_units"], p0["mae"]["n_athletes"], r1["mae"]["n_units"]) == (4, 3, 4)
+    assert r["paired_mae_p0_minus_r1"]["point"] == pytest.approx(-2.0)
+    f, s = r["fresh"], r["stale"]
+    assert (f["n_units"], f["n_athletes"], s["n_units"], s["n_athletes"]) == (2, 2, 2, 2)
+    assert (f["p0_mae"]["point"], f["r1_mae"]["point"]) == pytest.approx((10.0, 7.5))
+    assert (s["p0_mae"]["point"], s["r1_mae"]["point"]) == pytest.approx((2.5, 9.0))
+    d = r["label_differs"]
+    assert (d["n_units"], d["n_up"], d["n_down"]) == (3, 2, 1)
+    assert d["share"]["point"] == pytest.approx(0.75)
+    assert r["athletes_single_label"] == {"n_athletes": 2, "of": 3}
+    assert r["r1_all_units_mae"]["point"] == pytest.approx(70.5 / 7)
+    target = units[(units["split"] == "dev") & units["mmp_20m"].notna()]
+    assert r["r1_all_units_mae"] == ftp.summarize(ftp.rule_r1(target), target)["mae"]
+
+
+# 개발 세트만 쓴다. train·test 단위를 빼거나 라벨·날짜를 바꿔도(dev 선수와 id가 같은 단위 포함) 결과
+# JSON이 같아야 하고, dev가 아닌 분할을 달라고 하면 ValueError로 거부한다(봉인 test는 3단계에서 한 번 썼다).
+def test_persistence_baseline_uses_dev_only_and_refuses_other_splits():
+    units = _persistence_units()
+    base = json.dumps(ftp.persistence_baseline(units, "dev"), sort_keys=True, default=str)
+    only_dev = units[units["split"] == "dev"]
+    changed = units.copy()
+    other = changed["split"] != "dev"
+    changed.loc[other, "label_ftp"] = 260.0
+    changed.loc[other, "ref_date"] = "2019-11-01"
+    assert json.dumps(ftp.persistence_baseline(only_dev, "dev"), sort_keys=True, default=str) == base
+    assert json.dumps(ftp.persistence_baseline(changed, "dev"), sort_keys=True, default=str) == base
+    assert '"test"' not in base and '"train"' not in base
+    for split in ("test", "train"):
+        with pytest.raises(ValueError):
+            ftp.persistence_baseline(units, split)
+
+
+# 명령행: baseline은 --units·--split dev·--out을 받아 <out>.json·<out>.md를 LF로 쓰고, JSON은
+# persistence_baseline()의 결과와 같다. --split test와 이름이 -persistence로 끝나지 않는 --out은 단위
+# 파일을 읽기 전에 종료 코드 2로 거부하고 아무것도 쓰지 않는다(없는 파일 경로를 줘서 읽기 전인지 본다).
+def test_baseline_cli_writes_reports_and_refuses_test_or_other_names(tmp_path: Path):
+    units = _persistence_units()
+    p = tmp_path / "units.parquet"
+    units.to_parquet(p, index=False)
+    out = tmp_path / "dev-persistence"
+    ftp.main(["baseline", "--units", str(p), "--split", "dev", "--out", str(out)])
+    raw = Path(f"{out}.json").read_bytes()
+    md = Path(f"{out}.md").read_bytes()
+    assert b"\r\n" not in raw and b"\r\n" not in md
+    expected = ftp.persistence_baseline(pd.read_parquet(p), "dev")
+    assert json.loads(raw.decode("utf-8")) == json.loads(
+        json.dumps(expected, ensure_ascii=False, default=str)
+    )
+    text = md.decode("utf-8")
+    assert "P0" in text and "개발 세트" in text and "판정 없음" in text
+    missing = str(tmp_path / "missing.parquet")
+    for argv in (
+        ["baseline", "--units", missing, "--split", "test", "--out", str(tmp_path / "test-persistence")],
+        ["baseline", "--units", missing, "--split", "dev", "--out", str(tmp_path / "dev")],
+    ):
+        with pytest.raises(SystemExit) as e:
+            ftp.main(argv)
+        assert e.value.code == 2
+    assert sorted(f.name for f in tmp_path.iterdir()) == [
+        "dev-persistence.json",
+        "dev-persistence.md",
+        "units.parquet",
+    ]
+
+
+# P0는 3단계 후보가 아니다(넣으면 'dev MAE 최소 = 채택 후보' 규칙이 P0를 고른다). baseline을 함수로도
+# 명령행으로도 돌린 뒤 evaluate 결과가 돌리기 전과 같고, 입력 단위 표도 바뀌지 않으며, 후보 목록이 3단계에
+# 등록한 7개 그대로인지 본다.
+def test_evaluate_is_unchanged_by_the_baseline(tmp_path: Path):
+    jsonl, index, sample = _write_fixture(tmp_path)
+    path = tmp_path / "units.parquet"
+    ftp.cmd_build(jsonl, index, sample, path)
+    units = pd.read_parquet(path)
+    before = json.dumps(ftp.evaluate(units, "dev", adopt="R1"), sort_keys=True, default=str)
+    snapshot = units.copy()
+    ftp.persistence_baseline(units, "dev")
+    ftp.main(["baseline", "--units", str(path), "--split", "dev", "--out", str(tmp_path / "dev-persistence")])
+    pd.testing.assert_frame_equal(units, snapshot)
+    assert json.dumps(ftp.evaluate(units, "dev", adopt="R1"), sort_keys=True, default=str) == before
+    assert [c.name for c in ftp.candidates()] == ["R1", "R2", "R3", "R5", "M1", "M1b", "M2"]
+    assert "P0" not in before
