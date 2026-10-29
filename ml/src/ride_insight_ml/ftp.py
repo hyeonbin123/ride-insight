@@ -152,6 +152,9 @@ def load_rides(jsonl: Path) -> pd.DataFrame:
 # 한 선수의 라이딩 날짜(정렬된 Series)에서 기준일 목록을 뽑는다. 첫 라이딩 날짜를 첫 기준일로 두고, 직전
 # 기준일 + 28일 이후의 첫 라이딩 날짜를 다음 기준일로 고른다. 기준일을 실제 라이딩 날짜로 잡아 창의 마지막
 # 날에 항상 라이딩(=라벨을 읽을 라이딩)이 있게 한다. 호출 위치: build_units, tests/test_ftp.py.
+# 주의: 돌려주는 값은 날짜가 아니라 그 라이딩의 시작 시각(Timestamp) 자체다. 그래서 창의 마지막 라이딩이
+# 곧 기준 라이딩이고, build_units의 days_since_last는 모든 단위에서 0이 된다(docs/experiments.md 규칙
+# 변경 15).
 def reference_dates(dates: pd.Series) -> list[pd.Timestamp]:
     """첫 라이딩 날짜, 그다음은 직전 기준일에서 STEP_DAYS 이상 지난 첫 라이딩 날짜를 기준일로 고른다."""
     refs: list[pd.Timestamp] = []
@@ -202,7 +205,12 @@ def build_units(rides: pd.DataFrame, athletes: dict[str, dict], splits: dict[str
             # 단위 한 행의 열.
             # - label_ftp(주 라벨), label_cp(보조 라벨: 같은 라이딩의 cp_setting, 없으면 NaN), fresh(신선 라벨
             #   여부)
-            # - n_rides·hours·np_mean·np_max·days_since_last: 창 안 훈련량과 최근성
+            # - n_rides·hours·np_mean·np_max: 창 안 훈련량
+            # - days_since_last('마지막 라이딩까지 일수'): 규칙은 최근성 특징으로 등록했지만, 기준일이
+            #   창의 마지막 라이딩 시각(reference_dates)이라 구성상 모든 단위에서 0이다. 그래서 모델에
+            #   최근성 정보는 들어가지 않았다(docs/experiments.md 규칙 변경 15). 3단계 측정이 이 정의로
+            #   끝났으므로 바꾸지 않고, 다시 정의하려면(예: 기준 라이딩 직전 라이딩까지 일수) 다음 측정
+            #   규칙에 먼저 등록한다
             # - gender_m: 남 1, 여 0, 모름 NaN. age: 기준일 연도 − 출생 연도(숫자일 때만). weight: 위에서 구한
             #   체중
             # - 아래 반복문의 mmp_<구간>: 창 안 라이딩들의 구간별 최대값(값이 하나도 없으면 NaN)
@@ -265,9 +273,13 @@ def cmd_build(features: Path, index_dir: Path, sample: Path, out: Path) -> None:
 
 # ----------------------------------------------------------------------------- 후보 방법
 
-# FEATURES: 모델 M1·M2가 쓰는 기본 특징 23개(MMP 16 + 훈련량·최근성 5 + 성별·나이 2). 체중은 들어 있지 않다.
-# 규칙에는 체중을 기본 특징으로 적었지만 구현은 M1b에만 넣었고, 측정 뒤에 발견해 다시 돌리지 않고 기록만
-# 했다(규칙 변경 6).
+# FEATURES: 모델 M1·M2가 쓰는 기본 특징 23개(MMP 16 + 훈련량 4 + days_since_last + 성별·나이 2). 체중은 들어
+# 있지 않다. 규칙에는 체중을 기본 특징으로 적었지만 구현은 M1b에만 넣었고, 측정 뒤에 발견해 다시 돌리지 않고
+# 기록만 했다(규칙 변경 6).
+# days_since_last는 구성상 모든 단위에서 0인 상수라(build_units 주석) 실질 특징은 22개다. 상수 열은 표준화 뒤
+# 0이 되어 M2(Ridge) 계수가 0이고, LightGBM(M1)은 값이 하나뿐인 열로 분기하지 못한다. 열을 빼고 train으로 다시
+# 맞춰도 dev 예측이 같아 3단계 수치에는 영향이 없다(규칙 변경 15). 열을 빼는 것도 측정 코드 변경이라 지금은
+# 두고, 다음 측정 규칙에 등록한 뒤 정한다.
 FEATURES = [f"mmp_{k}" for k in MMP_KEYS] + [
     "n_rides",
     "hours",
@@ -358,9 +370,9 @@ class CalibratedR1(Candidate):
         return self.a * rule_r1(u) + self.b
 
 
-# 모델 입력 행렬을 만든다. 기본은 FEATURES 23열. with_weight=True(M1b)이면 체중당 파워(W/kg) 5분·20분·60분과
-# 체중을 더한다. 호출 위치: LgbmCandidate, RidgeCandidate._x, ftp_export.py(Kotlin 대조용 모델이 같은 열
-# 순서를 쓰도록).
+# 모델 입력 행렬을 만든다. 기본은 FEATURES 23열(그중 days_since_last는 상수라 실질 22열).
+# with_weight=True(M1b)이면 체중당 파워(W/kg) 5분·20분·60분과 체중을 더한다. 호출 위치: LgbmCandidate,
+# RidgeCandidate._x, ftp_export.py(Kotlin 대조용 모델이 같은 열 순서를 쓰도록).
 def _matrix(u: pd.DataFrame, with_weight: bool) -> pd.DataFrame:
     x = u[FEATURES].copy()
     if with_weight:

@@ -137,6 +137,36 @@ def test_freshness_follows_the_registered_definition(tmp_path: Path):
     assert by_day[168] is False
 
 
+# 특성화 테스트(지금 동작을 고정): 특징 days_since_last('마지막 라이딩까지 일수')는 구성상 모든 예측 단위에서
+# 0이다. 기준일(reference_dates)이 선수의 실제 라이딩 시각이고 창이 (기준일 − 42일, 기준일]이라, 창의 마지막
+# 라이딩이 곧 기준 라이딩이기 때문이다. 그래서 라이딩 사이에 1~9일 간격이 있고 시작 시각이 제각각이어도 값은
+# 0이고, M1·M2의 입력 23열 중 실질 특징은 22개다(docs/experiments.md 규칙 변경 15). 3단계는 이 정의로 측정을
+# 마쳤으므로 FEATURES와 단위 생성 코드는 바꾸지 않는다. 다음 측정 규칙에 먼저 등록한 뒤 다시 정의하거나
+# (예: 기준 라이딩 직전 라이딩까지 일수) 열을 빼면 이 테스트는 의도적으로 바뀐다.
+def test_days_since_last_is_zero_in_every_unit_by_construction(tmp_path: Path):
+    gaps = [1, 4, 2, 9, 3, 7, 1, 5, 2, 6]  # 라이딩 사이 일수(평균 4일이라 42일 창에 약 10개)
+    rows, day = [], 0
+    for i in range(60):
+        r = _ride("a", day, 250)
+        # 시작 시각도 06시~19시로 바꿔 가며 둔다(같은 날짜끼리 비교해서 0이 되는 것이 아님을 보이려고).
+        start = dt.datetime(2020, 1, 1, 6) + dt.timedelta(days=day, hours=(5 * i) % 14)
+        r["date"] = start.strftime("%Y/%m/%d %H:%M:%S") + " UTC"
+        rows.append(r)
+        day += gaps[i % len(gaps)]
+    jsonl = tmp_path / "gaps.jsonl"
+    jsonl.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    rides = ftp.load_rides(jsonl)
+    # 입력에는 며칠씩 비는 간격이 실제로 있다(매일 탄 데이터라서 0이 나오는 것이 아니다).
+    assert rides["date"].diff().dt.days.max() >= 7
+    units = ftp.build_units(rides, {"a": {"gender": "M", "yob": "1990"}}, {"a": "train"})
+    assert len(units) >= 5
+    # 기준일은 모두 실제 라이딩의 시작 시각이다 → 창의 마지막 라이딩 = 기준 라이딩.
+    assert set(ftp.reference_dates(rides["date"])) <= set(rides["date"])
+    assert (units["days_since_last"] == 0.0).all()
+    # 등록한 기본 특징 23개에는 그대로 들어 있다(빼는 것도 측정 코드 변경이라 다음 측정 규칙에서 정한다).
+    assert "days_since_last" in ftp.FEATURES and len(ftp.FEATURES) == 23
+
+
 # 규칙 후보를 손으로 아는 값으로 확인한다. R1 = 0.95 × 300 = 285, 20분 기록이 없으면 NaN. R3(CP 적합)는 20분
 # 최대보다 낮고 60분 최대보다 높은 범위에 있어야 하고, 3·5·8·10·20분 중 값이 3개 미만이면(두 번째 행)
 # NaN이어야 한다.
