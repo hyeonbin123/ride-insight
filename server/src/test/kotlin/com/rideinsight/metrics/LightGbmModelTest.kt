@@ -65,8 +65,9 @@ class LightGbmModelTest {
         assertTrue(e.message!!.contains("Zero"), e.message)
     }
 
-    // 실제 FTP 모델 대조. 모델 JSON(ftp_model.json)은 3단계에서 모델을 채택할 때만 ml/의 ftp_export.py로
-    // 내보내는데, 3단계는 모델을 채택하지 않아 지금은 파일이 없다.
+    // 실제 FTP 모델 대조. 모델 JSON(ftp_model.json)은 H5가 지지돼 모델을 서버에 넣을 때만 ml/의
+    // ftp_export.py로 내보낸다(docs/experiments.md 3단계). 3단계는 dev에서 채택 후보(M2)를 골랐지만 H5가 판정
+    // 불가라 규칙대로 서비스는 R1을 쓰고 모델을 넣지 않았으므로, 지금은 파일이 없다.
     // 예전에는 파일이 없으면 return으로 끝나 아무것도 검사하지 않은 채 '통과'로 집계됐다(테스트 수가 실제
     // 검증 수보다 하나 많아 보였고, 나중에 내보낸 파일 이름이 조금만 달라도 대조를 건너뛴 채 통과가 이어졌을
     // 것이다). 지금은 JUnit의 assumeTrue로 중단해 Gradle 보고서에 skipped(건너뜀)로 드러나게 한다. 파일이 생기면
@@ -75,7 +76,8 @@ class LightGbmModelTest {
     fun `ftp model matches python when exported`() {
         assumeTrue(
             File(dir, "ftp_model.json").exists(),
-            "ftp_model.json is absent: it is exported only when stage 3 adopts a model",
+            "ftp_model.json is absent: it is exported only when a model goes into the server " +
+                "(stage 3 H5 was undecided, so the service uses rule R1)",
         )
         check("ftp_model.json", "ftp_cases.json")
     }
