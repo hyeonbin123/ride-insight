@@ -11,6 +11,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import tools.jackson.databind.json.JsonMapper
 
 /** Kotlin 트리 순회 추론기가 LightGBM 자체의 예측을 재현해야 한다(고정 자료는 ml/의 ftp_export.py가 만든다). */
@@ -64,11 +65,18 @@ class LightGbmModelTest {
         assertTrue(e.message!!.contains("Zero"), e.message)
     }
 
-    // 실제 FTP 모델 대조. 3단계에서 모델이 채택되지 않아 ftp_model.json이 없으므로, 지금은 아무것도 검사하지
-    // 않고 통과한다.
+    // 실제 FTP 모델 대조. 모델 JSON(ftp_model.json)은 3단계에서 모델을 채택할 때만 ml/의 ftp_export.py로
+    // 내보내는데, 3단계는 모델을 채택하지 않아 지금은 파일이 없다.
+    // 예전에는 파일이 없으면 return으로 끝나 아무것도 검사하지 않은 채 '통과'로 집계됐다(테스트 수가 실제
+    // 검증 수보다 하나 많아 보였고, 나중에 내보낸 파일 이름이 조금만 달라도 대조를 건너뛴 채 통과가 이어졌을
+    // 것이다). 지금은 JUnit의 assumeTrue로 중단해 Gradle 보고서에 skipped(건너뜀)로 드러나게 한다. 파일이 생기면
+    // 그때부터 check가 실제로 대조하고, 그 전에는 보고서의 건너뜀 1이 '아직 대조하지 않음'을 알려 준다.
     @Test
     fun `ftp model matches python when exported`() {
-        if (!File(dir, "ftp_model.json").exists()) return // 3단계에서 모델을 채택할 때만 내보낸다
+        assumeTrue(
+            File(dir, "ftp_model.json").exists(),
+            "ftp_model.json is absent: it is exported only when stage 3 adopts a model",
+        )
         check("ftp_model.json", "ftp_cases.json")
     }
 }
