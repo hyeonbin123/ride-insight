@@ -6,6 +6,11 @@
 선수 군집 부트스트랩 사후 보고(판정 없음)는 ``--cluster-report``를 붙이고 ``--out``을 ``-cluster``로
 끝나는 이름으로 준다(예: ``--out ../reports/parity/sealed-cluster``). 이때는 등록된 분석을 쓰지 않고 군집
 보고만 쓴다.
+
+GoldenCheetah 암묵 기록 간격 진단(사후 보고, 판정 없음, 개발 세트만)은 ``--recint-diag``를 붙이고 ``--out``을
+``-recint-diag``로 끝나는 이름으로 준다(예: ``--jsonl ../reports/parity/dev.jsonl --out
+../reports/parity/dev-recint-diag``). 이때도 등록된 분석은 쓰지 않고, 이름이 ``sealed``로 시작하는 JSONL은
+거부한다.
 """
 
 # [파일 역할] 1단계(지표 구현의 정확성) 판정 스크립트. Kotlin parity 도구(ParityTool.kt)가 라이딩마다 '우리
@@ -17,8 +22,11 @@
 # analyse(가설별 일치 여부 → 부트스트랩 → 판정, 보고 항목) → to_markdown.
 # 사후 보고(판정 없음): load → cluster_report(선수 군집 부트스트랩, 두 비교 함수) → cluster_to_markdown. 판정
 # 코드(agree·bootstrap_rate·verdict_at_least·analyse)는 쓰기만 하고 고치지 않는다(규칙 변경 16).
+# 사후 보고(판정 없음, 개발 세트만): load → recint_diag(GC TSS·IF로 역산한 기록 간격과 최빈 간격으로 라이딩을
+# 나눈 분류별 일치율) → recint_to_markdown. 여기서도 판정 코드는 고치지 않는다(규칙 변경 19).
 # [결과] 봉인 세트(선수 100명, 라이딩 32,907개)에서 H1 NP 99.61%, H2 MMP 99.65%, H3 TSS 99.97% 지지, H4
 # 기각(reports/parity/sealed.md). 선수 군집 사후 보고는 docs/experiments.md 1단계 '사후 보고' 절.
+# 암묵 기록 간격 진단은 같은 1단계의 '사후 보고: GoldenCheetah 암묵 기록 간격' 절.
 
 from __future__ import annotations
 
@@ -652,8 +660,280 @@ def cluster_to_markdown(r: dict, title: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ---- 사후 보고: GoldenCheetah 암묵 기록 간격 (판정 없음, 개발 세트만, 1단계·규칙 변경 19) ----
+# GoldenCheetah는 IF와 TSS에 같은 임계값을 쓰므로 TSS = 샘플 수 × recIntSecs × IF² / 36이다(1단계 '구현
+# 기준'의 정의에 IF = NP / 임계값을 넣은 식, 규칙 변경 2). 그래서 메타데이터의 TSS·IF와 샘플 수로 GC가 그
+# 라이딩에 실제로 쓴 기록 간격(암묵 간격)을 거꾸로 구할 수 있다. 우리는 recIntSecs를 CSV 간격의 최빈값으로
+# 추정하므로, 둘을 비교하면 1초가 아닌 라이딩·흔들리는 라이딩의 불일치를 '같은 간격으로 계산하고도 어긋난
+# 것'과 'GC가 다른 간격이나 다른 샘플 수로 계산한 것'으로 나눌 수 있다. 이 묶음도 판정을 하지 않는다. load가
+# 만든 열을 읽기만 하고 표에 새 열을 붙이지 않으며 위의 판정 코드(load·agree·analyse)는 고치지 않는다. 봉인
+# JSONL은 main이 거부한다(규칙상 이 진단은 개발 세트에만 쓴다).
+
+# 암묵 간격이 최빈 간격과 '같음'인 상대 허용 오차: |암묵 − 최빈| ≤ 최빈 × 0.5%(규칙에 적은 값). GC
+# 메타데이터의 TSS·IF는 소수 다섯째 자리로 반올림돼 있어, TSS ≥ 0.01이고 IF ≥ 0.1이면 반올림에서 오는 역산
+# 오차는 0.1% 미만이다(TSS가 그보다 훨씬 작은 아주 짧은 라이딩은 반올림만으로 0.5%에 가까워질 수 있다).
+RECINT_SAME_TOL = 0.005
+# 진단에 쓰는 MMP 구간 하나: 20분(GC 메타데이터 키, Kotlin MeanMaximalPower.metricKey(1200)과 같은 이름).
+RECINT_MMP_KEY = "20m_critical_power"
+# 분류 키와 보고 표의 줄 순서(규칙의 표 순서). 분류를 고르는 순서(처음 맞는 하나)는 _recint_category에 있다.
+RECINT_CATEGORIES = ("1s", "non1s_same", "non1s_differs", "jitter_same", "jitter_differs", "no_implied")
+# 분류 키 → Markdown 보고서의 이름(규칙에 적은 이름 그대로).
+RECINT_LABELS = {
+    "1s": "1초",
+    "non1s_same": "비1초·암묵=최빈",
+    "non1s_differs": "비1초·암묵≠최빈",
+    "jitter_same": "흔들림·암묵=최빈",
+    "jitter_differs": "흔들림·암묵≠최빈",
+    "no_implied": "암묵 없음",
+}
+
+
+# GC가 쓴 기록 간격(암묵 간격, 초) = coggan_tss × 36 / coggan_if² / 샘플 수. GC TSS와 IF가 둘 다 양수이고,
+# TSS가 정수가 아니며(load의 tss_gc_integer: 규칙 변경 3과 같은 1e-6 판정, 정수는 수동 입력이라 역산이 뜻이
+# 없다), 샘플이 1개 이상일 때만 내고 그 밖은 NaN이다. 샘플 수는 우리가 CSV에서 읽은 행 수(깨진 행 제외)라서,
+# GC가 다른 샘플 수로 계산했다면 그 차이도 이 값에 섞인다(값 = GC 샘플 수 × GC recIntSecs / 우리 샘플 수).
+# 입력은 load가 만든 표, 출력은 같은 인덱스의 Series. 호출 위치: recint_diag, tests/test_parity.py.
+def gc_implied_interval(df: pd.DataFrame) -> pd.Series:
+    tss = pd.to_numeric(df["tss_gc"], errors="coerce")
+    intensity = pd.to_numeric(df["if_gc"], errors="coerce")
+    samples = pd.to_numeric(df["samples"], errors="coerce")
+    usable = (tss > 0) & (intensity > 0) & ~df["tss_gc_integer"] & (samples >= 1)
+    # usable이 아닌 행은 0으로 나눈 inf 등이 나와도 where가 NaN으로 바꾼다.
+    return (tss * 36.0 / intensity**2 / samples).where(usable)
+
+
+# 라이딩마다 분류 키를 낸다(규칙의 분류, 위에서부터 처음 맞는 하나).
+# 1. no_implied: 암묵 간격이 없거나 최빈 간격(rec_int)이 없다(샘플 2개 미만이거나 양수 간격이 없음). 비교 불가
+# 2. jitter_same / jitter_differs: 흔들림(load의 jitter, 최빈 간격 비율 < 0.9). 최빈 간격이 1초여도 여기에
+#    든다. 흔들리는 파일 전체를 한곳에서 보려는 것이고, 그래서 1초 분류는 등록된 H1 대상과 같지 않다(대신
+#    분류마다 최빈 간격 1.00인 수를 따로 세어 합이 맞는지 본다)
+# 3. 1s: 최빈 간격 1.00. 기준 집단이라 암묵 간격으로 나누지 않는다
+# 4. non1s_same / non1s_differs: 그 밖(5초 포함)
+# '같음'은 |암묵 − 최빈| ≤ 최빈 × RECINT_SAME_TOL. 호출 위치: recint_diag.
+def _recint_category(df: pd.DataFrame, implied: pd.Series) -> pd.Series:
+    rec = pd.to_numeric(df["rec_int"], errors="coerce")
+    same = ((implied - rec).abs() <= RECINT_SAME_TOL * rec).to_numpy()
+    comparable = (implied.notna() & rec.notna()).to_numpy()
+    jitter = df["jitter"].to_numpy(dtype=bool)
+    one_s = (rec == 1.0).to_numpy()
+    labels = np.select(
+        [~comparable, jitter & same, jitter, one_s, same],
+        ["no_implied", "jitter_same", "jitter_differs", "1s", "non1s_same"],
+        default="non1s_differs",
+    )
+    return pd.Series(labels, index=df.index)
+
+
+# 일치 여부(bool Series)를 {n, agree, rate, mismatch_1s, mismatch_other}로 모은다. rate는 비면 None. 불일치는
+# 등록된 분석의 그룹으로 나눠 센다: one_s(최빈 간격 1.00, H1·H2 대상)와 그 외(H4 대상). 그래서 분류 전체의
+# mismatch_other 합은 H4의 NP 불일치 수와 같다.
+def _recint_rate(ok: pd.Series, one_s: pd.Series) -> dict:
+    n = int(len(ok))
+    agreed = int(ok.sum())
+    return {
+        "n": n,
+        "agree": agreed,
+        "rate": agreed / n if n else None,
+        "mismatch_1s": int((~ok & one_s).sum()),
+        "mismatch_other": int((~ok & ~one_s).sum()),
+    }
+
+
+# (최빈 간격, 암묵 간격) 쌍을 세어 라이딩이 많은 top개를 낸다(수가 같으면 최빈 간격, 암묵 간격이 작은 쪽
+# 먼저). 암묵 간격은 소수 둘째 자리로 반올림한다(표시용). np.round는 정확히 절반인 값에서 짝수 쪽으로 가지만
+# 이 반올림은 묶어 보이기 위한 것이라 상관없다. 예: 2초 파일을 GC가 1초로 계산했으면 (2.0, 1.0).
+def _recint_pairs(rec: pd.Series, implied: pd.Series, top: int = 5) -> list[dict]:
+    if rec.empty:
+        return []
+    table = pd.DataFrame(
+        {"mode_secs": rec.to_numpy(dtype=float), "implied_secs": np.round(implied.to_numpy(dtype=float), 2)}
+    )
+    counts = table.groupby(["mode_secs", "implied_secs"]).size().reset_index(name="rides")
+    ranked = counts.sort_values(["rides", "mode_secs", "implied_secs"], ascending=[False, True, True])
+    return [
+        {"mode": float(row.mode_secs), "implied": float(row.implied_secs), "rides": int(row.rides)}
+        for row in ranked.head(top).itertuples(index=False)
+    ]
+
+
+# '암묵 없음'의 이유별 수. 이 순서로 처음 맞는 하나로 센다: GC TSS나 IF가 없거나 0 이하 → 정수 TSS(수동 입력
+# 추정) → 샘플이나 최빈 간격 없음. gc_implied_interval·_recint_category의 조건을 그대로 나눈 것이라 세 수의
+# 합은 '암묵 없음' 라이딩 수와 같다.
+def _recint_reasons(df: pd.DataFrame, mask: pd.Series) -> dict:
+    tss = pd.to_numeric(df["tss_gc"], errors="coerce")
+    intensity = pd.to_numeric(df["if_gc"], errors="coerce")
+    gc_absent = ~((tss > 0) & (intensity > 0))
+    integer = ~gc_absent & df["tss_gc_integer"]
+    return {
+        "gc_tss_or_if_absent": int((mask & gc_absent).sum()),
+        "gc_tss_integer": int((mask & integer).sum()),
+        "no_samples_or_interval": int((mask & ~gc_absent & ~integer).sum()),
+    }
+
+
+# 암묵 기록 간격 진단 전체(규칙의 '보고할 것'). 분류마다:
+# - rides, athletes, mode_1s / mode_other(최빈 간격 1.00 / 그 외 = 등록된 H1·H2 대상 / H4 대상),
+#   rides_with_bad_rows(깨진 행을 버리면 우리 샘플 수가 줄어 암묵≠최빈이 될 수 있어 함께 센다)
+# - np, mmp_20m: 현재 비교 함수(agree, 1 W)의 일치 수·율과 그룹별 불일치 수. mmp_20m의 both_absent는 둘 다
+#   값이 없어(라이딩이 20분보다 짧은 등) 일치로 센 수다. JSONL에 20분 열이 없으면 mmp_20m은 None
+# - 암묵 간격이 있는 분류: implied_same(암묵=최빈 수, 1초 분류에서는 암묵 간격 정의의 확인), pairs(상위 5쌍)
+# - no_implied: reasons(이유별 수)
+# registered_groups는 등록된 분석의 그룹 크기(H1 대상 1초 / H4 대상 그 외)라 분류 합과 대조할 수 있다.
+# verdict는 늘 None이다(판정 없음). 구간은 내지 않는다. 호출 위치: main(--recint-diag), tests/test_parity.py.
+def recint_diag(df: pd.DataFrame) -> dict:
+    implied = gc_implied_interval(df)
+    rec = pd.to_numeric(df["rec_int"], errors="coerce")
+    same = (implied - rec).abs() <= RECINT_SAME_TOL * rec
+    category = _recint_category(df, implied)
+    one_s = df["interval_group"] == "1s"
+    bad_rows = pd.to_numeric(df["bad_rows"], errors="coerce").fillna(0) > 0
+    np_ok = agree(df["np_ours"], df["np_gc"], TOL_WATTS)
+    ours_col, gc_col = f"mmp_ours_{RECINT_MMP_KEY}", f"mmp_gc_{RECINT_MMP_KEY}"
+    has_mmp = ours_col in df.columns and gc_col in df.columns
+    if has_mmp:
+        mmp_ok = agree(df[ours_col], df[gc_col], TOL_WATTS)
+        # '둘 다 없음'은 agree와 같은 정의(결측 또는 0).
+        o = pd.to_numeric(df[ours_col], errors="coerce")
+        t = pd.to_numeric(df[gc_col], errors="coerce")
+        mmp_both_absent = (o.isna() | (o == 0.0)) & (t.isna() | (t == 0.0))
+    categories: dict = {}
+    for key in RECINT_CATEGORIES:
+        m = category == key
+        entry: dict = {
+            "rides": int(m.sum()),
+            "athletes": int(df.loc[m, "athlete"].nunique()),
+            "mode_1s": int((m & one_s).sum()),
+            "mode_other": int((m & ~one_s).sum()),
+            "rides_with_bad_rows": int((m & bad_rows).sum()),
+            "np": _recint_rate(np_ok[m], one_s[m]),
+            "mmp_20m": (
+                {**_recint_rate(mmp_ok[m], one_s[m]), "both_absent": int((m & mmp_both_absent).sum())}
+                if has_mmp
+                else None
+            ),
+        }
+        if key == "no_implied":
+            entry["reasons"] = _recint_reasons(df, m)
+        else:
+            entry["implied_same"] = int((m & same).sum())
+            entry["pairs"] = _recint_pairs(rec[m], implied[m])
+        categories[key] = entry
+    return {
+        "report": "gc_implied_recording_interval",
+        "verdict": None,
+        "note": (
+            "사후 보고(판정 없음), 개발 세트만. 1단계 판정과 기존 수치는 바꾸지 않는다. "
+            "규칙: docs/experiments.md 1단계 '사후 보고: GoldenCheetah 암묵 기록 간격'"
+        ),
+        "rides": int(len(df)),
+        "athletes": int(df["athlete"].nunique()),
+        "definition": {
+            "implied_secs": "coggan_tss * 36 / coggan_if ** 2 / samples",
+            "implied_requires": "GC TSS > 0, GC IF > 0, GC TSS not an integer (1e-6), samples >= 1",
+            "same_rel_tol": RECINT_SAME_TOL,
+            "jitter": "rec_int_share < 0.9",
+            "order": ["no_implied", "jitter_same / jitter_differs", "1s", "non1s_same / non1s_differs"],
+            "comparison": "agree (rule change 9), 1 W",
+            "mmp_key": RECINT_MMP_KEY,
+        },
+        "registered_groups": {"1s": int(one_s.sum()), "other": int((~one_s).sum())},
+        "categories": categories,
+    }
+
+
+# 진단을 Markdown(reports/parity/*-recint-diag.md)으로 만든다: 정의 요약, 분류별 표(라이딩·선수·암묵=최빈·
+# 깨진 행·NP와 20분 MMP 일치), 불일치가 든 분류(등록된 그룹별), 최빈 간격 → 암묵 간격 상위 쌍, 암묵 없음의
+# 이유. 비율은 소수 둘째 자리 백분율과 (일치 수/라이딩 수)로 적는다(정확한 값은 JSON). 선수 id는 쓰지 않는다.
+def recint_to_markdown(r: dict, title: str) -> str:
+    def share(e):
+        if e is None or e["rate"] is None:
+            return "-"
+        return f"{e['rate'] * 100:.2f}% ({e['agree']}/{e['n']})"
+
+    cats = r["categories"]
+    groups = r["registered_groups"]
+    lines = [
+        f"# GoldenCheetah 암묵 기록 간격 진단: {title} (판정 없음)",
+        "",
+        f"- 라이딩 {r['rides']}개, 선수 {r['athletes']}명. 판정 없음, 개발 세트만. 1단계 판정과 기존 "
+        "수치(`reports/parity/`의 기존 보고서, docs/experiments.md 표)는 바꾸지 않는다. 규칙: "
+        "docs/experiments.md 1단계 '사후 보고: GoldenCheetah 암묵 기록 간격'",
+        "- 암묵 간격 = coggan_tss × 36 / coggan_if² / 샘플 수(GC TSS·IF가 양수이고 TSS가 정수가 아닐 때). "
+        "'같음' = |암묵 − 최빈 간격| ≤ 최빈 간격의 0.5%. 흔들림 = 최빈 간격의 비율 < 0.9",
+        "- 분류는 암묵 없음 → 흔들림 → 1초 → 비1초 순서로 처음 맞는 하나. 일치는 현재 비교 함수"
+        "(규칙 변경 9 뒤, 1 W 안, 둘 다 값이 없으면 일치)",
+        f"- 최빈 간격 1.00 / 그 외 = 등록된 분석의 H1·H2 대상 {groups['1s']} / H4 대상 {groups['other']}",
+        "",
+        "| 분류 | 라이딩 (최빈 1초 / 그 외) | 선수 | 암묵=최빈 | 깨진 행 있음 | NP ≤1 W 일치 "
+        "| 20분 MMP ≤1 W 일치 (둘 다 없음) |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for key in RECINT_CATEGORIES:
+        e = cats[key]
+        same = "-" if key == "no_implied" else str(e["implied_same"])
+        mmp = "-" if e["mmp_20m"] is None else f"{share(e['mmp_20m'])} ({e['mmp_20m']['both_absent']})"
+        lines.append(
+            f"| {RECINT_LABELS[key]} | {e['rides']} ({e['mode_1s']} / {e['mode_other']}) | {e['athletes']} "
+            f"| {same} | {e['rides_with_bad_rows']} | {share(e['np'])} | {mmp} |"
+        )
+    # 합계 줄: 라이딩·최빈 간격 그룹·깨진 행·NP 일치는 분류 합, 선수는 전체 선수 수(분류마다 겹칠 수 있음).
+    entries = [cats[k] for k in RECINT_CATEGORIES]
+    mode_1s, mode_other = sum(e["mode_1s"] for e in entries), sum(e["mode_other"] for e in entries)
+    np_total = {"n": sum(e["np"]["n"] for e in entries), "agree": sum(e["np"]["agree"] for e in entries)}
+    np_total["rate"] = np_total["agree"] / np_total["n"] if np_total["n"] else None
+    lines.append(
+        f"| 합계 | {r['rides']} ({mode_1s} / {mode_other}) | {r['athletes']} | - "
+        f"| {sum(e['rides_with_bad_rows'] for e in entries)} | {share(np_total)} | - |"
+    )
+
+    def split(e):
+        return "-" if e is None else f"{e['mismatch_1s']} / {e['mismatch_other']}"
+
+    lines += [
+        "",
+        "## 불일치가 든 분류 (최빈 간격 1.00 = H1·H2 대상 / 그 외 = H4 대상)",
+        "",
+        "| 분류 | NP 불일치 (최빈 1초 / 그 외) | 20분 MMP 불일치 (최빈 1초 / 그 외) |",
+        "|---|---|---|",
+    ]
+    for key in RECINT_CATEGORIES:
+        e = cats[key]
+        lines.append(f"| {RECINT_LABELS[key]} | {split(e['np'])} | {split(e['mmp_20m'])} |")
+    np_split = (sum(e["np"]["mismatch_1s"] for e in entries), sum(e["np"]["mismatch_other"] for e in entries))
+    mmp_split = "-"
+    if all(e["mmp_20m"] is not None for e in entries):
+        mmp_split = (
+            f"{sum(e['mmp_20m']['mismatch_1s'] for e in entries)} / "
+            f"{sum(e['mmp_20m']['mismatch_other'] for e in entries)}"
+        )
+    lines.append(f"| 합계 | {np_split[0]} / {np_split[1]} | {mmp_split} |")
+    lines += [
+        "",
+        "## 최빈 간격 → 암묵 간격 (초, 암묵은 소수 둘째 자리 반올림, 라이딩이 많은 5쌍)",
+        "",
+        "| 분류 | 최빈 → 암묵: 라이딩 수 |",
+        "|---|---|",
+    ]
+    for key in RECINT_CATEGORIES:
+        if key == "no_implied":
+            continue
+        pairs = "; ".join(f"{p['mode']:.2f} → {p['implied']:.2f}: {p['rides']}" for p in cats[key]["pairs"])
+        lines.append(f"| {RECINT_LABELS[key]} | {pairs or '-'} |")
+    reasons = cats["no_implied"]["reasons"]
+    lines += [
+        "",
+        "## 암묵 없음의 이유",
+        "",
+        f"- GC TSS나 IF가 없거나 0 이하 {reasons['gc_tss_or_if_absent']}, "
+        f"정수 TSS(수동 입력 추정) {reasons['gc_tss_integer']}, "
+        f"샘플이나 최빈 간격 없음 {reasons['no_samples_or_interval']}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 # 명령행 진입점. --jsonl을 분석해 --out.json(모든 수치)과 --out.md(요약)를 쓴다. 보고서 제목은 JSONL 파일
-# 이름(dev, sealed 등)이다. --cluster-report면 등록된 분석 대신 선수 군집 사후 보고만 쓴다.
+# 이름(dev, sealed 등)이다. --cluster-report면 등록된 분석 대신 선수 군집 사후 보고만, --recint-diag면
+# GoldenCheetah 암묵 기록 간격 진단만 쓴다(둘을 함께 줄 수는 없다).
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--jsonl", type=Path, required=True)
@@ -669,7 +949,46 @@ def main(argv: list[str] | None = None) -> None:
             "(예: ../reports/parity/sealed-cluster)"
         ),
     )
+    p.add_argument(
+        "--recint-diag",
+        action="store_true",
+        help=(
+            "등록된 분석(H1~H4 판정) 대신 GoldenCheetah 암묵 기록 간격 진단(사후 보고, 판정 없음)만 쓴다. "
+            "GC TSS·IF로 역산한 GC의 기록 간격을 우리 최빈 간격과 비교해 라이딩을 1초 / 비1초 / 흔들림과 "
+            "'암묵=최빈' 여부, 암묵 없음으로 나누고 분류마다 라이딩·선수 수, NP·20분 MMP 일치율, 등록된 "
+            "그룹별 불일치 수를 낸다. 개발 세트에만 쓰는 진단이라 --jsonl 파일 이름이 sealed로 시작하면 "
+            "거부하고, 기존 보고서를 덮어쓰지 않도록 --out 이름은 -recint-diag로 끝나야 한다"
+            "(예: ../reports/parity/dev-recint-diag). --cluster-report와 함께 쓸 수 없다"
+        ),
+    )
     a = p.parse_args(argv)
+    # 두 사후 보고 모드는 출력 이름 규칙(-cluster, -recint-diag)이 달라 함께 주면 어느 쪽도 쓰지 않고 끝낸다.
+    # 이름 검사보다 먼저 해야 어느 모드의 이름 오류가 아니라 이 오류가 나온다.
+    if a.cluster_report and a.recint_diag:
+        p.error("--cluster-report and --recint-diag cannot be used together")
+    if a.recint_diag:
+        # 군집 보고와 같은 보호: --out 이름이 -recint-diag로 끝날 때만 쓰고(기존 dev*·sealed* 보고서를
+        # 덮어쓰지 않음), 규칙상 봉인 세트는 이 진단에 쓰지 않으므로 이름이 sealed로 시작하는 JSONL은 읽기
+        # 전에 거부한다. 이름으로만 보는 검사라 봉인 JSONL을 다른 이름으로 바꿔 주면 막지 못한다(실수 방지용).
+        # p.error는 사용법과 오류를 stderr에 쓰고 종료 코드 2로 끝낸다.
+        if not a.out.name.endswith("-recint-diag"):
+            p.error(
+                f"--recint-diag needs an --out name ending in -recint-diag (got {a.out.name!r}) "
+                "so that the registered reports are never overwritten"
+            )
+        if a.jsonl.name.lower().startswith("sealed"):
+            p.error(
+                f"--recint-diag reads the development set only (rule change 19); refusing {a.jsonl.name!r}"
+            )
+        diag = recint_diag(load(a.jsonl))
+        a.out.parent.mkdir(parents=True, exist_ok=True)
+        # 군집 보고서처럼 줄 끝을 LF로 쓴다(newline="\n").
+        Path(f"{a.out}.json").write_text(
+            json.dumps(diag, indent=1, ensure_ascii=False, default=str), encoding="utf-8", newline="\n"
+        )
+        Path(f"{a.out}.md").write_text(recint_to_markdown(diag, a.jsonl.stem), encoding="utf-8", newline="\n")
+        print(f"wrote {a.out}.json and {a.out}.md (GoldenCheetah implied recording interval, no verdict)")
+        return
     if a.cluster_report:
         # --out 이름이 -cluster로 끝날 때만 쓴다. '--out ../reports/parity/sealed'처럼 기존 분석 보고서 이름을
         # 주면 봉인 기록(sealed.json/md)을 덮어쓰게 되므로 JSONL을 읽기 전에 거부한다(p.error는 사용법과

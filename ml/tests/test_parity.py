@@ -6,6 +6,9 @@
 # 파일 끝의 묶음은 선수 군집 부트스트랩 사후 보고(판정 없음, 규칙 변경 16)를 본다: 군집 구간이 선수에 몰린
 # 불일치를 반영하는지, 고르게 흩어진 불일치에서는 라이딩 단위 구간과 비슷한지, 보고 모드가 등록된 분석과 기존
 # 보고서 파일을 바꾸지 않는지.
+# 그 뒤의 마지막 묶음은 GoldenCheetah 암묵 기록 간격 진단(판정 없음, 규칙 변경 19)을 본다: TSS 정의를 거꾸로
+# 푼 암묵 간격, 분류의 순서와 0.5% 경계, 분류 합이 등록된 분석의 그룹과 맞는지, 진단 모드가 기존 보고서를
+# 바꾸지 않고 봉인 JSONL을 거부하는지.
 # MMP_KEYS 상수는 현재 어느 테스트에서도 쓰지 않는다.
 
 import json
@@ -335,3 +338,185 @@ def test_cluster_report_leaves_the_registered_analysis_unchanged(tmp_path: Path)
     written = json.loads((tmp_path / "dev.json").read_text(encoding="utf-8"))
     assert written == json.loads(json.dumps(registered, ensure_ascii=False, default=str))
     assert not (tmp_path / "dev-cluster.json").exists()
+
+
+# ---- GoldenCheetah 암묵 기록 간격 진단(판정 없음, 규칙 변경 19) ----
+# 규칙: docs/experiments.md 1단계 '사후 보고: GoldenCheetah 암묵 기록 간격'. GC의 TSS 정의(샘플 수 ×
+# recIntSecs × IF² / 36)를 거꾸로 풀어 GC가 쓴 기록 간격을 구하고, 우리 최빈 간격과 비교해 라이딩을 나눈다.
+
+
+# 암묵 간격 진단용 합성 라이딩. GC가 기록 간격 gc_rec(초)로 계산했다고 보고 GC TSS를 TSS 정의대로 만든다(샘플
+# 1,800개, IF = GC NP / 250). rec_int는 우리가 CSV에서 추정한 최빈 간격, share는 그 최빈 간격의 비율이다. 기본
+# NP 201 W면 IF² = 0.646416이라 TSS가 정수가 되지 않는다(정수 TSS는 수동 입력으로 보아 암묵 간격을 내지 않음).
+def _recint_line(
+    athlete, i, rec_int, gc_rec, share=1.0, np_ours=201.0, np_gc=201.0, mmp_ours_20m=250.0, mmp_gc_20m=250.0
+):
+    line = _line(athlete, i, rec_int, np_ours, np_gc, mmp_gc_20m=mmp_gc_20m, mmp_ours_20m=mmp_ours_20m)
+    line["samples"] = 1800
+    line["rec_int_share"] = share
+    line["gc"]["tss"] = 1800 * gc_rec * (np_gc / 250.0) ** 2 / 36.0
+    return line
+
+
+# 암묵 간격은 TSS 정의를 거꾸로 푼 값이다: GC가 2초 파일을 1초로 계산했으면 1.0, 5초 파일을 5초로 계산했으면
+# 5.0이다. GC TSS가 정수(수동 입력)이거나, GC IF가 0이거나, GC TSS가 없으면 계산하지 않는다(NaN).
+def test_gc_implied_interval_inverts_the_tss_definition(tmp_path: Path):
+    integer = _recint_line("a", 2, 1.0, 1.0)
+    integer["gc"]["tss"] = 32.0
+    zero_if = _recint_line("a", 3, 1.0, 1.0)
+    zero_if["gc"]["if"] = 0.0
+    no_tss = _recint_line("a", 4, 1.0, 1.0)
+    no_tss["gc"]["tss"] = None
+    lines = [_recint_line("a", 0, 2.0, 1.0), _recint_line("a", 1, 5.0, 5.0), integer, zero_if, no_tss]
+    implied = parity.gc_implied_interval(parity.load(_write_jsonl(tmp_path / "dev.jsonl", lines)))
+    assert implied.iloc[0] == pytest.approx(1.0)
+    assert implied.iloc[1] == pytest.approx(5.0)
+    assert implied.iloc[2:].isna().all()
+
+
+# 2초 간격 CSV인데 GC TSS·IF가 1초 기준인 라이딩(GC가 2초 파일을 1초로 계산함)은 '비1초·암묵≠최빈'이다. 우리
+# NP·20분 MMP가 GC와 어긋난 것은 이 분류의 불일치이고, 최빈 간격이 1초가 아닌 쪽(H4 대상)에 센다. 최빈 간격과
+# 암묵 간격 쌍은 (2.0, 1.0)이다. 다른 분류는 비어 있다.
+def test_recint_diag_classifies_a_2s_file_that_gc_computed_as_1s(tmp_path: Path):
+    line = _recint_line("p", 0, 2.0, 1.0, np_ours=205.0, mmp_ours_20m=240.0)
+    r = parity.recint_diag(parity.load(_write_jsonl(tmp_path / "dev.jsonl", [line])))
+    assert r["report"] == "gc_implied_recording_interval" and r["verdict"] is None
+    c = r["categories"]["non1s_differs"]
+    assert (c["rides"], c["athletes"], c["mode_1s"], c["mode_other"], c["implied_same"]) == (1, 1, 0, 1, 0)
+    assert c["np"] == {"n": 1, "agree": 0, "rate": 0.0, "mismatch_1s": 0, "mismatch_other": 1}
+    assert c["mmp_20m"] == {
+        "n": 1,
+        "agree": 0,
+        "rate": 0.0,
+        "mismatch_1s": 0,
+        "mismatch_other": 1,
+        "both_absent": 0,
+    }
+    assert c["pairs"] == [{"mode": 2.0, "implied": 1.0, "rides": 1}]
+    others = [k for k in parity.RECINT_CATEGORIES if k != "non1s_differs"]
+    assert all(r["categories"][k]["rides"] == 0 for k in others)
+
+
+# GC TSS가 정수(수동 입력)인 라이딩, GC IF가 0인 라이딩, 최빈 간격이 없는 라이딩(샘플 1개)은 암묵 간격을 최빈
+# 간격과 비교할 수 없어 '암묵 없음'이다. 이유는 'GC TSS나 IF가 없거나 0 이하 → 정수 TSS → 샘플이나 최빈 간격
+# 없음' 순서로 처음 맞는 하나로 센다. 정수 TSS 라이딩은 최빈 간격이 1초라 H1 대상(mode_1s)이기도 하다.
+def test_recint_diag_puts_integer_tss_and_zero_if_in_no_implied(tmp_path: Path):
+    integer = _recint_line("a", 0, 1.0, 1.0)
+    integer["gc"]["tss"] = 50.0
+    zero_if = _recint_line("a", 1, 2.0, 1.0)
+    zero_if["gc"]["if"] = 0.0
+    no_interval = _recint_line("b", 2, None, 1.0)
+    no_interval["samples"] = 1
+    no_interval["rec_int_share"] = None
+    r = parity.recint_diag(parity.load(_write_jsonl(tmp_path / "dev.jsonl", [integer, zero_if, no_interval])))
+    c = r["categories"]["no_implied"]
+    assert (c["rides"], c["athletes"], c["mode_1s"], c["mode_other"]) == (3, 2, 1, 2)
+    assert c["reasons"] == {"gc_tss_or_if_absent": 1, "gc_tss_integer": 1, "no_samples_or_interval": 1}
+    assert "pairs" not in c and "implied_same" not in c
+    assert sum(r["categories"][k]["rides"] for k in parity.RECINT_CATEGORIES) == 3
+
+
+# 흔들림(최빈 간격 비율 < 0.9)은 최빈 간격이 몇 초든 먼저 나눈다: 최빈 1.00·비율 0.8인 파일을 GC가 1.03초로
+# 계산했으면 '흔들림·암묵≠최빈'이고 H1 대상(mode_1s)으로 센다. 최빈 1.26·비율 0.7이고 GC도 1.26초면
+# '흔들림·암묵=최빈'. 흔들림이 아니면 최빈 1.00은 '1초'다(암묵 1.004는 0.5% 안이라 implied_same에 세고, GC가
+# 2초로 계산한 1초 파일은 세지 않는다). 5초는 0.5% 경계 안팎(5.02는 같음, 5.03은 다름)에서 '비1초·암묵=최빈'과
+# '비1초·암묵≠최빈'으로 갈린다.
+def test_recint_diag_separates_jitter_and_uses_the_half_percent_tolerance(tmp_path: Path):
+    lines = [
+        _recint_line("j1", 0, 1.0, 1.03, share=0.8),
+        _recint_line("j2", 1, 1.26, 1.26, share=0.7),
+        _recint_line("s1", 2, 1.0, 1.0),
+        _recint_line("s1", 3, 1.0, 1.004),
+        _recint_line("s1", 4, 1.0, 2.0),
+        _recint_line("f1", 5, 5.0, 5.02),
+        _recint_line("f2", 6, 5.0, 5.03),
+    ]
+    cats = parity.recint_diag(parity.load(_write_jsonl(tmp_path / "dev.jsonl", lines)))["categories"]
+    jd, js = cats["jitter_differs"], cats["jitter_same"]
+    assert (jd["rides"], jd["mode_1s"], jd["implied_same"]) == (1, 1, 0)
+    assert jd["pairs"] == [{"mode": 1.0, "implied": 1.03, "rides": 1}]
+    assert (js["rides"], js["mode_other"], js["implied_same"]) == (1, 1, 1)
+    assert (cats["1s"]["rides"], cats["1s"]["athletes"], cats["1s"]["implied_same"]) == (3, 1, 2)
+    assert cats["1s"]["pairs"] == [
+        {"mode": 1.0, "implied": 1.0, "rides": 2},
+        {"mode": 1.0, "implied": 2.0, "rides": 1},
+    ]
+    assert (cats["non1s_same"]["rides"], cats["non1s_differs"]["rides"]) == (1, 1)
+    assert cats["non1s_differs"]["pairs"] == [{"mode": 5.0, "implied": 5.03, "rides": 1}]
+    assert cats["no_implied"]["rides"] == 0
+
+
+# 분류 전체의 합은 등록된 분석의 그룹과 맞아야 한다: 최빈 1초 합 = H1 대상 수, 그 외 합 = H4 대상 수, 최빈
+# 1초의 NP 불일치 합 = H1 불일치 수, 그 외의 NP 불일치 합 = H4 불일치 수, 최빈 1초의 20분 MMP 일치 수 / H1
+# 대상 수 = analyse의 20분 구간 일치율. 진단을 만들어도 입력 표의 열과 analyse 결과는 그대로다.
+def test_recint_diag_totals_match_the_registered_analysis(tmp_path: Path):
+    integer = _recint_line("d", 6, 1.0, 1.0, np_ours=199.0)
+    integer["gc"]["tss"] = 50.0
+    lines = [
+        _recint_line("a", 0, 1.0, 1.0),
+        _recint_line("a", 1, 1.0, 1.0, np_ours=203.0),
+        _recint_line("b", 2, 2.0, 1.0, np_ours=205.0, mmp_ours_20m=240.0),
+        _recint_line("b", 3, 5.0, 5.0),
+        _recint_line("c", 4, 1.0, 1.03, share=0.8, mmp_ours_20m=252.0),
+        _recint_line("c", 5, 1.26, 1.26, share=0.7, np_ours=203.0),
+        integer,
+    ]
+    df = parity.load(_write_jsonl(tmp_path / "dev.jsonl", lines))
+    columns = list(df.columns)
+    registered = parity.analyse(df)
+    r = parity.recint_diag(df)
+    assert list(df.columns) == columns
+    assert parity.analyse(df) == registered
+    h1, h4 = registered["H1_np_1s"], registered["H4_np_other"]
+    cats = [r["categories"][k] for k in parity.RECINT_CATEGORIES]
+    assert sum(c["rides"] for c in cats) == r["rides"] == 7
+    assert r["registered_groups"] == {"1s": h1["n"], "other": h4["n"]} == {"1s": 4, "other": 3}
+    assert sum(c["mode_1s"] for c in cats) == h1["n"]
+    assert sum(c["mode_other"] for c in cats) == h4["n"]
+    assert sum(c["np"]["mismatch_1s"] for c in cats) == round(h1["n"] * (1 - h1["rate"])) == 2
+    assert sum(c["np"]["mismatch_other"] for c in cats) == round(h4["n"] * (1 - h4["rate"])) == 2
+    mmp_1s_agree = sum(c["mode_1s"] - c["mmp_20m"]["mismatch_1s"] for c in cats)
+    assert mmp_1s_agree / h1["n"] == registered["mmp_rate_by_window"]["20m_critical_power"] == 0.75
+
+
+# --recint-diag 실행은 <out>.json·<out>.md 두 파일만 새로 만들고, 같은 폴더의 기존 분석 보고서(dev.json)와
+# JSONL을 바꾸지 않으며 기존 분석 보고서(dev.md)를 새로 만들지도 않는다. 보고서 줄 끝은 LF다.
+def test_recint_diag_cli_writes_only_the_diag_files(tmp_path: Path):
+    lines = [_recint_line("p", 0, 2.0, 1.0, np_ours=205.0), _recint_line("q", 1, 1.0, 1.0)]
+    jsonl = _write_jsonl(tmp_path / "dev.jsonl", lines)
+    (tmp_path / "dev.json").write_text("recorded", encoding="utf-8")
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+    parity.main(["--jsonl", str(jsonl), "--out", str(tmp_path / "dev-recint-diag"), "--recint-diag"])
+    after = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+    assert set(after) - set(before) == {"dev-recint-diag.json", "dev-recint-diag.md"}
+    assert {name: after[name] for name in before} == before
+    report = json.loads(after["dev-recint-diag.json"].decode("utf-8"))
+    assert report["categories"]["non1s_differs"]["rides"] == 1
+    assert report["categories"]["1s"]["rides"] == 1
+    md = after["dev-recint-diag.md"].decode("utf-8")
+    assert "판정 없음" in md and "비1초·암묵≠최빈" in md and "암묵 없음" in md
+    assert "\r\n" not in md
+
+
+# 진단 모드는 --out 이름이 -recint-diag로 끝나지 않을 때(기존 보고서를 덮어쓸 수 있음), --jsonl 파일 이름이
+# sealed로 시작할 때(규칙상 봉인 세트는 이 진단에 쓰지 않음), --cluster-report와 함께 줄 때 아무것도 쓰지 않고
+# 끝난다. 오류 문장까지 보는 것은 옵션을 모르는 옛 코드도 argparse 오류(SystemExit)로 끝나기 때문이다.
+def test_recint_diag_cli_refuses_unsafe_runs(tmp_path: Path, capsys):
+    dev = _write_jsonl(tmp_path / "dev.jsonl", [_recint_line("q", 0, 1.0, 1.0)])
+    sealed = _write_jsonl(tmp_path / "sealed.jsonl", [_recint_line("q", 0, 1.0, 1.0)])
+    (tmp_path / "dev.json").write_text("recorded", encoding="utf-8")
+    both_modes = ["--jsonl", str(dev), "--out", str(tmp_path / "dev-recint-diag"), "--recint-diag"]
+    cases = [
+        (["--jsonl", str(dev), "--out", str(tmp_path / "dev"), "--recint-diag"], "ending in -recint-diag"),
+        (
+            ["--jsonl", str(sealed), "--out", str(tmp_path / "sealed-recint-diag"), "--recint-diag"],
+            "development set only",
+        ),
+        (both_modes + ["--cluster-report"], "cannot be used together"),
+    ]
+    for argv, message in cases:
+        with pytest.raises(SystemExit):
+            parity.main(argv)
+        assert message in capsys.readouterr().err
+    assert (tmp_path / "dev.json").read_text(encoding="utf-8") == "recorded"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["dev.json", "dev.jsonl", "sealed.jsonl"]
