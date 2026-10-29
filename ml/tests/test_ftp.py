@@ -446,6 +446,25 @@ def test_calibrate_cli_writes_reports_and_has_no_split_option(tmp_path: Path):
         ftp.main(["calibrate", "--units", str(p), "--out", str(out), "--split", "test"])
 
 
+# 명령행: calibrate도 --out 이름이 -intervals로 끝나지 않으면 단위 파일을 읽기 전에 종료 코드 2로 거부하고
+# 아무것도 쓰지 않는다(2026-10-30 추가. baseline의 -persistence, parity의 -cluster·-recint-diag와 같은 보호).
+# 그 전에는 `--out ../reports/ftp/dev`처럼 잘못 준 경로가 커밋된 3단계 dev·봉인 test 보고서를 말없이
+# 덮어쓸 수 있었다. 없는 단위 파일 경로로 읽기 전에 멈추는지, 있는 파일로도 쓰지 않는지 본다.
+def test_calibrate_cli_refuses_an_out_name_that_could_overwrite_stage_3_reports(tmp_path: Path, capsys):
+    p = tmp_path / "units.parquet"
+    _interval_units().to_parquet(p, index=False)
+    missing = str(tmp_path / "missing.parquet")
+    for argv in (
+        ["calibrate", "--units", missing, "--out", str(tmp_path / "dev")],
+        ["calibrate", "--units", str(p), "--out", str(tmp_path / "test")],
+    ):
+        with pytest.raises(SystemExit) as e:
+            ftp.main(argv)
+        assert e.value.code == 2
+        assert "--out must end in -intervals" in capsys.readouterr().err
+    assert sorted(f.name for f in tmp_path.iterdir()) == ["units.parquet"]
+
+
 # ----------------------------------------------------------------------------- baseline: 라벨 지속성 P0
 # 아래 테스트는 docs/experiments.md 3단계 '사후 보고: 라벨 지속성 기준선 P0'(규칙 변경 20)의 정의를
 # 고정한다. 규칙은 도구보다 먼저 커밋했고, 값은 모두 손으로 셀 수 있는 합성 단위로 만든다(실제

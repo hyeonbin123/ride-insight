@@ -716,10 +716,14 @@ def to_markdown(r: dict) -> str:
 #   이름과 경계를 보고서 JSON에서 그대로 읽는다.
 # - H14_BAND: H14 '보정 유지'의 포함률 범위. dev 포함률의 선수 단위 95% 구간이 이 안에 있고 80%를 포함해야
 #   한다.
+# - INTERVALS_OUT_SUFFIX: --out 이름이 이것으로 끝나야 한다(2026-10-30 추가, 규칙의 값이 아니라 도구의 보호
+#   장치). `--out ../reports/ftp/dev`처럼 잘못 준 경로가 reports/ftp/dev.*·test.* 같은 3단계 기록을 덮어쓰지
+#   않게 하려는 것이다. 기록 명령의 출력 이름 r1-intervals(reproduce도 같은 이름)는 이 규칙을 만족한다.
 INTERVAL_TAIL_PCT = 10
 INTERVAL_LEVEL = (100 - 2 * INTERVAL_TAIL_PCT) / 100
 RIDES_BUCKETS = (("8-12", 8, 12), ("13-20", 13, 20), ("21-30", 21, 30), ("31+", 31, None))
 H14_BAND = (0.76, 0.84)
+INTERVALS_OUT_SUFFIX = "-intervals"
 
 
 def rides_bucket(n_rides: int) -> str | None:
@@ -1129,8 +1133,9 @@ def persistence_to_markdown(r: dict) -> str:
 
 # 명령행 진입점. build는 --features(JSONL), --index(rides 인덱스 폴더), --sample(매니페스트), --out(parquet)을
 # 받고, evaluate는 --units, --split(dev/test), --adopt, --out(확장자 없는 경로)을 받아 .json과 .md를 쓴다.
-# calibrate는 --units와 --out만 받는다(분할을 고르는 옵션이 없어 봉인 test로는 돌릴 수 없다). baseline은
-# --units, --split(dev만 받는다), --out(이름이 -persistence로 끝나야 한다)을 받는다.
+# calibrate는 --units와 --out(이름이 -intervals로 끝나야 한다)만 받는다(분할을 고르는 옵션이 없어 봉인
+# test로는 돌릴 수 없다). baseline은 --units, --split(dev만 받는다), --out(이름이 -persistence로 끝나야
+# 한다)을 받는다.
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1167,7 +1172,10 @@ def main(argv: list[str] | None = None) -> None:
         "--out",
         type=Path,
         required=True,
-        help="확장자를 뺀 출력 경로(.json과 .md를 쓴다. 예: ../reports/ftp/r1-intervals)",
+        help=(
+            "확장자를 뺀 출력 경로(.json과 .md를 쓴다). 3단계 보고서를 덮어쓰지 않게 이름이 -intervals로 "
+            "끝나야 한다(예: ../reports/ftp/r1-intervals)"
+        ),
     )
     s = sub.add_parser(
         "baseline",
@@ -1219,6 +1227,15 @@ def main(argv: list[str] | None = None) -> None:
         Path(f"{a.out}.md").write_text(persistence_to_markdown(r), encoding="utf-8", newline="\n")
         print(f"wrote {a.out}.json and {a.out}.md (no verdict)")
     elif a.cmd == "calibrate":
+        # baseline과 같은 방식으로, --out 이름이 -intervals로 끝나지 않으면 단위 파일을 읽기 전에 거부한다
+        # (2026-10-30 추가). 그 전에는 `--out ../reports/ftp/dev`(또는 test)처럼 잘못 준 경로에 커밋된 3단계
+        # dev·봉인 test 보고서를 말없이 덮어쓸 수 있었다(git이 추적해 되돌릴 수는 있었지만 측정 기록을 지키는
+        # 방식이 하위 명령마다 달랐다). p.error는 사용법과 오류를 stderr에 쓰고 종료 코드 2로 끝낸다.
+        if not a.out.name.endswith(INTERVALS_OUT_SUFFIX):
+            p.error(
+                f"calibrate: --out must end in {INTERVALS_OUT_SUFFIX} (got {a.out.name!r}) "
+                "so that the stage 3 reports are not overwritten"
+            )
         r = calibrate(pd.read_parquet(a.units))
         a.out.parent.mkdir(parents=True, exist_ok=True)
         # evaluate와 같이 줄 끝은 LF, 한국어 판정 문자열은 그대로(ensure_ascii=False) 쓴다.
