@@ -95,6 +95,7 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/roo
 - 후보와 판정 규칙을 `docs/experiments.md`에 먼저 적고 커밋한 뒤 개발 세트에서 구현을 맞추고, 봉인 세트는 단계가 끝날 때 한 번만 잰다. 봉인 결과를 보고 고치지 않는다
 - 선수 단위로 train 60 / dev 20 / test 20을 나눈다(SHA-256). 구간은 라이딩 또는 선수 단위 부트스트랩 95%
 - 규칙을 바꾸면 이유와 시점을 "규칙 변경" 절에 남긴다(1단계에서 4번: 선수 조건 완화, TSS 비교 기준을 GC가 실제로 쓴 임계값으로, 수동 입력 TSS 제외, GC에 없는 TSS 제외)
+- 커밋된 개발 세트 보고서가 같은 입력과 지금 코드로 다시 나오는지 한 명령으로 확인할 수 있다: `cd ml && uv run python -m ride_insight_ml.reproduce --check`. 로컬 중간 파일(`reports/parity/dev.jsonl`, `data/features/units.parquet`. 커밋하지 않으며 OpenData에서 만든다)에서 1단계 파리티의 등록된 분석과 사후 보고(`reports/parity/dev-zero-fix`·`dev-cluster`·`dev-recint-diag`), 3단계 dev 평가와 사후 보고(`reports/ftp/dev`·`r1-intervals`·`dev-persistence`)를 기록 명령 그대로 임시 폴더에 다시 만들고 `.json`·`.md` 12개를 바이트 단위로 비교한다. 다르면 종료 코드 1과 차이(JSON은 값의 경로와 두 값), 입력이 없으면 만드는 명령을 출력하고 2. 봉인 세트·봉인 test는 다시 돌리지 않는다. 2026-10-30 잠금 환경(Python 3.11, numpy 2.4.6)에서 12개 모두 바이트까지 같았다(CPU 약 1분)
 
 ## AI 도구와 검증
 Claude Code가 설계·구현·측정을, Codex가 독립 검토(읽기 전용 정적 검토)를 맡았다. 두 도구가 만든 것과 잡힌 실수는 [docs/ai-verification.md](docs/ai-verification.md)에 기능마다 적었다. 예: fitparse 대조가 잡은 FIT 디코더 버그 2개(필드 번호, 개발자 필드 정의 크기), 통합 테스트가 잡은 PgJDBC `float4` 읽기 오류, Codex 검토 세 번 35건(봉인 규칙의 누수 허용, NaN 전파, 체인 블록별 메시지 상한, 신선 라벨 정의 불일치, 측정 조건 위반 등).
