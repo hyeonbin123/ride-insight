@@ -14,11 +14,18 @@ import com.rideinsight.metrics.PowerMetrics
 import com.rideinsight.metrics.RecordingInterval
 import com.rideinsight.metrics.RideSamples
 import java.io.File
+import java.net.Socket
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 import java.time.Instant
+import java.util.zip.GZIPInputStream
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.springframework.core.io.ByteArrayResource
 import org.springframework.http.HttpEntity
@@ -505,6 +512,113 @@ class ApiIntegrationTest : ApiTestBase() {
             val message = r.body!!.path("message").asString()
             assertEquals(expected, message, what)
             for (leak in listOf("java.", "com.rideinsight", "Exception")) assertFalse(message.contains(leak), "$what leaks '$leak': $message")
+        }
+    }
+
+    // Host 허용 목록(HostAllowlistFilter, 2026-10-29). DNS rebinding(공격자 도메인의 DNS 응답을 짧은 TTL 뒤 127.0.0.1로 바꿔
+    // 브라우저가 같은 출처로 이 API를 부르게 하는 것)을 막으려고, Host(포트 제외)가 허용 목록(기본 localhost·127.0.0.1·[::1])에
+    // 없으면 컨트롤러에 닿기 전에 421로 돌려보낸다. 이 클래스의 다른 테스트가 모두 쓰는 RestClient는 Host: localhost:<임의 포트>를
+    // 보내므로 Testcontainers 통합 테스트가 그대로 통과한다는 것도 허용 쪽 확인이다. JDK HttpClient는 Host 헤더를 직접 바꾸지
+    // 못하게 막으므로(제한 헤더) 소켓으로 요청 줄과 헤더를 그대로 보낸다. 거절 쪽은 유효한 선수 생성 요청이라, 컨트롤러까지
+    // 갔다면 201이었다.
+    @Test
+    fun `a request naming another host is 421 before it reaches the API, loopback names pass on any port`() {
+        val port = env.getProperty("local.server.port")!!.toInt()
+        for (host in listOf("localhost:$port", "127.0.0.1:$port", "[::1]:$port", "LOCALHOST:$port", "127.0.0.1")) {
+            assertEquals(200, rawRequest(port, "GET", "/actuator/health", host).status, host)
+        }
+        val json = """{"name":"rebinding","gender":"M","birthYear":1990}"""
+        for (host in listOf("evil.example", "evil.example:$port", "localhost.evil.example:$port", "127.0.0.1.nip.io")) {
+            val refused = rawRequest(port, "POST", "/api/athletes", host, json)
+            assertEquals(421, refused.status, host)
+            assertEquals("host_not_allowed", mapper.readTree(refused.body).path("error").asString(), host)
+            assertEquals("nosniff", refused.headers["x-content-type-options"], host)
+            assertEquals("no-store", refused.headers["cache-control"], host)
+        }
+        // 같은 요청을 허용된 Host로 보내면 만들어진다(위의 421이 본문 때문이 아님을 확인).
+        assertEquals(201, rawRequest(port, "POST", "/api/athletes", "localhost:$port", json).status)
+    }
+
+    // 응답 압축(server.compression, 2026-10-29): Accept-Encoding: gzip을 보낸 큰 JSON(라이딩 샘플)은 gzip으로 오고, 풀면 압축
+    // 없이 받은 JSON과 같다. Accept-Encoding이 없으면 압축하지 않는다. 길이 하한 1 KB(min-response-size)도 본다: 선수 조회(약
+    // 270 B)는 그대로, 활동 없는 선수의 20일 훈련 부하(1~2 KB, 기본 하한 2KB였다면 압축되지 않을 크기)는 압축된다. JDK
+    // HttpClient는 응답을 자동으로 풀지 않으므로 받은 바이트가 그대로 압축본이다. HTTP/1.1로 고정해 h2c 업그레이드 시도를 빼고
+    // Tomcat의 HTTP/1.1 압축 경로만 본다.
+    @Test
+    fun `JSON responses are gzip compressed only when the client accepts gzip`() {
+        val id = createAthlete()
+        val uploaded = upload(id, "Edge810-Vector-2013-08-16-15-35-10")
+        assertEquals(201, uploaded.status, "${uploaded.body}")
+        val base = "http://localhost:${env.getProperty("local.server.port")}/api"
+        HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build().use { http ->
+            // (Accept-Encoding: gzip 응답, 그냥 받은 응답).
+            fun both(path: String): Pair<HttpResponse<ByteArray>, HttpResponse<ByteArray>> {
+                val uri = URI("$base$path")
+                val gzipped = http.send(HttpRequest.newBuilder(uri).header("Accept-Encoding", "gzip").build(), HttpResponse.BodyHandlers.ofByteArray())
+                val plain = http.send(HttpRequest.newBuilder(uri).build(), HttpResponse.BodyHandlers.ofByteArray())
+                assertEquals(200, gzipped.statusCode(), path)
+                assertEquals(200, plain.statusCode(), path)
+                assertNull(plain.headers().firstValue("Content-Encoding").orElse(null), path)
+                return gzipped to plain
+            }
+            fun encoding(r: HttpResponse<ByteArray>) = r.headers().firstValue("Content-Encoding").orElse(null)
+
+            val (gzipped, plain) = both("/activities/${uploaded.body!!.path("id").asString()}/samples?every=1")
+            assertEquals("gzip", encoding(gzipped))
+            assertTrue(gzipped.headers().allValues("Vary").any { it.contains("accept-encoding", ignoreCase = true) }, "${gzipped.headers().map()}")
+            val unzipped = GZIPInputStream(gzipped.body().inputStream()).use { it.readAllBytes() }
+            assertEquals(mapper.readTree(plain.body()), mapper.readTree(unzipped))
+            // 숫자 배열 JSON은 절반 아래로 준다(압축이 실제로 걸렸는지, 빈 gzip 틀만 붙은 것이 아닌지).
+            assertTrue(gzipped.body().size * 2 < plain.body().size, "gzip ${gzipped.body().size} B vs plain ${plain.body().size} B")
+
+            val (smallGzip, small) = both("/athletes/$id")
+            assertTrue(small.body().size < 1024, "athlete JSON is ${small.body().size} B")
+            assertNull(encoding(smallGzip), "a response under 1 KB is sent as is")
+
+            val other = createAthlete(name = "No rides")
+            val (midGzip, mid) = both("/athletes/$other/training-load?from=2026-10-01&to=2026-10-20")
+            check(mid.body().size in 1024 until 2048) { "the 1 KB floor needs a response between 1 and 2 KB, got ${mid.body().size} B" }
+            assertEquals("gzip", encoding(midGzip), "a ${mid.body().size} B response is compressed under the 1 KB floor")
+        }
+    }
+
+    // 소켓으로 보낸 HTTP/1.1 요청 하나의 결과: 상태 코드, 헤더(이름은 소문자, 같은 이름이 여럿이면 마지막 값), 본문(chunked면 푼 것).
+    private class RawResponse(val status: Int, val headers: Map<String, String>, val body: String)
+
+    // Host 헤더를 마음대로 정해 요청 하나를 보낸다. Connection: close라 서버는 응답 뒤 연결을 닫고, 끝까지 읽은 바이트가
+    // 응답 전체다. 바이트 수로 세는 chunked 길이를 맞추려고 먼저 ISO-8859-1(1바이트 = 1글자)로 읽고 본문만 UTF-8로 바꾼다.
+    private fun rawRequest(port: Int, method: String, path: String, host: String, json: String? = null): RawResponse {
+        val payload = json?.toByteArray(Charsets.UTF_8) ?: ByteArray(0)
+        val head = buildString {
+            append("$method $path HTTP/1.1\r\nHost: $host\r\nConnection: close\r\n")
+            if (json != null) append("Content-Type: application/json\r\nContent-Length: ${payload.size}\r\n")
+            append("\r\n")
+        }
+        val raw = Socket("localhost", port).use { socket ->
+            socket.soTimeout = 30_000
+            socket.getOutputStream().write(head.toByteArray(Charsets.US_ASCII) + payload)
+            socket.getOutputStream().flush()
+            socket.getInputStream().readAllBytes().toString(Charsets.ISO_8859_1)
+        }
+        val split = raw.indexOf("\r\n\r\n")
+        check(split > 0) { "no HTTP response head: $raw" }
+        val lines = raw.substring(0, split).split("\r\n")
+        val headers = lines.drop(1).associate { it.substringBefore(':').trim().lowercase() to it.substringAfter(':').trim() }
+        var body = raw.substring(split + 4)
+        if (headers["transfer-encoding"].equals("chunked", ignoreCase = true)) body = dechunk(body)
+        return RawResponse(lines.first().split(" ")[1].toInt(), headers, String(body.toByteArray(Charsets.ISO_8859_1), Charsets.UTF_8))
+    }
+
+    // chunked 본문(16진수 크기 줄 + 그만큼의 바이트 + CRLF를 되풀이하고 크기 0으로 끝남)을 이어 붙인다.
+    private fun dechunk(body: String): String {
+        val out = StringBuilder()
+        var i = 0
+        while (true) {
+            val lineEnd = body.indexOf("\r\n", i)
+            val size = body.substring(i, lineEnd).substringBefore(';').trim().toInt(16)
+            if (size == 0) return out.toString()
+            out.append(body, lineEnd + 2, lineEnd + 2 + size)
+            i = lineEnd + 2 + size + 2
         }
     }
 

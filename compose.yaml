@@ -2,6 +2,10 @@
 # http://localhost:8081. The server alone is on http://localhost:8080.
 # 포트는 이 PC(127.0.0.1)에만 연다(2026-10-15). API에 인증이 없어(README 한계) 모든 인터페이스에 열면 같은 네트워크의
 # 누구나 선수 데이터를 읽고 쓸 수 있었다. 다른 기기에서 보려면 이 줄을 직접 바꿔야 한다.
+# 2026-10-29부터 웹(nginx)과 서버는 Host가 이 PC의 이름일 때만 답한다(DNS rebinding 방지, docs/api.md): 웹은 localhost·
+# 127.0.0.1이 아니면 응답 없이 연결을 닫고, 서버는 ride-insight.allowed-hosts(기본 localhost,127.0.0.1,[::1])에 없으면 421.
+# 그래서 다른 기기에서 보려면 ports와 함께 web/nginx.conf의 server_name과 서버의 허용 목록(server 서비스 environment에
+# RIDEINSIGHT_ALLOWEDHOSTS: "localhost,127.0.0.1,[::1],<그 주소>")에도 그 주소를 더해야 한다.
 services:
   postgres:
     image: postgres:16
