@@ -9,7 +9,7 @@
 | `athlete_threshold` | athlete_id, effective_from(date), ftp_watts, source(`manual` / `estimate`). 그 날짜의 FTP는 effective_from ≤ 날짜인 가장 최근 행 |
 | `activity` | id(uuid), athlete_id, started_at(timestamptz), source(`fit` / `opendata`), source_name, sport, rec_int_secs, sample_count, duration_secs, device(manufacturer, product), crc_valid, jitter(최빈 간격 비율), power_missing, created_at. 같은 선수·같은 시작 시각은 유일(중복 업로드 거절) |
 | `activity_samples` | activity_id, secs real[], power smallint[], heart_rate smallint[], cadence smallint[], distance_m real[], altitude_m real[]. 활동당 한 행. 결측은 NULL 원소 |
-| `activity_metrics` | activity_id, ftp_used, np, intensity, tss, average_power, max_power, mmp jsonb(16구간), work_kj, computed_at. 지표 코드가 바뀌면 다시 계산해 덮어쓴다(`metrics_version`). curve jsonb(전 구간 파워 커브 ≤ 300점, 2026-10-15 V2). **2026-10-24 추가**: 목록·상세 조회는 응답에 쓰는 열만 읽고(curve·computed_at 제외), 활동 파워 커브 조회는 mmp·curve를 쿼리 하나로 읽는다(그 전에는 `select *`라 목록 한 페이지마다 활동 수만큼 curve를 읽어 버렸고, 커브 조회는 같은 행의 curve를 두 번 읽었다) |
+| `activity_metrics` | activity_id, ftp_used, np, intensity, tss, average_power, max_power, mmp jsonb(16구간), work_kj, computed_at, metrics_version(계산한 지표 코드의 버전, 지금 1). **2026-10-29 정정**: `metrics_version`은 기록만 하고 이 값을 읽어 다시 계산하는 경로는 없다(자동 재계산 없음. 처음에는 '지표 코드가 바뀌면 다시 계산해 덮어쓴다'고 적었다). 지표 계산 정의를 바꾸면 `MetricsService.METRICS_VERSION`을 올리고, 저장된 옛 버전 행을 샘플부터 다시 계산하는 도구를 그때 함께 만들어야 한다(지금은 없다. FTP·시간대 변경 때의 재계산은 IF·TSS만 다시 쓴다). curve jsonb(전 구간 파워 커브 ≤ 300점, 2026-10-15 V2). **2026-10-24 추가**: 목록·상세 조회는 응답에 쓰는 열만 읽고(curve·computed_at 제외), 활동 파워 커브 조회는 mmp·curve를 쿼리 하나로 읽는다(그 전에는 `select *`라 목록 한 페이지마다 활동 수만큼 curve를 읽어 버렸고, 커브 조회는 같은 행의 curve를 두 번 읽었다) |
 
 ## API (모두 `/api` 아래, JSON)
 | 메서드·경로 | 동작 | 완료 기준 |
