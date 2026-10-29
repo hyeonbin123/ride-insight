@@ -140,3 +140,38 @@ jobs:
           ignore-unfixed: true
           trivyignores: .trivyignore
           exit-code: "1"
+
+  # 전체 스택 스모크(2026-10-30 추가). README '실행'의 명령 그대로 compose로 PostgreSQL·서버·웹을 빌드해 띄우고, 웹(nginx,
+  # 8081)을 거쳐 데모 시드 도구로 데모 선수를 만들고 샘플 FIT 9개를 올린다. 도구는 서버 통합 테스트의 완료 기준 2와 같은
+  # 답(사이클링 5개 201, 러닝 422, 손상 2개 400 invalid_fit, Coros 201 또는 400)이 아니면 종료 코드 1로 실패한다. images 잡이
+  # 이미지 안의 취약점을 본다면, 이 잡은 Dockerfile·nginx.conf·compose 설정·서버 실행 조건이 바뀌어 스택이 뜨지 않거나 /api
+  # 프록시·업로드가 깨지는 회귀를 잡는다. images 잡과 따로 둔 것은 Trivy 결과(취약점 DB가 날마다 바뀜)와 이 결과가 서로를
+  # 가리지 않게 하려는 것이다.
+  # - --wait: healthcheck가 있는 postgres·server는 healthy, 없는 web은 running이 될 때까지 기다린다. 넘으면 실패.
+  # - 마지막 단계의 `down --volumes`는 일회용 러너라서 쓴다. 로컬에서는 쓰지 않는다(DB 볼륨의 선수 데이터가 지워진다).
+  #   로컬에서는 `docker compose stop`.
+  stack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          # 로컬 측정·테스트 환경과 같은 판. 데모 도구는 표준 라이브러리와 numpy만 쓰지만 같은 잠금 환경에서 돌린다.
+          python-version: "3.11"
+      - name: Start the stack (docker compose)
+        run: docker compose up --build --detach --wait --wait-timeout 300
+      - name: Web page through nginx
+        run: curl --fail --silent --show-error --output /dev/null http://127.0.0.1:8081/
+      - name: Demo seed through the web proxy (expected status codes)
+        working-directory: ml
+        run: uv run --frozen python -m ride_insight_ml.demo --target http://127.0.0.1:8081
+      - name: Container logs (on failure)
+        if: failure()
+        run: |
+          docker compose ps --all
+          docker compose logs --no-color --tail 200
+      - name: Remove the stack
+        if: always()
+        run: docker compose down --volumes

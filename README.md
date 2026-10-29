@@ -62,6 +62,15 @@ cd web && npm install && npm run dev      # http://localhost:5173, /api는 8080�
 
 화면에서 선수를 만들고 FTP를 등록한 뒤 FIT 파일을 올리면 지표·파워 커브·훈련 부하·FTP 추정이 나온다. 샘플 FIT는 `server/src/test/resources/fit/`에 있다(python-fitparse 테스트 파일, MIT).
 
+데모 데이터는 한 명령으로 넣을 수 있다. 스택을 띄운 뒤 데모 선수(FTP 250 W, Asia/Seoul)를 만들고 샘플 FIT 9개를 웹(nginx)을 거쳐 올린다.
+
+```bash
+docker compose up --build --detach --wait
+cd ml && uv run python -m ride_insight_ml.demo --target http://127.0.0.1:8081
+```
+
+출력된 선수 id를 화면 '선수' 메뉴의 '기존 선수 id로 전환'에 넣는다. 샘플 라이딩은 2011~2020년 것이라 대시보드 기준일을 출력된 라이딩 날짜 근처로 둔다. 사이클링 5개는 201(저장), 러닝 1개는 422, 손상 파일 2개는 400이 정상이고, 개발자 필드 정렬이 어긋난 Coros 파일은 201과 400 모두 정상이다(서버 통합 테스트의 완료 기준과 같다. 지금 서버는 Coros 파일을 저장한다). 다른 답이 있으면 종료 코드 1이다. 실행할 때마다 새 선수를 만들고, 선수 삭제 API가 없어 만든 선수는 DB에 남는다. 스택은 `docker compose stop`으로 끈다(`docker compose down -v`는 DB 볼륨까지 지운다).
+
 ## 테스트
 ```bash
 cd server && ./gradlew test           # 단위 + Testcontainers(PostgreSQL 16) 통합 테스트. Docker 필요
@@ -70,6 +79,7 @@ cd web && npm run lint && npm test && npm run build
 ```
 
 - 로컬 측정·테스트 환경은 Python 3.11이고, `ml/uv.lock`이 3.11에 고르는 numpy 2.4.6·scipy 1.17.1을 쓴다. 잠금 파일에는 3.12용 해석(numpy 2.5.3·scipy 1.18.1)도 들어 있어 CI는 ml 테스트를 3.11과 3.12에서 모두 돌린다
+- CI는 push·PR마다 전체 스택도 띄운다(`stack` 잡): `docker compose up --build --detach --wait`로 PostgreSQL·서버가 healthy, 웹이 running이 되기를 기다린 뒤, 웹 첫 화면이 200인지와 위 데모 명령이 웹(nginx)을 거쳐 기대한 상태 코드를 받는지 본다. Dockerfile·`web/nginx.conf`·compose 설정이 바뀌어 스택이 뜨지 않거나 `/api` 프록시·업로드가 깨지면 실패한다
 - CI는 push·PR마다 의존성 취약점도 본다: 화면은 `npm audit --audit-level=high`(개발 의존성 포함), ml은 잠금 파일에서 내보낸 고정 목록의 `pip-audit`(Python 판마다), 서버·웹은 Docker 이미지를 빌드해 Trivy로 고친 버전이 나온 HIGH·CRITICAL을 찾는다(서버 이미지는 실행 jar 안의 Tomcat·Jackson 같은 라이브러리까지). 이 서비스에서 닿지 않는다고 확인해 뺀 항목은 근거와 만료일을 붙여 `.trivyignore`에 둔다. 취약점 DB와 베이스 이미지가 날마다 바뀌어 같은 커밋도 다른 날 실패할 수 있다. 같은 검사를 로컬에서 돌리려면(Docker 필요):
 
 ```bash

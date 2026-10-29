@@ -44,6 +44,9 @@ CONNECTION_ERROR = 0
 # CONNECTION_ERROR(0)와 예외 설명으로 돌려줘 2xx가 아닌 응답으로 센다. 처음 구현은 이것을 잡지 않아 요청
 # 하나가 끊기면 스레드 풀이 예외를 다시 던져 스크립트 전체가 멈췄다(2026-10-13 수정).
 # 시간은 요청을 열기 직전부터 본문을 다 읽을 때까지를 잰다(perf_counter는 단조 증가하는 고해상도 시계).
+# 데모 시드 도구(demo.py)도 선수 생성과 샘플 업로드에 이 함수와 아래 _multipart를 그대로 쓴다.
+# 돌려주는 모양(상태, 초, 본문)이나 연결 실패를 상태 0으로 돌려주는 약속을 바꾸면 demo.py와
+# tests/test_demo.py도 함께 고친다.
 def _req(
     method: str, url: str, body: bytes | None = None, content_type: str | None = None
 ) -> tuple[int, float, bytes]:
