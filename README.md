@@ -69,6 +69,18 @@ cd ml && uv sync && uv run pytest && uv run ruff check .
 cd web && npm run lint && npm test && npm run build
 ```
 
+- 로컬 측정·테스트 환경은 Python 3.11이고, `ml/uv.lock`이 3.11에 고르는 numpy 2.4.6·scipy 1.17.1을 쓴다. 잠금 파일에는 3.12용 해석(numpy 2.5.3·scipy 1.18.1)도 들어 있어 CI는 ml 테스트를 3.11과 3.12에서 모두 돌린다
+- CI는 push·PR마다 의존성 취약점도 본다: 화면은 `npm audit --audit-level=high`(개발 의존성 포함), ml은 잠금 파일에서 내보낸 고정 목록의 `pip-audit`(Python 판마다), 서버·웹은 Docker 이미지를 빌드해 Trivy로 고친 버전이 나온 HIGH·CRITICAL을 찾는다(서버 이미지는 실행 jar 안의 Tomcat·Jackson 같은 라이브러리까지). 이 서비스에서 닿지 않는다고 확인해 뺀 항목은 근거와 만료일을 붙여 `.trivyignore`에 둔다. 취약점 DB와 베이스 이미지가 날마다 바뀌어 같은 커밋도 다른 날 실패할 수 있다. 같은 검사를 로컬에서 돌리려면(Docker 필요):
+
+```bash
+cd web && npm audit --audit-level=high
+cd ml && uv export --frozen --format requirements-txt --no-hashes --no-emit-project -o /tmp/ml-req.txt \
+  && uvx --python 3.11 pip-audit==2.10.1 -r /tmp/ml-req.txt --no-deps --disable-pip --strict
+docker build -t ride-insight-web:ci web    # 서버는 web 대신 server
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache -v "$PWD:/src:ro" -w /src \
+  aquasec/trivy:0.76.1 image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 ride-insight-web:ci
+```
+
 ## 데이터
 - **GoldenCheetah OpenData** — [OSF osf.io/6hfpz](https://osf.io/6hfpz) (DOI 10.17605/OSF.IO/6HFPZ), **CC0 1.0**. GoldenCheetah 사용자 6,613명이 공유한 익명 라이딩(초 단위 파워·심박·케이던스·거리·고도, GPS 없음). 이 저장소에는 데이터를 넣지 않고 표본 목록(800명, 선수 id의 SHA-256 순서)과 다운로드 스크립트만 둔다
   ```bash

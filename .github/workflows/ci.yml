@@ -5,18 +5,32 @@ on:
     branches: [main]
   pull_request:
 
+# 워크플로 토큰(GITHUB_TOKEN)은 저장소를 읽기만 한다(2026-10-29 추가). 저장소의 기본 권한도 지금은 읽기 전용이지만,
+# 그 설정이 바뀌어도 이 워크플로가 쓰기 권한을 받지 않도록 여기에 적어 둔다. 어느 잡도 저장소·이슈·PR에 쓰지 않고
+# 비밀값을 쓰지 않는다. 같은 이유로 체크아웃은 토큰을 .git 설정에 남기지 않는다(persist-credentials: false). checkout 뒤에
+# git 인증이 필요한 단계가 없고, 뒤에서 도는 남의 코드(npm ci의 설치 스크립트, Gradle 플러그인, 내려받은 도구)가 읽을 수
+# 있는 자격 증명을 줄인다.
+permissions:
+  contents: read
+
 # 액션 버전 (2026-10-15 갱신): GitHub가 러너에서 Node 20 액션 런타임을 걷어 내기로 해서
 # (https://github.blog/changelog/2026-09-23-deprecation-of-node-20-on-github-actions-runners/)
 # 모든 액션을 node24로 도는 주 버전으로 올렸다.
 # - gradle/actions는 v6부터 캐시 기능이 MIT가 아닌 별도 약관(gradle-actions-caching)으로 바뀌어
 #   약관 동의 없이 쓸 수 있는 마지막 주 버전 v5(node24)에 둔다.
 # - astral-sh/setup-uv는 v8부터 주 버전 태그(@v8 등)를 내지 않아 불변 릴리스 태그로 고정한다.
+# - aquasecurity/trivy-action(2026-10-29 추가)은 태그가 아니라 커밋 SHA로 고정한다. 2026-03-19에 이 액션의 버전 태그
+#   77개 중 76개가 자격 증명을 훔치는 커밋으로 강제 이동된 일이 있었다(GHSA-69fq-xp46-6x23). 고정한 커밋은 그 뒤에 나온
+#   v0.36.0(서명이 확인되는 태그, master에 있는 커밋)이고, 이 액션이 안에서 부르는 setup-trivy도 안전한 판(v0.2.6)의
+#   SHA로 고정돼 있다. 나머지 액션은 토큰이 읽기 전용이고 비밀값이 없어 태그로 둔다.
 
 jobs:
   server:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
@@ -30,9 +44,22 @@ jobs:
 
   ml:
     runs-on: ubuntu-latest
+    # Python 판 두 개(2026-10-29 추가). ml/uv.lock은 3.11과 3.12에 서로 다른 해석을 담고 있다(numpy 2.4.6 / 2.5.3,
+    # scipy 1.17.1 / 1.18.1. numpy 2.5부터 3.11을 지원하지 않는다). 로컬 측정·테스트 환경은 3.11인데, 전에는 판을 정하지
+    # 않아 CI가 러너의 시스템 Python 3.12로만 돌았고 측정 환경 쪽 해석은 검사되지 않았다. 둘 다 돌리고, 한쪽이 실패해도
+    # 다른 쪽 결과를 볼 수 있게 fail-fast를 끈다. 3.11 쪽 로그에는 'Using CPython 3.11.x'와 '+ numpy==2.4.6'이 찍힌다.
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          # 뒤 단계의 UV_PYTHON이 된다. 러너에 그 판이 없으면 uv가 관리형 CPython을 내려받는다.
+          python-version: ${{ matrix.python }}
       - name: Tests and lint
         working-directory: ml
         run: |
@@ -40,11 +67,27 @@ jobs:
           uv run pytest
           uv run ruff check .
           uv run ruff format --check .
+      # 의존성 취약점 검사(2026-10-29 추가). 잠금 파일에서 고정 버전 목록을 내보내(dev 그룹 포함, PyPI에 없는 프로젝트
+      # 자신은 뺀다) 판을 고정한 pip-audit로 PyPI의 권고와 대조하고, 알려진 취약점이 하나라도 있으면 실패한다.
+      # - --disable-pip: 목록을 그대로 읽는다. 이 옵션이 없으면 --no-deps를 줘도 임시 가상환경에서 pip의 설치 시험
+      #   (--dry-run --report) 결과를 읽는데, 그 가상환경에 미리 깔리는 패키지(wheel이 끌어오는 packaging)와 같은 버전은
+      #   결과에서 빠져 검사되지 않았다(pip-audit 2.10.1, 2026-10-29 로컬 확인). 설치 시험이 없어 몇 초면 끝난다.
+      # - --strict: 검사하지 못한 패키지가 하나라도 있으면 통과시키지 않는다.
+      # - 환경 마커(python_full_version, sys_platform)는 pip-audit를 돌리는 해석기 기준으로 판정된다. 그래서 Python 판마다
+      #   따로 돌리고(3.11은 numpy 2.4.6, 3.12는 2.5.3을 본다), Windows에서만 설치되는 colorama·tzdata는 이 Linux 잡에서
+      #   검사되지 않는다.
+      - name: Dependency audit (pip-audit)
+        working-directory: ml
+        run: |
+          uv export --frozen --format requirements-txt --no-hashes --no-emit-project -o "$RUNNER_TEMP/ml-requirements.txt"
+          uvx --python ${{ matrix.python }} pip-audit==2.10.1 -r "$RUNNER_TEMP/ml-requirements.txt" --no-deps --disable-pip --strict --progress-spinner off
 
   web:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
@@ -59,3 +102,41 @@ jobs:
           npm run lint
           npm test
           npm run build
+      # 의존성 취약점 검사(2026-10-29 추가). package-lock.json 전체를 npm 레지스트리의 권고와 대조해 high 이상이 있으면
+      # 실패한다. 화면 테스트·빌드에만 쓰는 개발 의존성도 본다: 2026-10-29에 jsdom이 끌어오는 undici의 high 권고가 CI가
+      # 아니라 의존성 작업 중 따로 돌린 npm audit에서야 드러났다. lint·test·build 결과가 먼저 보이도록 마지막 단계에 둔다.
+      - name: Dependency audit (npm audit)
+        working-directory: web
+        run: npm audit --audit-level=high
+
+  # 서버·웹 Docker 이미지 취약점 검사(2026-10-29 추가). compose와 같은 Dockerfile로 이미지를 빌드해 Trivy로 OS 패키지와
+  # 언어 패키지를 본다. 서버 이미지는 실행 jar(BOOT-INF/lib) 안의 Tomcat·Jackson 같은 라이브러리까지 잡는다(Gradle 쪽은
+  # 잠금 파일이 없어 소스만 읽는 스캐너가 해석 버전을 모른다). 고친 버전이 나온 HIGH·CRITICAL이 하나라도 있으면 실패하고,
+  # 고친 버전이 아직 없는 것은 세지 않는다(ignore-unfixed). 이 서비스에서 닿지 않는다고 확인한 것은 근거와 만료일을 붙여
+  # .trivyignore에 둔다. 기본 검사 범위인 비밀값(secret) 탐지도 함께 돈다.
+  # 주의: 취약점 DB와 베이스 이미지 태그(eclipse-temurin:21-jre, nginx:1.30-alpine)의 내용이 날마다 바뀌어 같은 커밋도
+  # 다른 날 실패할 수 있다. 그때는 실패한 패키지가 다시 빌드한 베이스에서 고쳐지는지 보고, 닿지 않으면 .trivyignore에
+  # 근거를 적는다.
+  images:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [server, web]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build the image
+        run: docker build -t ride-insight-${{ matrix.image }}:ci ${{ matrix.image }}
+      - name: Scan the image (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ride-insight-${{ matrix.image }}:ci
+          # 로컬에서 기준선을 잰 것과 같은 판(액션의 기본값 v0.70.0보다 새 판).
+          version: v0.76.1
+          scanners: vuln,secret
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          exit-code: "1"
