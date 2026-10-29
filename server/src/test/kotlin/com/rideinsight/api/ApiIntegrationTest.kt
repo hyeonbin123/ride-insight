@@ -65,6 +65,32 @@ class ApiIntegrationTest : ApiTestBase() {
         }
     }
 
+    // 2026-10-29: 숫자 필드에 보낸 긴 문자열로 요청 스레드를 수 초~수십 초 묶는 경로(jackson-core ReDoS, GHSA-p6pp-m3f8-5c89 /
+    // CVE-2026-89407)의 회귀 테스트. Jackson은 JSON 문자열을 숫자 필드로 바꿀 때(스칼라 강제 변환, 기본 켜짐) Float 필드면
+    // NumberInput.looksLikeValidNumber로 먼저 숫자 모양인지 보는데, jackson-core 3.1.5의 이 검사는 정규식
+    // `[+-]?[0-9]*[\.]?[0-9]+([eE][+-]?[0-9]+)?`였다. `[0-9]*`와 `[0-9]+`가 같은 숫자를 나눠 가질 수 있어, 숫자 n개 뒤에 숫자가
+    // 아닌 글자가 오면 되추적이 n²으로 늘어난다. 길이 상한(StreamReadConstraints.validateFPLength)은 이 검사 뒤에야 불려 막지
+    // 못한다(jackson-databind 3.1.5 NumberDeserializers.FloatDeserializer._parseFloat를 javap으로 확인). Int 필드(birthYear·ftp)는
+    // 정규식 없이 길이 상한부터 검사해(StdDeserializer._parseInteger) 같은 입력을 바로 거절하므로, 이 API에서 닿는 필드는 Float인
+    // weightKg 하나다(2026-10-19 보안 검토가 실제 DTO와 jackson 3.1.5로 재현: 숫자 20,000개에 8.0초, 40,000개에 30.6초).
+    // jackson-core 3.1.7(Spring Boot 4.1.2가 고르는 버전)은 정규식을 문자를 한 번 훑는 검사로 바꿔 고쳤다.
+    // 응답은 고치기 전후 모두 400 bad_request이고 걸린 시간만 다르다(이 PC에서 고치기 전 6.7초, 고친 뒤 예열 요청까지 합쳐 22 ms).
+    // 기준 2초는 그 사이에 넉넉히 둔 값이라 느린 CI에서도 흔들리지 않는다. 첫 요청의 DispatcherServlet 초기화·JIT 시간이 잰 값에
+    // 섞이지 않게 같은 경로를 짧은 입력으로 먼저 한 번 부른다.
+    @Test
+    fun `a long digit string in weightKg is rejected in under 2 seconds, not after seconds of regex backtracking`() {
+        val warmUp = post("/api/athletes", """{"name":"w","weightKg":"1x"}""")
+        assertEquals(400, warmUp.status, warmUp.body.toString())
+        val json = """{"name":"w","weightKg":"${"1".repeat(20_000)}x"}"""
+        val started = System.nanoTime()
+        val r = post("/api/athletes", json)
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000
+        assertEquals(400, r.status, r.body.toString())
+        assertEquals("bad_request", r.body!!.path("error").asString())
+        assertEquals("malformed JSON body", r.body!!.path("message").asString())
+        assertTrue(elapsedMs < 2_000, "weightKg string of 20,000 digits + 'x' took $elapsedMs ms (limit 2,000 ms)")
+    }
+
     // 완료 기준 2: 샘플 중 사이클링 5개 201, 러닝 422, 손상 2개 400 invalid_fit, Coros(개발자 필드 정렬 오류,
     // python-fitparse도 거절)는 201 또는 400(500만 아니면 됨). 같은 파일을 다시 올리면 409, 없는 선수는 404.
     // 끝으로 limit=3과 nextBefore 커서로 두 페이지를 받아 페이지네이션을 확인한다.
@@ -427,6 +453,7 @@ class ApiIntegrationTest : ApiTestBase() {
     // 코드포인트 200개에서 자른다: 그 전의 take(200)은 UTF-16 단위라 이모지 같은 서로게이트 쌍의 가운데를 잘라 짝 잃은
     // 서로게이트가 '?'로 저장될 수 있었다. 이름은 모두 ASCII로 인코딩해 보내므로 파트 헤더에는 ASCII만 실리고 Tomcat의 파트 헤더
     // 상한(512바이트) 안이다(NUL·이모지를 헤더에 날로 넣는 경로는 시험하지 않는다).
+    // 2026-10-29에 올린 Tomcat 11.0.27도 같은 동작이라 이 테스트가 그대로 통과한다.
     @Test
     fun `control characters are dropped from the upload file name and long names are cut at 200 code points`() {
         val id = createAthlete()

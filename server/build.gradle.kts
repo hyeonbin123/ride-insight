@@ -16,7 +16,14 @@ plugins {
 	//   적지 않아도 되게 한다.
 	kotlin("jvm") version "2.3.21"
 	kotlin("plugin.spring") version "2.3.21"
-	id("org.springframework.boot") version "4.1.1"
+	// Spring Boot 버전(2026-10-29 4.1.1 → 4.1.2): 4.1.1 BOM이 고른 jackson-core 3.1.5에는 숫자 필드에 보낸 긴 문자열로 요청
+	// 스레드를 수 초~수십 초 묶는 ReDoS(GHSA-p6pp-m3f8-5c89, 이 API에서는 POST /api/athletes의 weightKg로 닿는다)가 있었다.
+	// 같은 BOM의 Tomcat 11.0.24, jackson-databind 3.1.5, jackson-core의 다른 한 건(DataInput 파서)도 공개 CVE였지만 이 서버의
+	// 설정·입력 경로로는 닿지 않는다. 4.1.2 BOM은 Tomcat 11.0.27, Jackson 3.1.7, PostgreSQL JDBC 42.7.14, Spring Framework
+	// 7.0.10을 고르므로 BOM 속성(tomcat.version 등)을 따로 덮어쓰지 않고 플러그인 버전만 올렸다. 속성으로 버전을 고정해 두면
+	// 다음 Boot 올림 때 그 줄을 잊어 옛 버전에 묶일 수 있다. 취약점 분류와 확인 방법은 docs/ai-verification.md(2026-10-29),
+	// 회귀 테스트는 ApiIntegrationTest의 weightKg 테스트.
+	id("org.springframework.boot") version "4.1.2"
 	id("io.spring.dependency-management") version "1.1.7"
 }
 

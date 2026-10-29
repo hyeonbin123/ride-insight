@@ -69,8 +69,11 @@ class ApiExceptionHandler {
     // 것이 아니라 처리하기로 한 크기를 넘은 것이라 400과 구분한다(docs/experiments.md 5단계 '업로드 자원 증폭',
     // 규칙 변경 11). FitLimitException은 FitDecodeException의 하위 클래스이고, Spring은 가장 가까운 예외 타입의
     // 처리기를 고르므로 위의 400 처리기가 아니라 이 처리기가 쓰인다.
+    // 413 상수는 RFC 9110의 이름(Content Too Large)을 따른 CONTENT_TOO_LARGE다(2026-10-29, 아래 file_too_large도 같다). 옛 이름
+    // PAYLOAD_TOO_LARGE는 Spring Framework 7.0에서 deprecated됐고 값(413)이 같아 응답은 바뀌지 않는다. Kotlin 컴파일러는 Java
+    // enum 상수의 @Deprecated는 경고하지 않아(Kotlin 2.3.21에서 확인) 빌드 출력으로는 드러나지 않았다.
     @ExceptionHandler(FitLimitException::class)
-    fun fitLimit(e: FitLimitException) = respond(HttpStatus.PAYLOAD_TOO_LARGE, "fit_limit_exceeded", "the FIT file is too large to process: ${e.message}")
+    fun fitLimit(e: FitLimitException) = respond(HttpStatus.CONTENT_TOO_LARGE, "fit_limit_exceeded", "the FIT file is too large to process: ${e.message}")
 
     // 활동으로 쓸 수 없는 입력 → 400 invalid_activity: 빈 업로드 파일(컨트롤러가 디코딩 전에 거절), 디코딩은
     // 됐지만 record 메시지가 없거나 타임스탬프가 거꾸로 가는 파일. 변조 파일 (6)이 여기로 온다.
@@ -111,7 +114,7 @@ class ApiExceptionHandler {
     // server.tomcat.max-swallow-size=16MB도 두었다(Codex 3차 검토, 변조 파일 (7)).
     @ExceptionHandler(MaxUploadSizeExceededException::class)
     fun tooLarge(e: MaxUploadSizeExceededException) =
-        respond(HttpStatus.PAYLOAD_TOO_LARGE, "file_too_large", "the upload exceeds the 10 MB limit")
+        respond(HttpStatus.CONTENT_TOO_LARGE, "file_too_large", "the upload exceeds the 10 MB limit")
 
     // @Valid 요청 본문 검사 실패(빈 이름, 50~1000 W 밖의 FTP, M/F가 아닌 성별 등) → 400 validation. 필드별
     // 오류를 '필드: 이유; ...'로 이어 붙여 돌려준다.
