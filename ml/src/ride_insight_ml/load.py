@@ -183,7 +183,12 @@ def main(argv: list[str] | None = None) -> None:
     if reads_skipped:
         report["reads_skipped"] = reads_skipped
     a.out.parent.mkdir(parents=True, exist_ok=True)
-    a.out.write_text(json.dumps(report, indent=1), encoding="utf-8")
+    # 줄 끝은 OS와 무관하게 LF로 쓴다(newline="\n", 2026-11-05 고침). 지정하지 않으면 Windows에서
+    # indent가 만든 줄바꿈이 CRLF가 되어, LF로 쓰는 다른 보고서 writer(parity·ftp·parity_sets·opendata)와
+    # 달라진다. 저장소의 .gitattributes(* text=auto eol=lf)가 커밋 때 LF로 맞춰 커밋된
+    # reports/load/*.json에는 CRLF가 없지만, 작업 폴더의 새 보고서는 커밋된 것과 바이트가 달랐다.
+    # 내용(JSON, 끝 줄바꿈 없음)은 그대로다(tests/test_load.py).
+    a.out.write_text(json.dumps(report, indent=1), encoding="utf-8", newline="\n")
     for ph in phases:
         print(
             f"{ph['phase']}: n={ph['n']} p50={ph['p50_ms']:.0f}ms p95={ph['p95_ms']:.0f}ms "

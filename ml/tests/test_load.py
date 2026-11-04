@@ -44,3 +44,29 @@ def test_report_is_written_when_no_upload_succeeds(tmp_path: Path, monkeypatch):
     assert report["reads_skipped"] == "no upload succeeded"
     assert report["any_5xx"] is True
     assert report["any_connection_error"] is True
+
+
+# 보고서 파일의 줄 끝은 OS와 무관하게 LF여야 한다(2026-11-05 추가). 다른 보고서 writer(parity·ftp·parity_sets·
+# opendata)는 newline="\n"을 주는데 이 파일만 빠져 있어, Windows에서는 indent가 만든 줄바꿈이 CRLF로 쓰였다.
+# 저장소의 .gitattributes가 커밋 때 LF로 맞추므로 커밋된 reports/load/*.json에는 CRLF가 없지만, 작업 폴더의 새
+# 보고서는 바이트가 달랐다. 이 테스트는 Linux(CI)에서는 고치기 전에도 통과하고, Windows에서만 고치기 전
+# 코드를 잡는다. 업로드 2개가 모두 201이고 읽기 2개가 200인 가짜 _req로 읽기 단계까지 돌려, 보고서 전체를
+# 쓰는 경로를 본다.
+def test_report_is_written_with_lf_line_endings(tmp_path: Path, monkeypatch):
+    def fake_req(method, url, body=None, content_type=None):
+        if method == "POST":
+            return 201, 0.01, json.dumps({"id": "act-1"}).encode()
+        return 200, 0.01, b"{}"
+
+    monkeypatch.setattr(load, "create_athletes", lambda target, n: [f"x{i}" for i in range(n)])
+    monkeypatch.setattr(load, "_req", fake_req)
+    fit = tmp_path / "ride.fit"
+    fit.write_bytes(b"\x0e\x10")
+    out = tmp_path / "report.json"
+    load.main(["--fit", str(fit), "--out", str(out), "--rounds", "1", "--uploads", "2", "--reads", "2"])
+    data = out.read_bytes()
+    assert b"\r\n" not in data
+    assert data.count(b"\n") > 10  # indent=1이라 여러 줄이어야 줄 끝을 본 것이 된다
+    report = json.loads(data.decode("utf-8"))
+    assert [ph["phase"] for ph in report["phases"]] == ["upload-round-1", "reads"]
+    assert report["any_5xx"] is False
