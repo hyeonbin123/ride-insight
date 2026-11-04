@@ -16,10 +16,16 @@ FROM nginx:1.30-alpine
 # 8.22.0-r0(CVE-2026-92392, HIGH, 고친 버전 8.23.0-r0)이 들어 있고, 2026-10-30에도 태그가 같은 이미지를 가리켰다. nginx는
 # 둘 다 링크하지 않아 실행 중에 닿지는 않는다(그래서 처음에는 근거를 적고 만료일을 붙여 .trivyignore로 스캔에서 뺐다).
 # 하지만 제외는 만료일에 풀려 베이스가 다시 나오지 않으면 CI 이미지 검사가 실패하고, 닿지 않는다는 판단도 매번 다시 해야
-# 한다. 그래서 제외 대신 패키지를 고친다. 이름을 준 세 패키지만 Alpine 저장소의 최신으로 올리므로 nginx(1.30.6, world에
-# 버전이 고정됨)와 다른 패키지는 베이스 그대로다(올리기 전후 apk info -v를 비교해 세 줄만 바뀐 것을 확인했다). 빌드할 때
-# Alpine 저장소에 접속해야 한다. 베이스가 고친 버전으로 다시 나오면 이 줄은 아무것도 바꾸지 않는다(그때 지워도 된다).
-RUN apk upgrade --no-cache brotli-libs libcurl curl
+# 한다. 그래서 제외 대신 패키지를 고친다. 이름을 준 패키지만 Alpine 저장소의 최신으로 올리므로 nginx(1.30.6, world에
+# 버전이 고정됨)와 다른 패키지는 베이스 그대로다(올리기 전후 apk info -v를 비교해 이름을 준 패키지의 줄만 바뀐 것을
+# 확인했다). 빌드할 때 Alpine 저장소에 접속해야 한다. 베이스가 고친 버전으로 다시 나오면 이 줄은 아무것도 바꾸지 않는다
+# (그때 지워도 된다).
+# 2026-11-05 추가: 같은 베이스 이미지(다이제스트 그대로, 2026-10-21 빌드)에서 libexpat 2.9.0-r0의 HIGH 세 건
+# (CVE-2026-113351·CVE-2026-117610·CVE-2026-118370, 고친 버전 2.10.0-r0)이 새로 잡혀(2026-11-04 Trivy DB, CI 이미지 검사
+# 다시 실행) libexpat도 올린다. nginx 실행 파일은 libexpat을 링크하지 않고(ldd), libexpat을 요구하는 패키지는 fontconfig뿐이며
+# 이를 거쳐 링크하는 것은 image_filter 동적 모듈인데 이 이미지의 설정에는 load_module이 없어 실행 중에 닿지는 않는다. 그래도
+# 위와 같은 이유로 제외 대신 고친 버전을 설치한다.
+RUN apk upgrade --no-cache brotli-libs libcurl curl libexpat
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /src/dist /usr/share/nginx/html
 EXPOSE 80
