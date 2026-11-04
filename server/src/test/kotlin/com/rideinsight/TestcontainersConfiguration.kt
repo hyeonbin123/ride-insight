@@ -33,8 +33,14 @@ class TestcontainersConfiguration {
 		// 통과했고, 이 값은 대기 상한일 뿐이라 테스트 판정·서버 코드·실행 jar에는 영향이 없다.
 		// 대가: Docker가 정말 고장 나 컨테이너가 뜨지 않으면 실패가 60초가 아니라 최대 5분 뒤에 드러난다.
 		// 환경 변수로 상한을 받는 방법도 있지만, 테스트 전용 값 하나에 설정 경로를 늘릴 만큼의 이득이 없어 고정값으로
-		// 둔다. 로그 대기 뒤의 JDBC 접속 확인에는 따로 상한(JdbcDatabaseContainer의 startupTimeoutSeconds, 기본 120초)이
-		// 있고 여기서 바꾸지 않는다.
+		// 둔다.
+		// 2026-11-05 정정: 처음에는 '로그 대기 뒤의 JDBC 접속 확인에는 따로 상한(JdbcDatabaseContainer의
+		// startupTimeoutSeconds, 기본 120초)이 있고 여기서 바꾸지 않는다'고 적었는데 사실이 아니다. 그 값을 쓰는 JDBC 접속
+		// 확인 루프는 JdbcDatabaseContainer.waitUntilContainerStarted에 있고, PostgreSQLContainer는 이 메서드를 덮어써
+		// 대기 전략(위의 로그 대기)만 돌린다(Testcontainers 2.0.5 바이트코드로 확인). 그래서 로그 대기 뒤에 JDBC 접속 확인은
+		// 없고, 서버가 준비되기를 기다리는 상한은 이 5분 하나다. 그 앞에 컨테이너가 실행 중 상태인지만 보는 검사
+		// (IsRunningStartupCheckStrategy)가 따로 있는데, 시작 직후 이미 실행 중이면 기다리지 않고 지나가고 아니면 30초까지
+		// 다시 본다.
 		return PostgreSQLContainer(DockerImageName.parse("postgres:16"))
 			.withStartupTimeout(Duration.ofMinutes(5))
 	}
