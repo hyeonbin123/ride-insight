@@ -520,3 +520,27 @@ def test_recint_diag_cli_refuses_unsafe_runs(tmp_path: Path, capsys):
         assert message in capsys.readouterr().err
     assert (tmp_path / "dev.json").read_text(encoding="utf-8") == "recorded"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["dev.json", "dev.jsonl", "sealed.jsonl"]
+
+
+# 기본 모드(등록된 분석 H1~H4)는 봉인 세트를 다시 판정하지 않는다(2026-11-05 추가). 봉인 세트는 단계가 끝날 때
+# 한 번만 재는 기록이라(docs/experiments.md 공통 절), --jsonl 이름이 sealed로 시작하거나(대소문자 무관) --out
+# 이름이 sealed로 시작하면(봉인 기록 sealed.json·md를 덮어쓰는 경로) JSONL을 읽기 전에 종료 코드 2로 끝나고
+# 아무것도 쓰지 않아야 한다. 첫 경우의 sealed.jsonl은 읽기 전에 거부하는지 보려고 일부러 만들지 않는다: 고치기
+# 전 코드는 이 검사 없이 읽으러 가서 FileNotFoundError로 끝났다(파일이 있으면 그대로 다시 분석해 덮어썼다).
+# 오류 문장까지 보는 것은 다른 argparse 오류(SystemExit)와 구별하기 위해서다. 봉인 JSONL의 군집 사후
+# 보고(--cluster-report)는 위 테스트들대로 그대로 된다.
+def test_registered_analysis_refuses_the_sealed_set(tmp_path: Path, capsys):
+    dev = _write_jsonl(tmp_path / "dev.jsonl", _two_athlete_lines())
+    (tmp_path / "sealed.json").write_text("recorded", encoding="utf-8")
+    cases = [
+        ["--jsonl", str(tmp_path / "sealed.jsonl"), "--out", str(tmp_path / "rerun")],
+        ["--jsonl", str(tmp_path / "Sealed-copy.jsonl"), "--out", str(tmp_path / "rerun")],
+        ["--jsonl", str(dev), "--out", str(tmp_path / "sealed")],
+    ]
+    for argv in cases:
+        with pytest.raises(SystemExit) as exc:
+            parity.main(argv)
+        assert exc.value.code == 2
+        assert "sealed set" in capsys.readouterr().err
+    assert (tmp_path / "sealed.json").read_text(encoding="utf-8") == "recorded"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["dev.jsonl", "sealed.json"]

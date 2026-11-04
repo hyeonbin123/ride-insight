@@ -934,10 +934,29 @@ def recint_to_markdown(r: dict, title: str) -> str:
 # 명령행 진입점. --jsonl을 분석해 --out.json(모든 수치)과 --out.md(요약)를 쓴다. 보고서 제목은 JSONL 파일
 # 이름(dev, sealed 등)이다. --cluster-report면 등록된 분석 대신 선수 군집 사후 보고만, --recint-diag면
 # GoldenCheetah 암묵 기록 간격 진단만 쓴다(둘을 함께 줄 수는 없다).
+# 옵션 없는 기본 모드(등록된 분석)는 봉인 세트를 다시 판정하지 않도록 sealed로 시작하는 --jsonl·--out 이름을
+# 거부한다(2026-11-05, 아래 검사).
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--jsonl", type=Path, required=True)
-    p.add_argument("--out", type=Path, required=True, help="확장자를 뺀 출력 경로(.json과 .md를 쓴다)")
+    p.add_argument(
+        "--jsonl",
+        type=Path,
+        required=True,
+        help=(
+            "분석할 라이딩별 JSONL(Kotlin parity 태스크 출력, 예: ../reports/parity/dev.jsonl). 옵션 없는 "
+            "기본 모드(등록된 분석)는 이름이 sealed로 시작하면 읽기 전에 거부한다"
+            "(봉인 세트는 한 번만 잼)"
+        ),
+    )
+    p.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help=(
+            "확장자를 뺀 출력 경로(.json과 .md를 쓴다). 기본 모드에서는 봉인 기록(sealed.json·md)을 덮어쓰지 "
+            "않도록 sealed로 시작하는 이름을 거부한다"
+        ),
+    )
     p.add_argument(
         "--cluster-report",
         action="store_true",
@@ -1009,6 +1028,17 @@ def main(argv: list[str] | None = None) -> None:
         )
         print(f"wrote {a.out}.json and {a.out}.md (athlete-cluster report, no verdict)")
         return
+    # 기본 모드(등록된 분석 H1~H4)는 봉인 세트에 다시 돌리지 않는다(2026-11-05 추가). 봉인 세트는 단계가 끝날
+    # 때 정해 둔 것만 한 번 잰다(docs/experiments.md 공통 절). reports/parity/sealed.json·md는 규칙 변경 9 전
+    # 비교 함수로 만든 그 한 번의 기록이라, 지금 코드로 sealed JSONL을 다시 분석하면 봉인 세트를 다시 판정하게
+    # 되고, 다른 입력의 결과를 sealed라는 이름으로 쓰면 기록을 덮어쓴다. 그래서 --jsonl 이름이나 --out 이름이
+    # sealed로 시작하면(대소문자 무관) JSONL을 읽기 전에 거부한다(--recint-diag의 봉인 거부와 같은 꼴,
+    # p.error는 종료 코드 2). 봉인 JSONL의 선수 군집 사후 보고는 위의 --cluster-report로 따로 쓴다. 이름으로만
+    # 보는 실수 방지라, 봉인 JSONL이나 출력 이름을 다른 이름으로 바꿔 주면 막지 못한다.
+    if a.jsonl.name.lower().startswith("sealed"):
+        p.error(f"the registered analysis already ran once on the sealed set; refusing {a.jsonl.name!r}")
+    if a.out.name.lower().startswith("sealed"):
+        p.error(f"--out {a.out.name!r} would overwrite the registered sealed set report; pick another name")
     df = load(a.jsonl)
     result = analyse(df)
     a.out.parent.mkdir(parents=True, exist_ok=True)
