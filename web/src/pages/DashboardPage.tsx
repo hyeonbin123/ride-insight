@@ -74,9 +74,12 @@ export function DashboardPage() {
     queryFn: () => api.getAthletePowerCurve(athleteId!, weeks, asOf),
     enabled: !!athleteId,
   });
-  // FTP 추정: 서버는 규칙 R1(20분 최대 × 0.95)을 돌려주고 R2·R3 값과 측정 오차를 note로 함께 준다(3단계에서
-  // 모델 채택 기준을 확정하지 못해 규칙을 쓴다). 업로드 화면이 업로드 뒤 ['ftp-estimate', 선수 id] 캐시를
-  // 무효화하므로 새 라이딩이 바로 반영된다.
+  // FTP 추정: 서버는 규칙 R1(20분 최대 × 0.95)을 추정값(ftpWatts)으로 돌려주고, R2·R3 값(rules), 근거(창 안 파워 라이딩
+  // 수, 20분·60분 최대), 영어 안내 문장(note)을 함께 준다(3단계에서 모델 채택 기준을 확정하지 못해 규칙을 쓴다). 측정
+  // 오차 숫자(devMaeWatts·testMaeWatts·testBiasWatts)는 3단계가 잰 조건(measuredCondition: 6주 창, 창 안 파워 라이딩
+  // 8개 이상) 안일 때만 응답에 들어 있고(withinMeasuredRange), 카드의 한국어 안내 문장은 화면이 이 숫자로 만든다
+  // (format.ts의 ftpEstimateNote, docs/api.md의 ftp-estimate 줄). 2026-11-05 고침: 전에는 측정 오차를 서버가 note로 준다고
+  // 적혀 있었다. 업로드 화면이 업로드 뒤 ['ftp-estimate', 선수 id] 캐시를 무효화하므로 새 라이딩이 바로 반영된다.
   const estimate = useQuery({
     queryKey: ["ftp-estimate", athleteId, weeks, asOf],
     queryFn: () => api.getFtpEstimate(athleteId!, weeks, asOf),
@@ -138,9 +141,11 @@ export function DashboardPage() {
           </Typography>
           {estimate.isLoading && <LinearProgress />}
           {estimate.isError && <Alert severity="error">{describeError(estimate.error)}</Alert>}
-          {/* 추정값(크게), 근거(방법, 기간 안 파워 라이딩 수, 20분·60분 최대, CP 모델 값), 서버가 준 안내 */}
-          {/* 문장(note: 규칙 정의와 측정 오차). 20분 이상 라이딩이 없으면 추정값은 '-'이고 note가 그 */}
-          {/* 이유를 말한다. */}
+          {/* 추정값(크게), 근거(방법, 기간 안 파워 라이딩 수, 20분·60분 최대, CP 모델 값), 안내 문장. 안내 문장은 */}
+          {/* 화면이 ftpEstimateNote로 만든다: 규칙 정의에 더해, 측정 조건(6주 창, 파워 라이딩 8개 이상) 안이면 측정 */}
+          {/* 오차를, 조건 밖이면 오차 숫자 없이 이 조건의 오차는 재지 않았다는 문장을 붙인다. 서버의 영어 note는 오차 */}
+          {/* 숫자가 없는 옛 응답일 때만 그대로 쓴다. 20분 이상 라이딩이 없으면 추정값은 '-'이고 안내 문장이 그 이유를 */}
+          {/* 말한다. (2026-11-05 고침: 전에는 서버가 준 note를 보여 준다고 적혀 있었다) */}
           {estimate.data && (
             <Stack direction="row" spacing={3} sx={{ alignItems: "baseline", flexWrap: "wrap" }}>
               <Typography variant="h4">{formatWatts(estimate.data.ftpWatts)}</Typography>
