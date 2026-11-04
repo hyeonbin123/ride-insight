@@ -11,6 +11,8 @@
 | `activity_samples` | activity_id, secs real[], power smallint[], heart_rate smallint[], cadence smallint[], distance_m real[], altitude_m real[]. 활동당 한 행. 결측은 NULL 원소 |
 | `activity_metrics` | activity_id, ftp_used, np, intensity, tss, average_power, max_power, mmp jsonb(16구간), work_kj, computed_at, metrics_version(계산한 지표 코드의 버전, 지금 1). **2026-10-29 정정**: `metrics_version`은 기록만 하고 이 값을 읽어 다시 계산하는 경로는 없다(자동 재계산 없음. 처음에는 '지표 코드가 바뀌면 다시 계산해 덮어쓴다'고 적었다). 지표 계산 정의를 바꾸면 `MetricsService.METRICS_VERSION`을 올리고, 저장된 옛 버전 행을 샘플부터 다시 계산하는 도구를 그때 함께 만들어야 한다(지금은 없다. FTP·시간대 변경 때의 재계산은 IF·TSS만 다시 쓴다). curve jsonb(전 구간 파워 커브 ≤ 300점, 2026-10-15 V2). **2026-10-24 추가**: 목록·상세 조회는 응답에 쓰는 열만 읽고(curve·computed_at 제외), 활동 파워 커브 조회는 mmp·curve를 쿼리 하나로 읽는다(그 전에는 `select *`라 목록 한 페이지마다 활동 수만큼 curve를 읽어 버렸고, 커브 조회는 같은 행의 curve를 두 번 읽었다) |
 
+**2026-11-05 추가(부동소수 열의 응답 자릿수)**: 위 테이블의 부동소수 열(`weight_kg`, `rec_int_secs`, `interval_share`, `duration_secs`, 지표의 NP·IF·TSS·평균 파워·`work_kj`)은 모두 `real`(float4, 유효 숫자 약 7자리)이고, 응답 JSON의 값(`weightKg`, `recIntSecs`, `intervalShare`, `durationSecs`, `metrics.normalizedPower` 등)은 PostgreSQL이 텍스트로 보낸 짧은 표기를 읽은 것이다(예: `300.58676`). 이날 전에는 PgJDBC가 한 커넥션에서 같은 SQL을 5번 실행한 뒤부터 결과를 binary로 받아, 같은 요청을 되풀이하면 6번째 응답부터 같은 float4 값이 `300.5867614746094`처럼 긴 자릿수로 나왔다(값은 같은 float4이고 표기만 다름). 저장된 TSS를 더하는 훈련 부하 응답도 같았고, FTP·시간대 변경 때 저장된 NP·기록 간격을 읽어 IF·TSS를 다시 계산하는 경로는 입력 Double이 실행 횟수에 따라 달라 저장되는 float4 끝자리가 달라질 수 있었다. 서버 설정(`application.properties`의 PgJDBC `binaryTransferDisable=FLOAT4,FLOAT4_ARRAY`)으로 float4를 늘 텍스트로 받게 고쳤고, 통합 테스트(`RepeatedReadsTest`)가 활동 상세·샘플·훈련 부하를 각각 12번 불러 본문이 모두 같은지 본다.
+
 ## API (모두 `/api` 아래, JSON)
 | 메서드·경로 | 동작 | 완료 기준 |
 |---|---|---|
