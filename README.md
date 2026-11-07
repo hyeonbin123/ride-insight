@@ -82,12 +82,14 @@ cd web && npm run lint && npm test && npm run build
 
 - 로컬 측정·테스트 환경은 Python 3.11이고, `ml/uv.lock`이 3.11에 고르는 numpy 2.4.6·scipy 1.17.1을 쓴다. 잠금 파일에는 3.12용 해석(numpy 2.5.3·scipy 1.18.1)도 들어 있어 CI는 ml 테스트를 3.11과 3.12에서 모두 돌린다
 - CI는 push·PR마다 전체 스택도 띄운다(`stack` 잡): `docker compose up --build --detach --wait`로 PostgreSQL·서버가 healthy, 웹이 running이 되기를 기다린 뒤, 웹 첫 화면이 200인지와 위 데모 명령이 웹(nginx)을 거쳐 기대한 상태 코드를 받는지 본다. Dockerfile·`web/nginx.conf`·compose 설정이 바뀌어 스택이 뜨지 않거나 `/api` 프록시·업로드가 깨지면 실패한다
-- CI는 push·PR마다 의존성 취약점도 본다: 화면은 `npm audit --audit-level=high`(개발 의존성 포함), ml은 잠금 파일에서 내보낸 고정 목록의 `pip-audit`(Python 판마다), 서버·웹은 Docker 이미지를 빌드해 Trivy로 고친 버전이 나온 HIGH·CRITICAL을 찾는다(서버 이미지는 실행 jar 안의 Tomcat·Jackson 같은 라이브러리까지). 이 서비스에서 닿지 않는다고 확인해 뺀 항목은 근거와 만료일을 붙여 `.trivyignore`에 둔다. 취약점 DB와 베이스 이미지가 날마다 바뀌어 같은 커밋도 다른 날 실패할 수 있다. 같은 검사를 로컬에서 돌리려면(Docker 필요):
+- CI는 push·PR마다 의존성 취약점도 본다: 화면은 `npm audit --audit-level=high`(개발 의존성 포함), ml은 잠금 파일에서 내보낸 고정 목록의 `pip-audit`(2026-11-07부터 환경 표지를 떼고 같은 이름의 둘째 판을 다른 목록으로 나눠 잠금의 PyPI 패키지 전부를 대조한다. 전에는 표지를 돌리는 해석기 기준으로 판정해 Linux CI에서 Windows 전용 colorama·tzdata가 빠졌다), 서버·웹은 Docker 이미지를 빌드해 Trivy로 고친 버전이 나온 HIGH·CRITICAL을 찾는다(서버 이미지는 실행 jar 안의 Tomcat·Jackson 같은 라이브러리까지). 이 서비스에서 닿지 않는다고 확인해 뺀 항목은 근거와 만료일을 붙여 `.trivyignore`에 둔다. 취약점 DB와 베이스 이미지가 날마다 바뀌어 같은 커밋도 다른 날 실패할 수 있다. 같은 검사를 로컬에서 돌리려면(Docker 필요):
 
 ```bash
 cd web && npm audit --audit-level=high
-cd ml && uv export --frozen --format requirements-txt --no-hashes --no-emit-project -o /tmp/ml-req.txt \
-  && uvx --python 3.11 pip-audit==2.10.1 -r /tmp/ml-req.txt --no-deps --disable-pip --strict
+cd ml && d=$(mktemp -d) && uv export --frozen --all-groups --format requirements-txt --no-hashes --no-emit-project \
+  | grep -E '^[A-Za-z0-9]' | sed -E 's/[[:space:]]*;.*$//' \
+  | awk -F'==' -v dir="$d" '{ n = tolower($1); gsub(/[-_.]+/, "-", n); print > (dir "/ml-audit-" (++seen[n]) ".txt") }' \
+  && for f in "$d"/ml-audit-*.txt; do uvx --python 3.11 pip-audit==2.10.1 -r "$f" --no-deps --disable-pip --strict; done
 docker build -t ride-insight-web:ci web    # 서버는 web 대신 server
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache -v "$PWD:/src:ro" -w /src \
   aquasec/trivy:0.76.1 image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 ride-insight-web:ci

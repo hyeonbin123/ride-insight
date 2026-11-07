@@ -67,20 +67,44 @@ jobs:
           uv run pytest
           uv run ruff check .
           uv run ruff format --check .
-      # 의존성 취약점 검사(2026-10-29 추가). 잠금 파일에서 고정 버전 목록을 내보내(dev 그룹 포함, PyPI에 없는 프로젝트
-      # 자신은 뺀다) 판을 고정한 pip-audit로 PyPI의 권고와 대조하고, 알려진 취약점이 하나라도 있으면 실패한다.
+      # 의존성 취약점 검사(2026-10-29 추가, 2026-11-07 대조 범위를 잠금 파일 전체로 넓힘). 잠금 파일에서 고정 버전 목록을
+      # 내보내(모든 의존성 그룹, PyPI에 없는 프로젝트 자신은 뺀다) 판을 고정한 pip-audit로 PyPI의 권고와 대조하고, 알려진
+      # 취약점이 하나라도 있으면 실패한다.
       # - --disable-pip: 목록을 그대로 읽는다. 이 옵션이 없으면 --no-deps를 줘도 임시 가상환경에서 pip의 설치 시험
       #   (--dry-run --report) 결과를 읽는데, 그 가상환경에 미리 깔리는 패키지(wheel이 끌어오는 packaging)와 같은 버전은
       #   결과에서 빠져 검사되지 않았다(pip-audit 2.10.1, 2026-10-29 로컬 확인). 설치 시험이 없어 몇 초면 끝난다.
       # - --strict: 검사하지 못한 패키지가 하나라도 있으면 통과시키지 않는다.
-      # - 환경 마커(python_full_version, sys_platform)는 pip-audit를 돌리는 해석기 기준으로 판정된다. 그래서 Python 판마다
-      #   따로 돌리고(3.11은 numpy 2.4.6, 3.12는 2.5.3을 본다), Windows에서만 설치되는 colorama·tzdata는 이 Linux 잡에서
-      #   검사되지 않는다.
+      # - 환경 표지 떼기(2026-11-07): 내보낸 줄에는 `; python_full_version < '3.12'`, `; sys_platform == 'win32'` 같은 환경
+      #   표지가 붙는데, pip-audit는 표지를 자기를 돌리는 해석기 기준으로 판정해 맞지 않는 줄은 대조하지 않는다. 전에는 표지를
+      #   그대로 둬서 이 Linux 잡이 판마다 잠금의 PyPI 패키지 23개 중 19개만 대조했고(3.11은 numpy 2.5.3·scipy 1.18.1을,
+      #   3.12는 2.4.6·1.17.1을 건너뜀), Windows에서만 설치되는 colorama·tzdata는 어느 판에서도 대조되지 않았다(2026-11-05 확인,
+      #   11-07 다시 확인). 표지를 떼면 러너·해석기와 상관없이 같은 목록, 곧 잠금의 PyPI 패키지 전부를 본다.
+      # - 목록 나누기: 표지를 떼면 numpy·scipy처럼 Python 3.11과 3.12에서 판이 다른 패키지가 한 목록에 두 번 나오는데,
+      #   pip-audit는 한 목록 안의 같은 이름을 받지 않으므로(duplicate requirements 오류) 둘째 판부터 다음 목록
+      #   (ml-audit-2.txt …)으로 나눠 따로 대조한다. 이름은 PyPI 규칙대로 소문자로 바꾸고 `-`·`_`·`.`을 `-` 하나로 본다.
+      # - shell: bash로 pipefail을 켠다(적지 않은 기본 셸은 `bash -e`뿐이라 파이프 앞쪽 명령이 실패해도 지나간다). 내보내기가
+      #   실패하거나 grep이 한 줄도 고르지 못하면 이 단계가 실패해, 빈 목록을 대조하고 통과하는 일이 없다. 목록 하나가
+      #   실패해도 다음 목록까지 대조해 로그에 남긴 뒤 끝에서 실패한다.
+      # - 두 판의 잡이 같은 목록을 대조하는 것은 겹치지만(몇 초), 한쪽 판의 테스트가 실패해 이 단계를 건너뛰어도 다른 판의 잡에
+      #   대조 결과가 남도록 그대로 둔다.
+      # - 로컬에서 같은 대조를 하려면 아래 run의 명령을 ml 폴더의 Git Bash에서 RUNNER_TEMP를 빈 임시 폴더로, 해석기 판 자리를
+      #   3.11로 바꿔 그대로 돌린다.
       - name: Dependency audit (pip-audit)
         working-directory: ml
+        shell: bash
         run: |
-          uv export --frozen --format requirements-txt --no-hashes --no-emit-project -o "$RUNNER_TEMP/ml-requirements.txt"
-          uvx --python ${{ matrix.python }} pip-audit==2.10.1 -r "$RUNNER_TEMP/ml-requirements.txt" --no-deps --disable-pip --strict --progress-spinner off
+          uv export --frozen --all-groups --format requirements-txt --no-hashes --no-emit-project > "$RUNNER_TEMP/ml-locked.txt"
+          grep -E '^[A-Za-z0-9]' "$RUNNER_TEMP/ml-locked.txt" | sed -E 's/[[:space:]]*;.*$//' > "$RUNNER_TEMP/ml-pinned.txt"
+          awk -F'==' -v dir="$RUNNER_TEMP" '{
+            name = tolower($1); gsub(/[-_.]+/, "-", name)
+            print > (dir "/ml-audit-" (++seen[name]) ".txt")
+          }' "$RUNNER_TEMP/ml-pinned.txt"
+          status=0
+          for list in "$RUNNER_TEMP"/ml-audit-*.txt; do
+            echo "== $(basename "$list"): $(wc -l < "$list") packages"
+            uvx --python ${{ matrix.python }} pip-audit==2.10.1 -r "$list" --no-deps --disable-pip --strict --progress-spinner off || status=1
+          done
+          exit "$status"
 
   web:
     runs-on: ubuntu-latest
