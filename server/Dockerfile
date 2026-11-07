@@ -9,6 +9,18 @@ RUN ./gradlew --no-daemon -q bootJar -x test
 
 FROM eclipse-temurin:21-jre
 WORKDIR /app
+# 베이스에 남은 OS 패키지 취약점을 이 단계에서 고친 버전으로 올린다(2026-11-07, web/Dockerfile 서빙 단계와 같은 방식). 이 태그의
+# 이미지(Ubuntu 26.04.1)에는 apt·libapt-pkg7.0 3.2.0이 들어 있고, 2026-11-07 Trivy DB가 HIGH 한 건(CVE-2026-109518, 패키지
+# 내려받기 중 하드 링크 재사용으로 원격 코드 실행, 고친 버전 3.2.1ubuntu0.1)을 새로 잡아 CI 이미지 검사가 멈췄다(2026-11-05의
+# 검사에서는 같은 베이스가 0건이었다). 실행 중인 서버는 apt를 전혀 쓰지 않고(JVM만 돌고 사용자도 root가 아닌 app) 패키지를
+# 내려받는 일도 없어 닿지는 않지만, .trivyignore의 원칙(고친 버전을 바로 설치할 수 있으면 제외보다 먼저)대로 제외 대신 두
+# 패키지만 Ubuntu 저장소(resolute-updates·resolute-security)의 고친 버전으로 올린다(--only-upgrade: 이미 있는 패키지만 올리고 새
+# 패키지는 넣지 않음). 다른 패키지는 베이스 그대로다. 빌드할 때 Ubuntu 저장소에 접속해야 한다. 베이스가 고친 버전으로 다시
+# 나오면 이 줄은 아무것도 바꾸지 않는다(그때 지워도 된다). 받은 패키지 목록(/var/lib/apt/lists)은 이미지에 남기지 않는다.
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --only-upgrade apt libapt-pkg7.0 \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/*
 RUN useradd --system --uid 10001 app
 COPY --from=build /src/build/libs/*.jar /app/app.jar
 USER app
