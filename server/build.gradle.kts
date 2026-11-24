@@ -23,7 +23,14 @@ plugins {
 	// 7.0.10을 고르므로 BOM 속성(tomcat.version 등)을 따로 덮어쓰지 않고 플러그인 버전만 올렸다. 속성으로 버전을 고정해 두면
 	// 다음 Boot 올림 때 그 줄을 잊어 옛 버전에 묶일 수 있다. 취약점 분류와 확인 방법은 docs/ai-verification.md(2026-10-29),
 	// 회귀 테스트는 ApiIntegrationTest의 weightKg 테스트.
-	id("org.springframework.boot") version "4.1.2"
+	// 2026-11-24 4.1.2 → 4.1.3: 공급사 권고 25건을 반영한다. 2026-11-19에 공개된 Spring Framework 7.0.10 영향 13건(high 1·
+	// medium 11·low 1, 고친 판 7.0.11)과 Spring Boot 4.1.2 영향 11건(critical 2·high 1·medium 7·low 1, 고친 판 4.1.3), 그리고 BOM이
+	// 올리는 jackson-databind 3.1.8이 고치는 critical 1건(GHSA-m8xf-2cr7-77ph)이다. 25건 모두 해당 모듈이 클래스패스에 없거나 이
+	// 서버가 그 기능을 쓰지 않아 닿지 않는다(권고별 근거는 docs/ai-verification.md 2026-11-24). 4.1.3 BOM은 Spring Framework 7.0.11,
+	// Jackson 3.1.8, Hibernate Validator 9.1.6, Micrometer 1.17.3을 고르고 Tomcat은 11.0.27 그대로다. 공급사는 Tomcat 11.0.27에도
+	// 권고를 냈지만(고친 판 11.0.29, Boot 4.2.0 BOM도 11.0.27) 이 서버는 그 기능(HTTP/2, WebSocket, RewriteValve, ExpiresFilter
+	// 등)을 쓰지 않아 위와 같은 이유로 tomcat.version을 덮어쓰지 않았다.
+	id("org.springframework.boot") version "4.1.3"
 	id("io.spring.dependency-management") version "1.1.7"
 }
 
