@@ -25,7 +25,12 @@ FROM nginx:1.30-alpine
 # 다시 실행) libexpat도 올린다. nginx 실행 파일은 libexpat을 링크하지 않고(ldd), libexpat을 요구하는 패키지는 fontconfig뿐이며
 # 이를 거쳐 링크하는 것은 image_filter 동적 모듈인데 이 이미지의 설정에는 load_module이 없어 실행 중에 닿지는 않는다. 그래도
 # 위와 같은 이유로 제외 대신 고친 버전을 설치한다.
-RUN apk upgrade --no-cache brotli-libs libcurl curl libexpat
+# 2026-11-24 추가: 2026-11-07에 빌드한 이 이미지(Alpine 3.24.4)를 2026-11-24 Trivy DB로 다시 보니 libxml2 2.13.9-r2(HIGH
+# CVE-2026-86144, 고친 버전 2.13.9-r3)와 libxslt 1.1.43-r3(HIGH 세 건 CVE-2026-125350·CVE-2026-87636·CVE-2026-9947, 고친 버전
+# 1.1.43-r4)가 잡혀 함께 올린다. 오늘 레지스트리의 베이스에도 libxml2는 r2 그대로라 CI의 이미지 검사가 이 줄에 libxml2가 없으면
+# 멈춘다. libxml2는 xslt·js(njs) 동적 모듈이, libxslt는 xslt 동적 모듈이 링크하고 nginx 실행 파일은 둘 다 링크하지 않는다(ldd).
+# 설정에 load_module이 없어 그 모듈들이 올라오지 않으므로 실행 중에 닿지는 않는다.
+RUN apk upgrade --no-cache brotli-libs libcurl curl libexpat libxml2 libxslt
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /src/dist /usr/share/nginx/html
 EXPOSE 80
